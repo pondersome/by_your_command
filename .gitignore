@@ -1,0 +1,19 @@
+# ROS2 build artifacts
+build/
+install/
+log/
+
+# Python artifacts
+*.pyc
+__pycache__/
+
+# Environment files
+.env
+.env.*.local
+
+# IDE files
+.vscode/
+.idea/
+
+# Distribution
+*.egg-info/

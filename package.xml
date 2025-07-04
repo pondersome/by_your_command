@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>by_your_command</name>
+  <version>0.0.1</version>
+  <description>ByYourCommand: voice, camera, and video interaction package</description>
+
+  <maintainer email="you@todo.todo">TODO: Maintainer Name</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>rclcpp</depend>
+  <depend>launch</depend>
+  <depend>launch_ros</depend>
+
+  <exec_depend>python3</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
