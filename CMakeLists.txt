@@ -16,6 +16,7 @@ ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   silero_vad/silero_vad_node.py
   interactions/interaction_node.py
+  silero_vad/speech_only.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

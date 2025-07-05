@@ -6,23 +6,28 @@ from ament_index_python.packages import get_package_share_directory
 
 def generate_launch_description():
     config = os.path.join(
-        get_package_share_directory('byc_'),
+        get_package_share_directory('by_your_command'),
         'config',
         'config.yaml'
     )
     return LaunchDescription([
         Node(
-            package='byc_',
-            executable='silero_vad_node.py',
+            package='audio_common',
+            executable='audio_capturer_node',
+            name='audio_capturer_node',
+            output='screen'
+        ),
+        Node(
+            package='by_your_command',
+            executable='silero_vad_node',
             name='silero_vad_node',
             output='screen',
             parameters=[config]
         ),
         Node(
-            package='byc_',
-            executable='interaction_node.py',
-            name='interaction_node',
-            output='screen',
-            parameters=[config]
+            package='by_your_command',
+            executable='speech_only',
+            name='speech_only',
+            output='screen'
         ),
     ])

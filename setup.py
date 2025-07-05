@@ -21,6 +21,7 @@ setup(
         'console_scripts': [
             'silero_vad_node = silero_vad.silero_vad_node:main',
             'interaction_node = interactions.interaction_node:main',
+            'speech_only = silero_vad.speech_only:main',
         ],
     },
 )

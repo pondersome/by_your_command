@@ -1,0 +1,6 @@
+# Python dependencies for ByYourCommand
+openai-whisper>=20250625
+openai>=1.93.0
+silero-vad>=5.1.2
+torch>=2.7.1
+python-dotenv>=1.1.1
