@@ -4,6 +4,19 @@ ByYourCommand is a ROS 2 package for voice, camera, and video interactions. It u
 
 ## Installation
 
+Install ROS 2 dependencies:
+
+```bash
+# audio_common (publisher node & msg definitions)
+sudo apt install ros-$ROS_DISTRO-audio-common ros-$ROS_DISTRO-audio-common-msgs
+
+# PortAudio (for audio capture)
+sudo apt install portaudio19-dev libportaudio2
+
+# FFmpeg (openai-whisper needs ffmpeg to load audio files)
+sudo apt install ffmpeg
+```
+
 Install Python dependencies:
 
 ```bash
@@ -16,7 +29,7 @@ Build and source the package:
 
 ```bash
 # From your ROS 2 workspace root
-colcon build --packages-select byc_
+colcon build --packages-select by_your_command
 source install/setup.bash
 ```
 

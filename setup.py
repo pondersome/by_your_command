@@ -5,7 +5,7 @@ package_name = 'by_your_command'
 setup(
     name=package_name,
     version='0.0.1',
-    packages=find_packages(include=['silero_vad', 'silero_vad.*', 'interactions', 'interactions.*']),
+    packages=[package_name, 'silero_vad', 'interactions'],
     install_requires=[
         'openai-whisper>=2023.7.1',
         'openai>=0.27.0',
