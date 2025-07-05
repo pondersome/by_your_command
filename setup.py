@@ -5,7 +5,7 @@ package_name = 'by_your_command'
 setup(
     name=package_name,
     version='0.0.1',
-    packages=[package_name, 'silero_vad', 'interactions'],
+    packages=[package_name, 'voice_detection', 'interactions'],
     install_requires=[
         'openai-whisper>=2023.7.1',
         'openai>=0.27.0',
@@ -19,9 +19,9 @@ setup(
     license='Apache-2.0',
     entry_points={
         'console_scripts': [
-            'silero_vad_node = silero_vad.silero_vad_node:main',
+            'silero_vad_node = voice_detection.silero_vad_node:main',
             'interaction_node = interactions.interaction_node:main',
-            'speech_only = silero_vad.speech_only:main',
+            'speech_only = voice_detection.speech_only:main',
         ],
     },
 )

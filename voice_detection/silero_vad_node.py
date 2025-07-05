@@ -3,13 +3,13 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
-from audio_common_msgs.msg import AudioStamped
+from audio_common_msgs.msg import AudioStamped, AudioData
 
 import numpy as np
 import collections
 import time
 
-# Silero VAD imports
+# Silero VAD imports - direct import from PyPI package
 from silero_vad import load_silero_vad, VADIterator, get_speech_timestamps
 
 # CONFIGURABLE PARAMETERS

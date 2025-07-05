@@ -13,12 +13,12 @@ find_package(rosidl_default_generators REQUIRED)
 
 # Install Python modules
 ament_python_install_package(${PROJECT_NAME})
-ament_python_install_package(silero_vad)
+ament_python_install_package(voice_detection)
 ament_python_install_package(interactions)
 
 # Create symlinks for console scripts in lib/${PROJECT_NAME}
 install(PROGRAMS
-  silero_vad/silero_vad_node.py
+  voice_detection/silero_vad_node.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME silero_vad_node
 )
@@ -30,7 +30,7 @@ install(PROGRAMS
 )
 
 install(PROGRAMS
-  silero_vad/speech_only.py
+  voice_detection/speech_only.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME speech_only
 )
