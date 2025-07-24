@@ -29,12 +29,12 @@ Simply terminating sessions breaks the conversational flow. Users expect:
 ## 2. Solution Overview
 
 ### 2.1 Key Architectural Assumption: Local VAD Pre-filtering
-The `/speech_chunks` topic receives audio that has **already been VAD-filtered** by a separate ROS2 node (e.g., `silero_vad_node`). This is critical because:
+The `/voice_chunks` topic receives audio that has **already been VAD-filtered** by a separate ROS2 node (e.g., `silero_vad_node`). This is critical because:
 
-1. **True Silence Detection**: The bridge can detect actual pauses by the absence of messages on `/speech_chunks`, not by analyzing audio content
+1. **True Silence Detection**: The bridge can detect actual pauses by the absence of messages on `/voice_chunks`, not by analyzing audio content
 2. **Independent of LLM VAD**: While the Realtime API includes VAD, we don't depend on it for pause detection
 3. **Network Efficiency**: Only meaningful speech is transmitted, not continuous audio streams
-4. **Clean Pause Boundaries**: When `/speech_chunks` stops arriving, we know the user has actually stopped speaking
+4. **Clean Pause Boundaries**: When `/voice_chunks` stops arriving, we know the user has actually stopped speaking
 
 This architectural choice enables the aggressive pause-based session cycling to work reliably.
 
@@ -235,11 +235,11 @@ IDLE → CONNECTING → ACTIVE → CLOSING → CLOSED → IDLE
 
 #### 3.1.2 Core Strategy: Aggressive Pause-Based Cycling
 
-**Key Insight**: Every pause is an opportunity to reset the expensive token accumulation by cycling the session. This works because `/speech_chunks` arrives pre-filtered by local VAD, allowing true pause detection.
+**Key Insight**: Every pause is an opportunity to reset the expensive token accumulation by cycling the session. This works because `/voice_chunks` arrives pre-filtered by local VAD, allowing true pause detection.
 
 **VAD Architecture**:
 ```
-[Microphone] → [silero_vad_node] → /speech_chunks → [ros_ai_bridge] → [LLM API]
+[Microphone] → [silero_vad_node] → /voice_chunks → [ros_ai_bridge] → [LLM API]
                      ↑                                        ↓
               (Local VAD filtering)                  (API also has VAD)
 ```
@@ -287,8 +287,8 @@ class PauseDetector:
 - This is **independent** of the OpenAI Realtime API's internal VAD
 
 **Session Creation Triggers**:
-- First `/speech_chunks` received when no session exists
-- New `/speech_chunks` after pause-induced closure
+- First `/voice_chunks` received when no session exists
+- New `/voice_chunks` after pause-induced closure
 - After any session rotation (pause-based or limit-based)
 
 **Session Rotation Triggers**:
@@ -416,7 +416,7 @@ async def cycle_session_on_pause(self):
     self.session_state = SessionState.IDLE
     self.prepared_context = context
     
-    # New session will be created when speech_chunks arrive
+    # New session will be created when voice_chunks arrive
 ```
 
 #### 3.3.2 Smart Session Timing
@@ -768,7 +768,7 @@ User Input → Realtime API → Fast Response to User
 
 [0:45] Robot: "Here is my planned route..."
 [1:00] Robot finishes response
-[1:00-1:10] SILENCE (no speech_chunks, LLM complete)
+[1:00-1:10] SILENCE (no voice_chunks, LLM complete)
        → Pause timer triggered
        
 [1:10] Aggressive cycle activated!

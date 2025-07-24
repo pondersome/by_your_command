@@ -162,9 +162,9 @@ Git initialized for `by_your_command`. First commit created with scaffold, nodes
 
 I've updated the Silero VAD Node
 
-This node subscribes to /audio_in from audio_common to receive audio input from the default device (microphone or camera) into a rolling buffer and uses SileroVAD to detect human voice. While voice is detected, it assembles it into chunks that are published on /speech_chunks and when silero detects the end of an utterance, the full utterance is sent on /voice_activity.
+This node subscribes to /audio_in from audio_common to receive audio input from the default device (microphone or camera) into a rolling buffer and uses SileroVAD to detect human voice. While voice is detected, it assembles it into chunks that are published on /voice_chunks and when silero detects the end of an utterance, the full utterance is sent on /voice_activity.
 
-The intent is to provide a stream of speech chunks that only contain voice so that Whisper or another stt model can consume them for transcription or translation. We want a flexible isolated set of nodes so that they can be distributed over the robot's network wherever the resources are sufficient. We want to avoid sending silence or non-human noise in the voice chunks so the llm isn't constantly working and consuming resouces or usage fees. We want to ensure that we don't cut off audio frames just prior to voice being detected since they may include the start of words. We expect to be running VAD node continuously - hopefully on robot. The node producing the raw audio stream is running continuously on the robot from its microphone.
+The intent is to provide a stream of voice chunks that only contain voice so that Whisper or another stt model can consume them for transcription or translation. We want a flexible isolated set of nodes so that they can be distributed over the robot's network wherever the resources are sufficient. We want to avoid sending silence or non-human noise in the voice chunks so the llm isn't constantly working and consuming resouces or usage fees. We want to ensure that we don't cut off audio frames just prior to voice being detected since they may include the start of words. We expect to be running VAD node continuously - hopefully on robot. The node producing the raw audio stream is running continuously on the robot from its microphone.
 
 Double check the interfaces available from the official repo at https://github.com/snakers4/silero-vad and in particular the streaming example at https://github.com/snakers4/silero-vad/wiki/Examples-and-Dependencies#dependencies and then re-analyze this node for functionality and completeness. 
 
@@ -178,7 +178,7 @@ I’ve reviewed the official Silero-VAD streaming example and compared it to you
 2. ROS interfaces  
    • **Subscriber** on `/audio_in` (e.g. `audio_common_msgs/AudioData`).  
    • **Publishers** for:  
-     – `/speech_chunks` (raw audio frames containing only speech)  
+     – `/voice_chunks` (raw audio frames containing only voice)  
      – `/voice_activity` (e.g. `std_msgs/Bool` toggling start/end of utterance)  
 
 3. Audio conversion  
@@ -1220,7 +1220,7 @@ Traceback (most recent call last):
   File "/home/karim/ros2_ws/install/by_your_command/lib/by_your_command/silero_vad_node", line 143, in main
     node = SileroVADNode()
   File "/home/karim/ros2_ws/install/by_your_command/lib/by_your_command/silero_vad_node", line 50, in __init__
-    self.chunk_pub = self.create_publisher(AudioData, 'speech_chunks', qos_profile=qos)
+    self.chunk_pub = self.create_publisher(AudioData, 'voice_chunks', qos_profile=qos)
 NameError: name 'AudioData' is not defined
 [ros2run]: Process exited with failure 1
 
@@ -1441,7 +1441,7 @@ so some progress, it started detecting voice:
 
 ~/ros2_ws$ ros2 run by_your_command silero_vad_node
 [WARN] [1751745616.142330387] [silero_vad_node]: New subscription discovered on topic 'voice_activity', requesting incompatible QoS. No messages will be sent to it. Last incompatible policy: RELIABILITY
-[WARN] [1751745616.142951609] [silero_vad_node]: New subscription discovered on topic 'speech_chunks', requesting incompatible QoS. No messages will be sent to it. Last incompatible policy: RELIABILITY
+[WARN] [1751745616.142951609] [silero_vad_node]: New subscription discovered on topic 'voice_chunks', requesting incompatible QoS. No messages will be sent to it. Last incompatible policy: RELIABILITY
 [INFO] [1751745620.104734781] [silero_vad_node]: Voice detected. Starting utterance.
 [INFO] [1751745622.636532154] [silero_vad_node]: Voice ended. Publishing final chunk.
 [INFO] [1751745622.637043155] [silero_vad_node]: Chunk extracted: 0.32 sec
@@ -1504,7 +1504,7 @@ The QoS warnings are expected since the node is using BEST_EFFORT reliability po
 
 ### User Input
 
-okay it's staying up and it's publishing to /speech_chunks only when it hears my voice. so silence is conquered. the problem is that is seems to detect end of voice right away and only ever delivers one chunk. here is me counting to ten very quickly:
+okay it's staying up and it's publishing to /voice_chunks only when it hears my voice. so silence is conquered. the problem is that is seems to detect end of voice right away and only ever delivers one chunk. here is me counting to ten very quickly:
 
 [INFO] [1751746101.155559830] [silero_vad_node]: Voice detected. Starting utterance.
 [INFO] [1751746102.181933816] [silero_vad_node]: Voice ended. Publishing final chunk.
@@ -1923,9 +1923,9 @@ all parameters will be correctly passed into `silero_vad_node`. Let me know if t
 still not seeing any wav files in tmp. maybe related to QOS?
 
 [silero_vad_node-2] [WARN] [1751853388.573652771] [silero_vad_node]: New subscription discovered on topic 'voice_activity', requesting incompatible QoS. No messages will be sent to it. Last incompatible policy: RELIABILITY
-[silero_vad_node-2] [WARN] [1751853388.574371583] [silero_vad_node]: New subscription discovered on topic 'speech_chunks', requesting incompatible QoS. No messages will be sent to it. Last incompatible policy: RELIABILITY
+[silero_vad_node-2] [WARN] [1751853388.574371583] [silero_vad_node]: New subscription discovered on topic 'voice_chunks', requesting incompatible QoS. No messages will be sent to it. Last incompatible policy: RELIABILITY
 [speech_only-3] [WARN] [1751853388.593586598] [speech_only]: New publisher discovered on topic 'voice_activity', offering incompatible QoS. No messages will be received from it. Last incompatible policy: RELIABILITY
-[speech_only-3] [WARN] [1751853388.594516257] [speech_only]: New publisher discovered on topic 'speech_chunks', offering incompatible QoS. No messages will be received from it. Last incompatible policy: RELIABILITY
+[speech_only-3] [WARN] [1751853388.594516257] [speech_only]: New publisher discovered on topic 'voice_chunks', offering incompatible QoS. No messages will be received from it. Last incompatible policy: RELIABILITY
 [silero_vad_node-2] [DEBUG] [1751853427.878295958] [silero_
 
 *Semantic searched codebase*
@@ -1945,7 +1945,7 @@ I aligned the QoS policies between the two nodes:
 • In `silero_vad_node`, you publish with a BEST_EFFORT, KEEP_LAST(10) profile.  
 • In [speech_only.py](cci:7://file:///home/karim/ros2_ws/src/by_your_command/voice_detection/speech_only.py:0:0-0:0), I added the same QoSProfile (BEST_EFFORT, KEEP_LAST(10)) for both subscriptions.
 
-This resolves the “incompatible QoS” warnings so that `speech_only` will now actually receive the `voice_activity` and `speech_chunks` messages. Please rebuild, relaunch, and verify that WAV files appear in `/tmp` when speech is detected.
+This resolves the "incompatible QoS" warnings so that `speech_only` will now actually receive the `voice_activity` and `voice_chunks` messages. Please rebuild, relaunch, and verify that WAV files appear in `/tmp` when voice is detected.
 
 *Viewed [speech_only.py](file:///home/karim/ros2_ws/src/by_your_command/voice_detection/speech_only.py) *
 
@@ -2031,7 +2031,7 @@ From the logs we can see:
    - At silence timeout, `silero_vad_node` logs “Voice ended. Publishing final chunk.”
    - *It then* publishes `voice_activity = False` **before** calling [publish_chunk()](cci:1://file:///home/karim/ros2_ws/src/by_your_command/voice_detection/silero_vad_node.py:125:4-146:41).
    - `speech_only` receives the `False`, immediately closes its writer.
-   - Next, it receives the `speech_chunks` message but its writer is already `None`, so it skips writing any audio. The file remains just the 44-byte WAV header.
+   - Next, it receives the `voice_chunks` message but its writer is already `None`, so it skips writing any audio. The file remains just the 44-byte WAV header.
 
 Suggested remedies:
 
@@ -2171,7 +2171,7 @@ for example, pre_roll_ms should be changed to pre_roll_frames where we specify a
 
 we still want to pay attention to time for debugging/logging and timestamps, as well as where sileroVAD requires params in secs or ms. we are also missing some tuning parameters when instantiating silero, like min_silence_duration_ms and threshold. all parameter refactorings need to propagate into the launch file.
 
-let's also make sure our language is clean. incoming raw audio is in frames. these frames are assembled with pre-roll into outgoing chunks on /speech_chunks. chunks are always multiples of whole frames and there are a maximum number of frames to assemble into an interim chunk if silero thinks speech is ongoing. 
+let's also make sure our language is clean. incoming raw audio is in frames. these frames are assembled with pre-roll into outgoing chunks on /voice_chunks. chunks are always multiples of whole frames and there are a maximum number of frames to assemble into an interim chunk if silero thinks voice is ongoing. 
 
 *Grep searched codebase*
 

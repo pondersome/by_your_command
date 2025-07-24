@@ -60,10 +60,10 @@ def generate_launch_description():
         description='Enable verbose logging'
     )
     
-    enable_speech_recorder_arg = DeclareLaunchArgument(
-        'enable_speech_recorder',
+    enable_voice_recorder_arg = DeclareLaunchArgument(
+        'enable_voice_recorder',
         default_value='false',
-        description='Enable speech chunk recorder for debugging'
+        description='Enable voice chunk recorder for debugging'
     )
     
     # Audio capture node
@@ -109,17 +109,17 @@ def generate_launch_description():
         }
     )
     
-    # Optional: Speech chunk recorder for debugging
-    speech_recorder = Node(
+    # Optional: Voice chunk recorder for debugging
+    voice_recorder = Node(
         package='by_your_command',
-        executable='speech_chunk_recorder',
-        name='speech_chunk_recorder',
+        executable='voice_chunk_recorder',
+        name='voice_chunk_recorder',
         output='screen',
         parameters=[{
-            'output_dir': '/tmp/speech_chunks',
+            'output_dir': '/tmp/voice_chunks',
             'sample_rate': 16000
         }],
-        condition=IfCondition(LaunchConfiguration('enable_speech_recorder'))
+        condition=IfCondition(LaunchConfiguration('enable_voice_recorder'))
     )
     
     # Startup message
@@ -140,7 +140,7 @@ def generate_launch_description():
         model_arg,
         voice_arg,
         verbose_arg,
-        enable_speech_recorder_arg,
+        enable_voice_recorder_arg,
         
         # Startup message
         startup_message,
@@ -150,5 +150,5 @@ def generate_launch_description():
         silero_vad,
         ros_ai_bridge,
         openai_agent,
-        speech_recorder
+        voice_recorder
     ])

@@ -10,13 +10,22 @@ find_package(ament_cmake_python REQUIRED)
 find_package(rclpy REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(audio_common_msgs REQUIRED)
+
+# Generate custom messages
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/AudioDataUtterance.msg"
+  "msg/AudioDataUtteranceStamped.msg"
+  DEPENDENCIES std_msgs audio_common_msgs
+)
 
 # Install Python modules
-ament_python_install_package(${PROJECT_NAME})
 ament_python_install_package(voice_detection)
 ament_python_install_package(interactions)
 ament_python_install_package(ros_ai_bridge)
 ament_python_install_package(agents)
+ament_python_install_package(tests)
 
 # Create symlinks for console scripts in lib/${PROJECT_NAME}
 install(PROGRAMS
@@ -32,9 +41,9 @@ install(PROGRAMS
 )
 
 install(PROGRAMS
-  voice_detection/speech_chunk_recorder.py
+  voice_detection/voice_chunk_recorder.py
   DESTINATION lib/${PROJECT_NAME}
-  RENAME speech_chunk_recorder
+  RENAME voice_chunk_recorder
 )
 
 install(PROGRAMS
@@ -61,6 +70,13 @@ install(DIRECTORY
 install(FILES
   package.xml
   DESTINATION share/${PROJECT_NAME}
+)
+
+# Export dependencies
+ament_export_dependencies(
+  std_msgs
+  audio_common_msgs
+  rosidl_default_runtime
 )
 
 ament_package()

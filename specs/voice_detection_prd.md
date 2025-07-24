@@ -1,5 +1,6 @@
 # Voice Detection System PRD
 
+**Author**: Karim Virani  
 **Package**: by_your_command  
 **Subsystem**: voice_detection  
 **Version**: 2.0  
@@ -7,42 +8,42 @@
 
 ## Overview
 
-The voice detection system provides intelligent voice activity detection (VAD) and speech chunk extraction for the ByYourCommand robotic interaction package. It serves as a critical preprocessing layer that filters continuous audio streams to extract only speech-containing segments, optimizing downstream processing for transcription and LLM interaction.
+The voice detection system provides intelligent voice activity detection (VAD) and voice chunk extraction for the ByYourCommand robotic interaction package. This is entirely made possible by the excellent SileroVAD package. Here we extend its iterator capabilities to serve as a critical preprocessing layer that filters continuous audio streams to extract only voice-containing frames and assemble them into voice chunks, optimizing downstream processing for transcription and LLM interaction.
 
 ## Core Objectives
 
 ### Primary Goals
-1. **Selective Audio Processing**: Stream only speech chunks to prevent unnecessary processing of silence and non-human audio
-2. **Speech Completeness**: Ensure no speech is lost at utterance boundaries through intelligent pre-roll buffering
+1. **Selective Audio Processing**: Stream only voice chunks to prevent unnecessary processing of silence and non-human audio
+2. **Voice Completeness**: Ensure no voice is lost at utterance boundaries through intelligent pre-roll buffering
 3. **Distributed Architecture Support**: Enable flexible deployment across robot networks based on resource availability
-4. **Real-time Performance**: Maintain low-latency speech detection suitable for interactive robotic applications
+4. **Real-time Performance**: Maintain low-latency voice detection suitable for interactive robotic applications
 
 ### Performance Requirements
-- **Latency**: <100ms from speech start to detection
-- **Accuracy**: Minimize false positives/negatives in speech detection
+- **Latency**: <100ms from voice start to detection
+- **Accuracy**: Minimize false positives/negatives in voice detection
 - **Resource Efficiency**: Continuous operation suitable for embedded/edge deployment
-- **Network Optimization**: Reduce audio data transmission by ~80% through speech-only filtering
+- **Network Optimization**: Reduce audio data transmission by ~80% through voice-only filtering
 
 ## System Architecture
 
 ### Node Structure
 ```
-Audio Input → [silero_vad_node] → Speech Chunks → [downstream processors]
+Audio Input → [silero_vad_node] → Voice Chunks → [downstream processors]
                      ↓
-              [speech_chunk_recorder] (testing/validation)
+              [voice_chunk_recorder] (testing/validation)
 ```
 
 ### Core Components
 
 #### 1. silero_vad_node
-**Purpose**: Primary VAD processing and speech chunk extraction
+**Purpose**: Primary VAD processing and voice chunk extraction
 
 **Inputs**:
 - `/audio` (AudioStamped): Continuous audio stream from audio_capturer_node
 
 **Outputs**:
-- `/speech_chunks` (AudioData): Extracted speech segments with pre-roll
-- `/voice_activity` (Bool): Binary speech state for system coordination
+- `/voice_chunks` (AudioData): Extracted voice segments with pre-roll
+- `/voice_activity` (Bool): Binary voice state for system coordination
 
 **Key Features**:
 - Frame-based processing with rolling buffer
@@ -50,11 +51,11 @@ Audio Input → [silero_vad_node] → Speech Chunks → [downstream processors]
 - Configurable chunking for long utterances
 - Pre-roll buffer to capture speech beginnings
 
-#### 2. speech_chunk_recorder  
-**Purpose**: Testing and validation node for speech chunk quality
+#### 2. voice_chunk_recorder  
+**Purpose**: Testing and validation node for voice chunk quality
 
 **Inputs**:
-- `/speech_chunks` (AudioData): Speech segments from VAD node
+- `/voice_chunks` (AudioData): Voice segments from VAD node
 - `/voice_activity` (Bool): Utterance boundary markers
 
 **Outputs**:
@@ -135,7 +136,7 @@ silero_vad_node:
 - **Detection Accuracy**: Speech/silence classification accuracy
 - **Boundary Precision**: Utterance start/end timing accuracy  
 - **Audio Quality**: Reconstructed speech clarity and completeness
-- **System Latency**: Time from speech to chunk availability
+- **System Latency**: Time from voice to chunk availability
 
 ### Debug and Monitoring
 - Configurable logging levels with throttled verbose output
@@ -150,7 +151,7 @@ silero_vad_node:
 - **silero-vad**: PyPI package for VAD model and iterator
 
 ### Downstream Interfaces
-- **ROS AI Bridge**: Speech chunk transport to external agents
+- **ROS AI Bridge**: Voice chunk transport to external agents
 - **Whisper Transcription**: Speech-to-text processing
 - **LLM Interaction**: Natural language processing pipeline
 
@@ -172,7 +173,7 @@ QoS:
 ### Configuration Tuning
 - **Sensitive Environments**: Lower threshold, shorter silence duration
 - **Noisy Environments**: Higher threshold, longer silence duration  
-- **Long-form Speech**: Enable streaming chunks, adjust timeout values
+- **Long-form Voice**: Enable streaming chunks, adjust timeout values
 - **Low-latency Applications**: Minimize buffer depths, reduce timeouts
 
 ## Architecture Lessons Learned
@@ -183,7 +184,7 @@ QoS:
    - **Solution**: Eliminate absolute indexing, copy frames directly into dedicated buffers
    - **Impact**: Fixed missing audio data and state corruption on long utterances
 
-2. **Race Conditions**: Timeout-based file closing in speech_chunk_recorder caused empty files
+2. **Race Conditions**: Timeout-based file closing in voice_chunk_recorder caused empty files
    - **Root Cause**: Files closed before final chunks processed
    - **Solution**: Event-driven closing on final chunk receipt
    - **Anti-pattern**: Increasing timeout duration (masks underlying issue)

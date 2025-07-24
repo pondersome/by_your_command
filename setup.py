@@ -26,7 +26,9 @@ setup(
         'console_scripts': [
             'silero_vad_node = voice_detection.silero_vad_node:main',
             'interaction_node = interactions.interaction_node:main',
-            'speech_chunk_recorder = voice_detection.speech_chunk_recorder:main',
+            'voice_chunk_recorder = voice_detection.voice_chunk_recorder:main',
+            'test_utterance_chunks = tests.test_utterance_chunks:main',
+            'test_recorder_integration = tests.test_recorder_integration:main',
             'ros_ai_bridge = ros_ai_bridge.ros_ai_bridge:main',
             'oai_realtime_agent = agents.main:main',
         ],

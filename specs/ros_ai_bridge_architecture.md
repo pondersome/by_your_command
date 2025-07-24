@@ -159,7 +159,7 @@ Bridge passes ROS message objects directly through internal queues without seria
 def audio_callback(self, ros_msg: AudioData):
     envelope = MessageEnvelope(
         msg_type="topic",
-        topic_name="/speech_chunks", 
+        topic_name="/voice_chunks", 
         raw_data=ros_msg,  # Pass ROS message object directly
         ros_msg_type="audio_common_msgs/AudioData",
         timestamp=time.time()
@@ -230,7 +230,7 @@ ros_ai_bridge:
     
     # Topics to bridge (ROS → Agent)
     subscribed_topics:
-      - topic: "/speech_chunks"
+      - topic: "/voice_chunks"
         msg_type: "audio_common_msgs/AudioData"
       - topic: "/camera/image_raw"  
         msg_type: "sensor_msgs/Image"

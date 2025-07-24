@@ -39,8 +39,8 @@ ros_ai_bridge:
     
     # Topics to bridge (ROS → Agent)
     subscribed_topics:
-      - topic: "/speech_chunks"
-        msg_type: "audio_common_msgs/AudioData"
+      - topic: "/voice_chunks"
+        msg_type: "by_your_command/AudioDataUtterance"
       - topic: "/text_input"
         msg_type: "std_msgs/String"
         

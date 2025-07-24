@@ -1,0 +1,3 @@
+# Timestamped version of AudioDataUtterance for header compatibility
+std_msgs/Header header
+by_your_command/AudioDataUtterance audio_data_utterance
