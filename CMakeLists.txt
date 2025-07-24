@@ -15,6 +15,8 @@ find_package(rosidl_default_generators REQUIRED)
 ament_python_install_package(${PROJECT_NAME})
 ament_python_install_package(voice_detection)
 ament_python_install_package(interactions)
+ament_python_install_package(ros_ai_bridge)
+ament_python_install_package(agents)
 
 # Create symlinks for console scripts in lib/${PROJECT_NAME}
 install(PROGRAMS
@@ -30,9 +32,21 @@ install(PROGRAMS
 )
 
 install(PROGRAMS
-  voice_detection/speech_only.py
+  voice_detection/speech_chunk_recorder.py
   DESTINATION lib/${PROJECT_NAME}
-  RENAME speech_only
+  RENAME speech_chunk_recorder
+)
+
+install(PROGRAMS
+  ros_ai_bridge/ros_ai_bridge.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME ros_ai_bridge
+)
+
+install(PROGRAMS
+  agents/oai_realtime/main.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME oai_realtime_agent
 )
 
 # Install configuration, launch files, and other resources

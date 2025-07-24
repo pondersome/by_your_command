@@ -26,8 +26,8 @@ def generate_launch_description():
         ),
         Node(
             package='by_your_command',
-            executable='speech_only',
-            name='speech_only',
+            executable='speech_chunk_recorder',
+            name='speech_chunk_recorder',
             output='screen'
         ),
     ])

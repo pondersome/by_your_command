@@ -13,33 +13,35 @@ import time
 from silero_vad import load_silero_vad, VADIterator, get_speech_timestamps
 
 # CONFIGURABLE PARAMETERS
-SAMPLE_RATE = 16000
-FRAME_DURATION_MS = 20  # duration per frame
-FRAME_SIZE = int(SAMPLE_RATE * FRAME_DURATION_MS / 1000)
-MAX_BUFFER_SECONDS = 5  # seconds of audio to keep for pre-roll
-PRE_ROLL_MS = 300       # how much to go back before VAD triggers
-UTTERANCE_TIMEOUT_SEC = 1.0  # silence duration to consider end of utterance
-UTTERANCE_CHUNK_SEC = 2.0    # max duration for sub-chunking; 0 to publish only on utterance end
+SAMPLE_RATE = 16000  # audio sampling rate
+# Buffer and chunk definitions in frames
+DEFAULT_MAX_BUFFER_FRAMES = 250
+DEFAULT_PRE_ROLL_FRAMES = 15
+DEFAULT_UTTERANCE_CHUNK_FRAMES = 100
+# VAD tuning parameters
+DEFAULT_THRESHOLD = 0.5
+DEFAULT_MIN_SILENCE_DURATION_MS = 200
 
 class SileroVADNode(Node):
     def __init__(self):
         super().__init__('silero_vad_node')
-        # Declare configurable parameters
+        # Set DEBUG log level to see more info
+        self.get_logger().set_level(rclpy.logging.LoggingSeverity.DEBUG)
+        # Declare frame‐based parameters
         self.declare_parameter('sample_rate', SAMPLE_RATE)
-        self.declare_parameter('frame_duration_ms', FRAME_DURATION_MS)
-        self.declare_parameter('max_buffer_seconds', MAX_BUFFER_SECONDS)
-        self.declare_parameter('pre_roll_ms', PRE_ROLL_MS)
-        self.declare_parameter('utterance_timeout_sec', UTTERANCE_TIMEOUT_SEC)
-        self.declare_parameter('utterance_chunk_sec', UTTERANCE_CHUNK_SEC)
-        # Load parameter values
+        self.declare_parameter('max_buffer_frames', DEFAULT_MAX_BUFFER_FRAMES)
+        self.declare_parameter('pre_roll_frames', DEFAULT_PRE_ROLL_FRAMES)
+        self.declare_parameter('utterance_chunk_frames', DEFAULT_UTTERANCE_CHUNK_FRAMES)
+        self.declare_parameter('threshold', DEFAULT_THRESHOLD)
+        self.declare_parameter('min_silence_duration_ms', DEFAULT_MIN_SILENCE_DURATION_MS)
+        # Fetch parameter values
         self.sample_rate = self.get_parameter('sample_rate').get_parameter_value().integer_value
-        self.frame_duration_ms = self.get_parameter('frame_duration_ms').get_parameter_value().integer_value
-        self.max_buffer_seconds = self.get_parameter('max_buffer_seconds').get_parameter_value().integer_value
-        self.pre_roll_ms = self.get_parameter('pre_roll_ms').get_parameter_value().integer_value
-        self.utterance_timeout_sec = self.get_parameter('utterance_timeout_sec').get_parameter_value().double_value
-        self.utterance_chunk_sec = self.get_parameter('utterance_chunk_sec').get_parameter_value().double_value
-        # Subscriptions and publishers
-        # QoS profile for audio streaming
+        self.max_buffer_frames = self.get_parameter('max_buffer_frames').get_parameter_value().integer_value
+        self.pre_roll_frames = self.get_parameter('pre_roll_frames').get_parameter_value().integer_value
+        self.utterance_chunk_frames = self.get_parameter('utterance_chunk_frames').get_parameter_value().integer_value
+        self.threshold = self.get_parameter('threshold').get_parameter_value().double_value
+        self.min_silence_duration_ms = self.get_parameter('min_silence_duration_ms').get_parameter_value().integer_value
+        # QoS and topics
         qos = QoSProfile(
             history=QoSHistoryPolicy.KEEP_LAST,
             depth=10,
@@ -48,94 +50,166 @@ class SileroVADNode(Node):
         self.create_subscription(AudioStamped, 'audio', self.audio_callback, qos_profile=qos)
         self.voice_pub = self.create_publisher(Bool, 'voice_activity', qos_profile=qos)
         self.chunk_pub = self.create_publisher(AudioData, 'speech_chunks', qos_profile=qos)
-
-        # Initialize Silero VAD model and iterator
+        # Load and instantiate VADIterator with tuning
         self.model = load_silero_vad()
-        self.vad_iterator = VADIterator(self.model, sampling_rate=self.sample_rate)
-
-        # Buffers for audio and timestamps
-        max_frames = int(MAX_BUFFER_SECONDS * 1000 / FRAME_DURATION_MS)
-        self.frame_buffer = collections.deque(maxlen=max_frames)
-        self.time_buffer = collections.deque(maxlen=max_frames)
-
-        # Utterance tracking state
+        self.vad_iterator = VADIterator(
+            self.model,
+            sampling_rate=self.sample_rate,
+            threshold=self.threshold,
+            min_silence_duration_ms=self.min_silence_duration_ms
+        )
+        self.vad_speech_state = False
+        # Initialize buffer and state
+        # Buffer for full-utterance mode (used when utterance_chunk_frames == 0)
+        self.utterance_buffer = []
+        # Circular buffer for VAD and pre-roll (always maintained)
+        self.frame_buffer = collections.deque(maxlen=self.max_buffer_frames)
+        # For chunking mode: accumulate frames directly, don't rely on circular buffer indices
+        self.chunking_buffer = []  # Frames since last published chunk
         self.in_utterance = False
-        self.last_voice_time = None
-        self.utterance_start_time = None
+        self.chunk_count = 0
 
     def audio_callback(self, msg: AudioStamped):
-        # Convert incoming AudioStamped to float32 samples
-        # Extract int16 samples from AudioStamped
+        # Convert incoming AudioStamped to numpy int16
         audio_list = msg.audio.audio_data.int16_data
         audio_int16 = np.array(audio_list, dtype=np.int16)
-        if audio_int16.size < FRAME_SIZE:
-            return  # ignore partial frames
         audio_bytes = audio_int16.tobytes()
+        # VAD on float samples
         audio_float = audio_int16.astype(np.float32) / 32768.0
-        if audio_float.size < FRAME_SIZE:
-            return  # ignore partial frames
-
-        # Take one frame for VAD
-        frame = audio_float[:FRAME_SIZE]
-
-        # Run VAD iterator on numpy array
-        speech_activity = bool(self.vad_iterator(frame))
-        now = time.time()
-
-        # Buffer frame and timestamp for pre-roll
-        self.frame_buffer.append(audio_bytes)
-        self.time_buffer.append(now)
-
-        # Voice detection logic
-        if speech_activity:
-            self.last_voice_time = now
-            if not self.in_utterance:
-                # Speech started
-                self.in_utterance = True
-                self.utterance_start_time = now
-                self.get_logger().info('Voice detected. Starting utterance.')
-                self.voice_pub.publish(Bool(data=True))
-                # If not chunking, publish full utterance immediately
-                if self.utterance_chunk_sec == 0:
-                    self.publish_chunk()
-            elif self.utterance_chunk_sec > 0 and now - self.utterance_start_time >= self.utterance_chunk_sec:
-                # Interim chunk reached
-                self.get_logger().info('Max chunk duration reached. Publishing interim chunk.')
-                self.utterance_start_time = now
-                self.publish_chunk()
+        # Toggle speech state on each VAD boundary event
+        events = self.vad_iterator(audio_float) or []
+        for _ in events:
+            self.vad_speech_state = not self.vad_speech_state
+        speech_activity = self.vad_speech_state
+        
+        # Log speech activity on state changes or periodic intervals
+        current_time = time.time()
+        should_log = False
+        
+        # Check if this is a state change
+        if hasattr(self, '_prev_log_speech_activity'):
+            if speech_activity != self._prev_log_speech_activity:
+                # State changed - always log and reset timer
+                should_log = True
+                self._last_activity_log_time = current_time
         else:
-            # No speech in this frame
-            if self.in_utterance and (now - self.last_voice_time > self.utterance_timeout_sec):
-                # End of utterance
-                self.in_utterance = False
-                self.get_logger().info('Voice ended. Publishing final chunk.')
-                self.voice_pub.publish(Bool(data=False))
-                self.publish_chunk()
-                # Reset VAD internal state for next utterance
-                self.vad_iterator.reset_states()
-                # Clear buffers after utterance
-                self.frame_buffer.clear()
-                self.time_buffer.clear()
+            # First time - always log
+            should_log = True
+            self._last_activity_log_time = current_time
+            
+        # Check if 10 seconds have passed since last log
+        if not should_log:
+            if not hasattr(self, '_last_activity_log_time') or (current_time - self._last_activity_log_time) >= 10.0:
+                should_log = True
+                self._last_activity_log_time = current_time
+                
+        if should_log:
+            self.get_logger().info(f'Speech activity: {speech_activity}')
+            
+        self._prev_log_speech_activity = speech_activity
+        # Append frame
+        self.frame_buffer.append(audio_bytes)
+        # Track VAD state transitions for utterance end detection
+        vad_ended_speech = (not speech_activity and self.in_utterance and 
+                           hasattr(self, '_prev_speech_activity') and self._prev_speech_activity)
+        self._prev_speech_activity = speech_activity
+        # Utterance start
+        if speech_activity and not self.in_utterance:
+            self.in_utterance = True
+            self.chunk_count = 0
+            self.get_logger().info('Voice detected. Starting utterance.')
+            self.voice_pub.publish(Bool(data=True))
+            
+            if self.utterance_chunk_frames == 0:
+                # Full utterance mode: initialize with pre-roll from circular buffer
+                pre_roll_frames = list(self.frame_buffer)[-self.pre_roll_frames:]
+                self.utterance_buffer = pre_roll_frames[:]
+                self.get_logger().info(f'Initialized utterance buffer with {len(self.utterance_buffer)} pre-roll frames')
+            else:
+                # Chunking mode: initialize chunking buffer with pre-roll
+                pre_roll_frames = list(self.frame_buffer)[-self.pre_roll_frames:]
+                self.chunking_buffer = pre_roll_frames[:]
+                self.get_logger().info(f'Initialized chunking buffer with {len(self.chunking_buffer)} pre-roll frames')
+        
+        # Accumulate current frame
+        if self.in_utterance:
+            if self.utterance_chunk_frames == 0:
+                # Full utterance mode: add to utterance buffer
+                self.utterance_buffer.append(audio_bytes)
+            else:
+                # Chunking mode: add to chunking buffer
+                self.chunking_buffer.append(audio_bytes)
+                
+                # Check if we need to publish an interim chunk
+                if len(self.chunking_buffer) >= self.utterance_chunk_frames:
+                    self.get_logger().info(f'Interim chunk reached. Publishing chunk with {len(self.chunking_buffer)} frames')
+                    self._publish_chunking_buffer()
+                    # Reset chunking buffer for next chunk (no pre-roll needed for interim chunks)
+                    self.chunking_buffer = []
+        # Utterance end by VAD state transition
+        if vad_ended_speech:
+            self.in_utterance = False
+            self.get_logger().info('Voice ended. Publishing final chunk.')
+            self.voice_pub.publish(Bool(data=False))
+            if self.utterance_chunk_frames > 0:
+                # Chunking mode: publish any remaining frames in chunking buffer
+                if len(self.chunking_buffer) > 0:
+                    self.get_logger().info(f'Publishing final chunk with {len(self.chunking_buffer)} remaining frames')
+                    self._publish_chunking_buffer()
+                else:
+                    self.get_logger().info('No remaining frames for final chunk')
+            else:
+                full_audio = b''.join(self.utterance_buffer)
+                if len(full_audio) > 0:
+                    chunk_msg = AudioData()
+                    chunk_msg.int16_data = np.frombuffer(full_audio, dtype=np.int16).tolist()
+                    self.chunk_pub.publish(chunk_msg)
+                    self.get_logger().info(f'Published full utterance chunk with {len(chunk_msg.int16_data)} samples')
+                else:
+                    self.get_logger().warning('No audio data in utterance buffer, not publishing chunk')
+            self.vad_iterator.reset_states()
+            
+            # Reset buffers to prevent corruption on next utterance
+            self.utterance_buffer = []
+            self.chunking_buffer = []
+            self.chunk_count = 0
+
 
     def publish_chunk(self):
-        # Determine start index using PRE_ROLL_MS
-        now = time.time()
-        pre_roll_sec = self.pre_roll_ms / 1000.0
-        start_index = 0
-        for i, t in enumerate(self.time_buffer):
-            if now - t < pre_roll_sec:
-                start_index = max(0, i)
-                break
-
-        # Concatenate buffered frames into one audio bytes blob
-        full_audio = b''.join(list(self.frame_buffer)[start_index:])
-        duration_sec = len(full_audio) / 2 / self.sample_rate
-        self.get_logger().info(f'Chunk extracted: {duration_sec:.2f} sec')
-
-        # Publish as AudioData message
+        total = len(self.frame_buffer)
+        # Determine start index
+        if self.chunk_count == 0:
+            start_idx = max(0, self.utterance_start_buffer_idx - self.pre_roll_frames)
+        else:
+            start_idx = self.last_chunk_buffer_idx
+        # Slice frames
+        frames = list(self.frame_buffer)[start_idx:total]
+        audio_data = b''.join(frames)
+        duration = len(audio_data) / 2 / self.sample_rate
+        self.get_logger().info(
+            f'Publishing chunk {self.chunk_count}: frames {start_idx}-{total}, duration {duration:.2f}s'
+        )
+        # Publish
         chunk_msg = AudioData()
-        chunk_msg.data = list(full_audio)
+        chunk_msg.int16_data = np.frombuffer(audio_data, dtype=np.int16).tolist()
         self.chunk_pub.publish(chunk_msg)
+        # Update counters
+        self.last_chunk_buffer_idx = total
+        self.chunk_count += 1
+
+    def _publish_chunking_buffer(self):
+        """Publish current chunking buffer contents"""
+        audio_data = b''.join(self.chunking_buffer)
+        duration = len(audio_data) / 2 / self.sample_rate
+        self.get_logger().info(
+            f'Publishing chunk {self.chunk_count}: {len(self.chunking_buffer)} frames, duration {duration:.2f}s'
+        )
+        
+        # Publish
+        chunk_msg = AudioData()
+        chunk_msg.int16_data = np.frombuffer(audio_data, dtype=np.int16).tolist()
+        self.chunk_pub.publish(chunk_msg)
+        self.chunk_count += 1
 
 
 def main(args=None):

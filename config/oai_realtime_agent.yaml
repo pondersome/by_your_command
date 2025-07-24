@@ -1,0 +1,54 @@
+# OpenAI Realtime Agent Configuration
+openai_realtime_agent:
+  # OpenAI API Configuration
+  openai_api_key: ""  # Set via OPENAI_API_KEY environment variable
+  model: "gpt-4o-realtime-preview"
+  voice: "alloy"  # Options: alloy, echo, fable, onyx, nova, shimmer
+  
+  # Session Management
+  session_pause_timeout: 10.0      # Seconds of silence before session cycling
+  session_max_duration: 120.0      # Maximum session duration (seconds)
+  session_max_tokens: 50000        # Rough token limit per session
+  session_max_cost: 5.00           # Rough cost limit per session ($)
+  
+  # Context Management
+  max_context_tokens: 2000         # Maximum context tokens to preserve
+  max_context_age: 3600           # Maximum age of context (seconds)
+  
+  # Voice Activity Detection (OpenAI API settings)
+  vad_threshold: 0.5              # VAD sensitivity (0.0-1.0)
+  vad_prefix_padding: 300         # Milliseconds of audio before speech
+  vad_silence_duration: 200       # Milliseconds of silence to detect end
+  
+  # System Prompt
+  system_prompt: |
+    You are a helpful robotic assistant. You can control robot movements, 
+    answer questions, and engage in natural conversation. Be concise but friendly.
+    Respond naturally to the user's speech and provide helpful information or assistance.
+    
+    You are capable of understanding and executing robot commands when requested.
+    Always prioritize safety and ask for clarification if commands are ambiguous.
+
+# ROS AI Bridge Configuration
+ros_ai_bridge:
+  ros__parameters:
+    # Queue configuration
+    max_queue_size: 100
+    queue_timeout_ms: 1000
+    drop_policy: "oldest"
+    
+    # Topics to bridge (ROS → Agent)
+    subscribed_topics:
+      - topic: "/speech_chunks"
+        msg_type: "audio_common_msgs/AudioData"
+      - topic: "/text_input"
+        msg_type: "std_msgs/String"
+        
+    # Topics to publish (Agent → ROS)
+    published_topics:
+      - topic: "/audio_out"
+        msg_type: "audio_common_msgs/AudioData"
+      - topic: "/llm_transcript" 
+        msg_type: "std_msgs/String"
+      - topic: "/cmd_vel"
+        msg_type: "geometry_msgs/Twist"

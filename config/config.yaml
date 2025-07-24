@@ -1,3 +1,10 @@
-# API keys and configuration
-openai_api_key: "YOUR_OPENAI_API_KEY"
-silero_model: "silero_vad.jit"
+# Silero VAD configuration
+silero_vad_node:
+  ros__parameters:
+    silero_model: "silero_vad.jit"
+    sample_rate: 16000 # samples per second
+    max_buffer_frames: 250
+    pre_roll_frames: 15
+    utterance_chunk_frames: 10 # 0 for no chunking - send the whole utterance as detected by silero. Otherwise, send interim chunks of the utterance at least every n frames
+    threshold: 0.5 # VAD threshold
+    min_silence_duration_ms: 250 # Minimum duration of silence in milliseconds before signaling end of utterance
