@@ -16,7 +16,7 @@ import os
 import yaml
 from typing import Dict, Any
 
-from agents.oai_realtime_agent import OpenAIRealtimeAgent
+from agents.oai_realtime.oai_realtime_agent import OpenAIRealtimeAgent
 
 
 def load_config(config_path: str = None) -> Dict[str, Any]:

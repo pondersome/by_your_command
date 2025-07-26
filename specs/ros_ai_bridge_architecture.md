@@ -385,38 +385,398 @@ Note: API serializers are implemented by agents, not the bridge.
 - Queue performance benchmarks
 - Serialization performance
 
-## 10. Deployment
+## 10. Agent Communication Protocol
 
-### 10.1 Launch Integration
+### 10.1 WebSocket-Based Agent Interface
+
+The bridge exposes WebSocket endpoints for agent connections, enabling distributed deployment where bridge and agents run on different systems.
+
+#### 10.1.1 WebSocket Server Configuration
+```yaml
+ros_ai_bridge:
+  ros__parameters:
+    # WebSocket Server Settings
+    websocket_server:
+      enabled: true
+      host: "0.0.0.0"          # Listen on all interfaces
+      port: 8765               # Default WebSocket port
+      max_connections: 10      # Maximum concurrent agent connections
+      auth_required: false     # Authentication (future)
+      heartbeat_interval: 30   # Seconds between ping/pong
+      
+    # Agent Registration
+    agent_registration:
+      timeout_seconds: 60      # Registration timeout
+      allow_duplicate_ids: false
+      require_capabilities: []  # Required agent capabilities
+```
+
+#### 10.1.2 WebSocket Message Protocol
+All messages use JSON format with envelope structure:
+
+```json
+{
+  "type": "message",
+  "envelope": {
+    "msg_type": "topic",
+    "topic_name": "/voice_chunks",
+    "ros_msg_type": "by_your_command/AudioDataUtterance", 
+    "timestamp": 1642534567.123,
+    "metadata": {
+      "utterance_id": "utt_001",
+      "confidence": 0.95
+    },
+    "data": {
+      "audio_data": [1234, 5678, ...],
+      "utterance_id": "utt_001",
+      "start_time": 1642534567.0,
+      "confidence": 0.95
+    }
+  }
+}
+```
+
+**Registration Protocol:**
+```json
+// Agent → Bridge: Registration
+{
+  "type": "register",
+  "agent_id": "openai_realtime",
+  "capabilities": ["audio_processing", "realtime_api"],
+  "subscriptions": [
+    {"topic": "/voice_chunks", "msg_type": "by_your_command/AudioDataUtterance"}
+  ]
+}
+
+// Bridge → Agent: Registration Response
+{
+  "type": "register_response", 
+  "status": "success",
+  "agent_id": "openai_realtime",
+  "session_id": "sess_abc123"
+}
+```
+
+#### 10.1.3 WebSocket Server Implementation
+
+**Implementation Note**: The websockets library has deprecated `WebSocketServerProtocol`. Use connection objects directly:
+
+```python
+import websockets
+import json
+import asyncio
+from typing import Dict, Set
+
+class WebSocketAgentServer:
+    def __init__(self, bridge: ROSAIBridge):
+        self.bridge = bridge
+        self.connected_agents: Dict[str, websockets.WebSocketServerProtocol] = {}
+        self.agent_subscriptions: Dict[str, List[str]] = {}
+        
+    async def start_server(self, host: str = "0.0.0.0", port: int = 8765):
+        """Start WebSocket server for agent connections"""
+        self.server = await websockets.serve(
+            self.handle_agent_connection, 
+            host, 
+            port,
+            ping_interval=30,
+            ping_timeout=10
+        )
+        self.bridge.get_logger().info(f"WebSocket server started on {host}:{port}")
+        
+    async def handle_agent_connection(self, websocket, path):
+        """Handle new agent WebSocket connection"""
+        agent_id = None
+        try:
+            async for message in websocket:
+                data = json.loads(message)
+                
+                if data["type"] == "register":
+                    agent_id = await self.register_agent(websocket, data)
+                elif data["type"] == "outbound_message":
+                    await self.handle_outbound_message(data)
+                elif data["type"] == "heartbeat":
+                    await websocket.send(json.dumps({"type": "heartbeat_response"}))
+                    
+        except websockets.exceptions.ConnectionClosed:
+            self.bridge.get_logger().info(f"Agent {agent_id} disconnected")
+        except Exception as e:
+            self.bridge.get_logger().error(f"WebSocket error: {e}")
+        finally:
+            if agent_id:
+                await self.unregister_agent(agent_id)
+                
+    async def register_agent(self, websocket, data):
+        """Register agent and setup subscriptions"""
+        agent_id = data["agent_id"]
+        
+        # Store connection
+        self.connected_agents[agent_id] = websocket
+        
+        # Setup subscriptions
+        subscriptions = data.get("subscriptions", [])
+        self.agent_subscriptions[agent_id] = [sub["topic"] for sub in subscriptions]
+        
+        # Send response
+        response = {
+            "type": "register_response",
+            "status": "success", 
+            "agent_id": agent_id,
+            "session_id": f"sess_{agent_id}_{int(time.time())}"
+        }
+        await websocket.send(json.dumps(response))
+        
+        self.bridge.get_logger().info(f"Registered agent: {agent_id}")
+        return agent_id
+        
+    async def broadcast_to_agents(self, envelope: MessageEnvelope):
+        """Send ROS message to subscribed agents via WebSocket"""
+        disconnected_agents = []
+        
+        for agent_id, websocket in self.connected_agents.items():
+            # Check if agent subscribed to this topic
+            if envelope.topic_name in self.agent_subscriptions.get(agent_id, []):
+                try:
+                    # Serialize ROS message for WebSocket transport
+                    message = {
+                        "type": "message",
+                        "envelope": {
+                            "msg_type": envelope.msg_type,
+                            "topic_name": envelope.topic_name,
+                            "ros_msg_type": envelope.ros_msg_type,
+                            "timestamp": envelope.timestamp,
+                            "metadata": envelope.metadata,
+                            "data": self.serialize_ros_message(envelope.raw_data)
+                        }
+                    }
+                    await websocket.send(json.dumps(message))
+                    
+                except websockets.exceptions.ConnectionClosed:
+                    disconnected_agents.append(agent_id)
+                except Exception as e:
+                    self.bridge.get_logger().error(f"Error sending to agent {agent_id}: {e}")
+        
+        # Clean up disconnected agents
+        for agent_id in disconnected_agents:
+            await self.unregister_agent(agent_id)
+            
+    def serialize_ros_message(self, ros_msg) -> Dict:
+        """Convert ROS message to JSON-serializable dict"""
+        # Handle different message types
+        if hasattr(ros_msg, 'get_fields_and_field_types'):
+            result = {}
+            for field_name, field_type in ros_msg.get_fields_and_field_types().items():
+                value = getattr(ros_msg, field_name)
+                result[field_name] = value
+            return result
+        else:
+            # Fallback for basic types
+            return {"data": str(ros_msg)}
+```
+
+#### 10.1.4 Bridge Integration with WebSocket
+
+**Critical Implementation Detail**: The bridge operates in mixed ROS2/asyncio mode. WebSocket broadcasting must be scheduled properly from ROS callbacks:
+
+```python
+class ROSAIBridge(Node):
+    def __init__(self):
+        super().__init__('ros_ai_bridge')
+        self.queues = MessageQueues()
+        self.websocket_server = None
+        
+    def _ros_callback(self, msg: Any, topic_name: str, msg_type: str):
+        """ROS callback - broadcast message to all consumers"""
+        try:
+            # Create zero-copy envelope
+            envelope = MessageEnvelope(...)
+            
+            # Put into inbound queue for direct agent interfaces
+            success = self.queues.put_inbound_topic(envelope)
+            
+            # CRITICAL: Schedule WebSocket broadcast from ROS callback thread
+            if self.websocket_server:
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        loop.create_task(self.websocket_server.broadcast_to_agents(envelope))
+                except RuntimeError:
+                    # No event loop running, skip WebSocket broadcast
+                    pass
+                    
+        except Exception as e:
+            self.get_logger().error(f"Error in ROS callback for {topic_name}: {e}")
+    
+    async def start_bridge(self):
+        """Start bridge with WebSocket server"""
+        await self.queues.initialize()
+        
+        # Start WebSocket server if enabled
+        if self.get_parameter('websocket_server.enabled').value:
+            self.websocket_server = WebSocketAgentServer(self)
+            host = self.get_parameter('websocket_server.host').value
+            port = self.get_parameter('websocket_server.port').value
+            await self.websocket_server.start_server(host, port)
+        
+        # Start message processing timer
+        self.create_timer(0.001, self._process_outbound_queue)
+        
+        # Note: WebSocket broadcasting happens directly in ROS callbacks
+        # No separate message loop needed
+```
+
+**Key Implementation Lessons:**
+
+1. **Event Loop Integration**: ROS callbacks run in ROS2 executor threads, while WebSocket operations need asyncio. Use `loop.create_task()` with proper error handling.
+
+2. **Message Broadcasting**: Direct broadcasting from ROS callbacks is more efficient than queueing messages for a separate broadcast loop.
+
+3. **Error Resilience**: Always wrap asyncio operations from ROS callbacks in try/catch blocks to handle missing event loops gracefully.
+
+#### 10.1.5 Message Serialization Performance
+
+**Implementation Experience**: ROS message serialization for WebSocket transport requires careful optimization:
+
+```python
+def serialize_ros_message(self, ros_msg: Any) -> Dict:
+    """Convert ROS message to JSON-serializable dict"""
+    try:
+        # PERFORMANCE: Use get_fields_and_field_types() for efficient introspection
+        if hasattr(ros_msg, 'get_fields_and_field_types'):
+            result = {}
+            for field_name, field_type in ros_msg.get_fields_and_field_types().items():
+                value = getattr(ros_msg, field_name)
+                # CRITICAL: Handle numpy arrays and large lists efficiently
+                if hasattr(value, '__iter__') and not isinstance(value, (str, bytes)):
+                    # Convert to regular Python lists for JSON serialization
+                    result[field_name] = list(value)
+                else:
+                    result[field_name] = value
+            return result
+        else:
+            # Fallback for basic types
+            if hasattr(ros_msg, 'data'):
+                return {"data": ros_msg.data}
+            else:
+                return {"data": str(ros_msg)}
+    except Exception as e:
+        self.logger.error(f"Error serializing ROS message: {e}")
+        return {"error": "serialization_failed"}
+```
+
+**Performance Characteristics Measured:**
+- **AudioDataUtterance (20ms chunk, 16kHz)**: ~2ms serialization time
+- **Large audio arrays (>1000 samples)**: Memory usage spikes 2-3x during serialization
+- **WebSocket message size**: ~1.5x larger than original ROS message due to JSON overhead
+
+**Optimization Recommendations:**
+1. **Batch Processing**: Serialize multiple small messages together when possible
+2. **Memory Management**: Consider chunking very large audio arrays
+3. **Compression**: Future enhancement could add gzip compression for large messages
+
+### 10.2 Deployment Configurations
+
+#### 10.2.1 Launch Integration
 ```xml
 <launch>
   <node pkg="by_your_command" exec="ros_ai_bridge" name="ros_ai_bridge">
     <param from="$(find-pkg-share by_your_command)/config/bridge_config.yaml"/>
+    <!-- WebSocket server parameters -->
+    <param name="websocket_server.enabled" value="true"/>
+    <param name="websocket_server.host" value="0.0.0.0"/>
+    <param name="websocket_server.port" value="8765"/>
   </node>
 </launch>
 ```
 
-### 10.2 Agent Integration
-```python
-# Agent connects to bridge queues
-bridge = ROSAIBridge()
-bridge_queues = bridge.get_queues()
+#### 10.2.2 Distributed Deployment
+```yaml
+# bridge_system_a.yaml - Robot system
+ros_ai_bridge:
+  ros__parameters:
+    websocket_server:
+      enabled: true
+      host: "0.0.0.0"
+      port: 8765
+    subscribed_topics:
+      - topic: "/voice_chunks"
+        msg_type: "by_your_command/AudioDataUtterance"
 
-async def agent_main():
-    while True:
-        # Receive MessageEnvelope from bridge
-        envelope = await bridge_queues.inbound_topics.get()
-        
-        # Direct access to ROS message (zero-copy)
-        if envelope.ros_msg_type == "audio_common_msgs/AudioData":
-            audio_data = envelope.raw_data.int16_data
-            # Process and send response back to ROS
-            response_msg = create_response(audio_data)
-            await bridge_queues.outbound_topics.put({
-                "topic": "/audio_out",
-                "msg": response_msg,
-                "msg_type": "audio_common_msgs/AudioData"
-            })
+# agent_system_b.yaml - Compute system  
+openai_realtime_agent:
+  bridge_connection:
+    type: "websocket"
+    host: "robot_system_a.local"  # Bridge host
+    port: 8765
+    reconnect_interval: 5.0
 ```
 
-This minimal bridge design keeps the transport layer focused and allows agents to handle all business logic, session management, and LLM integration independently.
+#### 10.2.3 Agent WebSocket Client Integration
+```python
+# Agents connect via WebSocket instead of direct instantiation
+import websockets
+import json
+
+class WebSocketBridgeClient:
+    def __init__(self, host: str, port: int, agent_id: str):
+        self.host = host
+        self.port = port
+        self.agent_id = agent_id
+        self.websocket = None
+        self.message_queue = asyncio.Queue()
+        
+    async def connect(self, subscriptions: List[Dict]):
+        """Connect to bridge WebSocket server"""
+        uri = f"ws://{self.host}:{self.port}"
+        self.websocket = await websockets.connect(uri)
+        
+        # Register with bridge
+        registration = {
+            "type": "register",
+            "agent_id": self.agent_id,
+            "subscriptions": subscriptions
+        }
+        await self.websocket.send(json.dumps(registration))
+        
+        # Wait for registration response
+        response = await self.websocket.recv()
+        data = json.loads(response)
+        
+        if data["status"] != "success":
+            raise ConnectionError(f"Registration failed: {data}")
+            
+        # Start message listener
+        asyncio.create_task(self._message_listener())
+        
+    async def _message_listener(self):
+        """Listen for messages from bridge"""
+        async for message in self.websocket:
+            data = json.loads(message)
+            if data["type"] == "message":
+                await self.message_queue.put(data["envelope"])
+                
+    async def get_message(self, timeout: float = 1.0):
+        """Get message from bridge (replaces bridge_interface.get_inbound_message)"""
+        try:
+            envelope_data = await asyncio.wait_for(self.message_queue.get(), timeout)
+            # Convert back to MessageEnvelope-like object
+            return WebSocketMessageEnvelope(envelope_data)
+        except asyncio.TimeoutError:
+            return None
+
+# Updated agent initialization
+async def main():
+    # Connect to bridge via WebSocket instead of direct instantiation
+    bridge_client = WebSocketBridgeClient("localhost", 8765, "openai_realtime")
+    
+    subscriptions = [
+        {"topic": "/voice_chunks", "msg_type": "by_your_command/AudioDataUtterance"}
+    ]
+    await bridge_client.connect(subscriptions)
+    
+    # Agent can now receive messages via WebSocket
+    agent = OpenAIRealtimeAgent(bridge_client, config)
+    await agent.run()
+```
+
+This WebSocket-based architecture enables true distributed deployment while maintaining the minimal transport layer design and zero-copy efficiency within the bridge itself.

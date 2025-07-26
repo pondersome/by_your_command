@@ -29,8 +29,12 @@ setup(
             'voice_chunk_recorder = voice_detection.voice_chunk_recorder:main',
             'test_utterance_chunks = tests.test_utterance_chunks:main',
             'test_recorder_integration = tests.test_recorder_integration:main',
+            'test_websocket_bridge = tests.test_websocket_bridge:main',
+            'test_full_websocket_system = tests.test_full_websocket_system:main',
             'ros_ai_bridge = ros_ai_bridge.ros_ai_bridge:main',
             'oai_realtime_agent = agents.main:main',
+            'audio_data_to_stamped = by_your_command.audio_data_to_stamped:main',
+            'simple_audio_player = by_your_command.simple_audio_player:main',
         ],
     },
 )

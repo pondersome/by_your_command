@@ -58,6 +58,18 @@ install(PROGRAMS
   RENAME oai_realtime_agent
 )
 
+install(PROGRAMS
+  by_your_command/simple_audio_player.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME simple_audio_player
+)
+
+install(PROGRAMS
+  by_your_command/echo_suppressor.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME echo_suppressor
+)
+
 # Install configuration, launch files, and other resources
 install(DIRECTORY 
   bringup

@@ -1,5 +1,16 @@
 # OpenAI Realtime Agent Configuration
 openai_realtime_agent:
+  # Agent Identity
+  agent_id: "openai_realtime"
+  
+  # Bridge Connection (WebSocket-based distributed deployment)
+  bridge_connection:
+    type: "websocket"               # Connection type: websocket | direct
+    host: "localhost"               # Bridge WebSocket server host  
+    port: 8765                      # Bridge WebSocket server port
+    reconnect_interval: 5.0         # Seconds between reconnection attempts
+    max_reconnect_attempts: 10      # Maximum reconnection attempts
+    heartbeat_interval: 30          # WebSocket heartbeat interval
   # OpenAI API Configuration
   openai_api_key: ""  # Set via OPENAI_API_KEY environment variable
   model: "gpt-4o-realtime-preview"
@@ -29,9 +40,24 @@ openai_realtime_agent:
     You are capable of understanding and executing robot commands when requested.
     Always prioritize safety and ask for clarification if commands are ambiguous.
 
-# ROS AI Bridge Configuration
+# ROS AI Bridge Configuration (WebSocket-enabled)
 ros_ai_bridge:
   ros__parameters:
+    # WebSocket Server Settings
+    websocket_server:
+      enabled: true
+      host: "0.0.0.0"          # Listen on all interfaces for distributed deployment
+      port: 8765               # Default WebSocket port
+      max_connections: 10      # Maximum concurrent agent connections
+      auth_required: false     # Authentication (future enhancement)
+      heartbeat_interval: 30   # Seconds between ping/pong
+      
+    # Agent Registration
+    agent_registration:
+      timeout_seconds: 60      # Registration timeout
+      allow_duplicate_ids: false
+      require_capabilities: []  # Required agent capabilities
+    
     # Queue configuration
     max_queue_size: 100
     queue_timeout_ms: 1000

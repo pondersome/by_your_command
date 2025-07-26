@@ -3,6 +3,7 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool
 from by_your_command.msg import AudioDataUtterance
+from audio_common_msgs.msg import AudioData
 import wave
 from array import array
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
@@ -12,16 +13,25 @@ DEFAULT_SAMPLE_RATE = 16000
 import os
 import time
 
-class TestNode(Node):
+class VoiceChunkRecorder(Node):
     def __init__(self):
-        super().__init__('test_node')
+        super().__init__('voice_chunk_recorder')
         # Parameters
         self.declare_parameter('output_dir', '/tmp')
         self.declare_parameter('sample_rate', DEFAULT_SAMPLE_RATE)
         self.declare_parameter('close_timeout_sec', 2.0)  # Timeout for waiting for final chunk
+        self.declare_parameter('input_mode', 'utterance')  # 'utterance' or 'audio_data'
+        self.declare_parameter('input_topic', '/audio_out')  # Topic for audio_data mode
+        self.declare_parameter('input_sample_rate', 24000)  # Sample rate of input audio
+        self.declare_parameter('audio_timeout', 10.0)  # Timeout for audio_data mode
+        
         self.output_dir = self.get_parameter('output_dir').get_parameter_value().string_value
         self.sample_rate = self.get_parameter('sample_rate').get_parameter_value().integer_value
         self.close_timeout = self.get_parameter('close_timeout_sec').get_parameter_value().double_value
+        self.input_mode = self.get_parameter('input_mode').get_parameter_value().string_value
+        self.input_topic = self.get_parameter('input_topic').get_parameter_value().string_value
+        self.input_sample_rate = self.get_parameter('input_sample_rate').get_parameter_value().integer_value
+        self.audio_timeout = self.get_parameter('audio_timeout').get_parameter_value().double_value
         # Ensure output directory exists
         os.makedirs(self.output_dir, exist_ok=True)
 
@@ -34,6 +44,11 @@ class TestNode(Node):
         self.current_utterance_file = None
         self.utterance_start_time = None
         
+        # Audio data mode tracking
+        self.audio_data_timer = None
+        self.audio_data_start_time = None
+        self.audio_data_file = None
+        
         # QoS profile matching silero_vad_node publishers - increased depth for reliability
         qos = QoSProfile(
             history=QoSHistoryPolicy.KEEP_LAST,
@@ -41,11 +56,17 @@ class TestNode(Node):
             reliability=QoSReliabilityPolicy.BEST_EFFORT
         )
         
-        # Subscribe to enhanced chunks with utterance metadata
-        self.create_subscription(AudioDataUtterance, 'voice_chunks', self.chunk_callback, qos_profile=qos)
-        
-        # Optional: still subscribe to voice_activity for debugging/logging only
-        self.create_subscription(Bool, 'voice_activity', self.voice_activity_debug, qos_profile=qos)
+        # Subscribe based on input mode
+        if self.input_mode == 'audio_data':
+            self.get_logger().info(f"Starting in audio_data mode, subscribing to {self.input_topic}")
+            self.get_logger().info(f"Input sample rate: {self.input_sample_rate} Hz, timeout: {self.audio_timeout} seconds")
+            self.create_subscription(AudioData, self.input_topic, self.audio_data_callback, qos_profile=qos)
+        else:
+            self.get_logger().info("Starting in utterance mode")
+            # Subscribe to enhanced chunks with utterance metadata
+            self.create_subscription(AudioDataUtterance, 'voice_chunks', self.chunk_callback, qos_profile=qos)
+            # Optional: still subscribe to voice_activity for debugging/logging only
+            self.create_subscription(Bool, 'voice_activity', self.voice_activity_debug, qos_profile=qos)
 
     def voice_activity_debug(self, msg: Bool):
         """Optional debug callback - voice_activity is no longer used for file management"""
@@ -148,18 +169,101 @@ class TestNode(Node):
                 f"(received {self.chunks_received} chunks)"
             )
             self._close_current_file("Timeout waiting for end marker")
+    
+    def audio_data_callback(self, msg: AudioData):
+        """Handle continuous audio data from /audio_out"""
+        current_time = time.time()
+        
+        # Check which field has data
+        audio_bytes = None
+        if msg.int16_data:
+            # Convert int16 array to bytes
+            try:
+                audio_array = array('h', msg.int16_data)
+                audio_bytes = audio_array.tobytes()
+            except Exception as e:
+                self.get_logger().error(f'Failed to convert int16_data to bytes: {e}')
+                return
+        elif msg.uint8_data:
+            # Already in byte format
+            audio_bytes = bytes(msg.uint8_data)
+        else:
+            self.get_logger().warning('No audio data found in message')
+            return
+        
+        # Start new file if needed
+        if not self.writer:
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            fname = os.path.join(self.output_dir, f"audio_out_{timestamp}.wav")
+            self.audio_data_file = fname
+            self.audio_data_start_time = current_time
+            
+            # Open WAV file with input sample rate
+            self.writer = wave.open(fname, 'wb')
+            self.writer.setnchannels(1)  # Mono
+            self.writer.setsampwidth(2)  # 16-bit
+            self.writer.setframerate(self.input_sample_rate)
+            self.chunks_received = 0
+            self.get_logger().info(f"Started recording audio_out -> {fname} at {self.input_sample_rate} Hz")
+        
+        # Write audio data
+        self.writer.writeframes(audio_bytes)
+        self.chunks_received += 1
+        self.last_chunk_time = current_time
+        
+        # Log progress periodically
+        if self.chunks_received % 100 == 0:
+            elapsed = current_time - self.audio_data_start_time
+            self.get_logger().debug(f"Recording: {self.chunks_received} chunks, {elapsed:.1f}s elapsed")
+        
+        # Reset timeout timer
+        if self.audio_data_timer:
+            self.audio_data_timer.cancel()
+        
+        # Start new timeout timer
+        self.audio_data_timer = self.create_timer(self.audio_timeout, self._audio_timeout_callback)
+    
+    def _audio_timeout_callback(self):
+        """Handle timeout for audio_data mode - close file after silence"""
+        if self.writer:
+            elapsed = time.time() - self.audio_data_start_time
+            self.get_logger().info(
+                f"Audio timeout reached - closing file after {elapsed:.1f}s, "
+                f"{self.chunks_received} chunks received"
+            )
+            self._close_audio_file()
+    
+    def _close_audio_file(self):
+        """Close audio data recording file"""
+        if self.writer:
+            self.writer.close()
+            self.writer = None
+            self.get_logger().info(f"Closed audio file: {self.audio_data_file}")
+            
+        # Cancel timer
+        if self.audio_data_timer:
+            self.audio_data_timer.cancel()
+            self.audio_data_timer = None
+            
+        # Reset tracking
+        self.audio_data_file = None
+        self.audio_data_start_time = None
+        self.chunks_received = 0
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = TestNode()
+    node = VoiceChunkRecorder()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
         if node.writer:
-            node._close_current_file("Node shutdown")
+            if node.input_mode == 'audio_data':
+                node._close_audio_file()
+            else:
+                node._close_current_file("Node shutdown")
         node.destroy_node()
         rclpy.shutdown()
 

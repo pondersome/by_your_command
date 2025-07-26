@@ -74,23 +74,51 @@ def generate_launch_description():
         output='screen'
     )
     
+    # Simple audio player for OpenAI response playback
+    audio_player = Node(
+        package='by_your_command',
+        executable='simple_audio_player',
+        name='simple_audio_player',
+        output='screen',
+        parameters=[{
+            'topic': '/audio_out',
+            'sample_rate': 24000,
+            'channels': 1,
+            'device': -1    # Default output device
+        }]
+    )
+    
+    # Echo suppressor - mutes mic when assistant speaks
+    echo_suppressor = Node(
+        package='by_your_command',
+        executable='echo_suppressor',
+        name='echo_suppressor',
+        output='screen'
+    )
+    
     # Silero VAD node for speech detection
     silero_vad = Node(
         package='by_your_command',
         executable='silero_vad_node',
         name='silero_vad_node',
         output='screen',
-        parameters=[bridge_config]
+        parameters=[bridge_config],
+        remappings=[
+            ('/audio', '/audio_filtered')  # Listen to filtered audio
+        ]
     )
     
-    # ROS AI Bridge for data transport
+    # ROS AI Bridge for data transport with WebSocket enabled
     ros_ai_bridge = Node(
         package='by_your_command',
         executable='ros_ai_bridge', 
         name='ros_ai_bridge',
         output='screen',
         parameters=[{
-            'config_file': agent_config
+            'config_file': agent_config,
+            'websocket_server.enabled': True,
+            'websocket_server.host': '0.0.0.0',
+            'websocket_server.port': 8765
         }]
     )
     
@@ -117,7 +145,10 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'output_dir': '/tmp/voice_chunks',
-            'sample_rate': 16000
+            'input_mode': 'audio_data',
+            'input_topic': '/audio_out',
+            'input_sample_rate': 24000,
+            'audio_timeout': 10.0
         }],
         condition=IfCondition(LaunchConfiguration('enable_voice_recorder'))
     )
@@ -147,6 +178,8 @@ def generate_launch_description():
         
         # Nodes
         audio_capturer,
+        echo_suppressor,
+        audio_player,
         silero_vad,
         ros_ai_bridge,
         openai_agent,
