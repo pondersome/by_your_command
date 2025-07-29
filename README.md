@@ -2,6 +2,29 @@
 
 by_your_command is a ROS 2 package for multimodal human-robot interaction supporting voice, camera, and video streams. It provides a complete pipeline from audio capture through LLM integration for real-time conversational robotics.
 
+## Key Features
+
+- **Voice Activity Detection**: Real-time speech detection using Silero VAD
+- **OpenAI Realtime API Integration**: Full bidirectional voice conversations with GPT-4
+- **Echo Suppression**: Prevents feedback loops in open-mic scenarios
+- **Distributed Architecture**: WebSocket-based agent deployment for flexibility
+- **Cost-Optimized Sessions**: Intelligent session cycling to manage API costs
+- **Multi-Agent Support**: Extensible architecture for multiple LLM providers
+
+## Quick Start
+
+1. Set your OpenAI API key:
+```bash
+export OPENAI_API_KEY="sk-..."
+```
+
+2. Launch the complete system:
+```bash
+ros2 launch by_your_command oai_realtime.launch.py
+```
+
+3. Speak naturally - the robot will respond with voice!
+
 ## Installation
 
 Install ROS 2 dependencies:
@@ -23,6 +46,9 @@ Install Python dependencies:
 cd setup
 chmod +x setup.sh
 ./setup.sh
+
+# Additional dependency for audio playback
+pip3 install pyaudio
 ```
 
 Build and source the package:
@@ -35,23 +61,41 @@ source install/setup.bash
 
 ## Configuration
 
-Edit `config/config.yaml` to add your API keys and model paths.
+### API Keys
+Set your OpenAI API key either in `config/oai_realtime_agent.yaml` or as an environment variable:
+```bash
+export OPENAI_API_KEY="your-api-key-here"
+```
+
+### VAD Settings
+Edit `config/config.yaml` to tune voice detection parameters.
 
 ## Usage
 
 Launch all nodes:
 
 ```bash
-# Basic voice detection pipeline
-ros2 launch by_your_command byc.launch.py
-
-# OpenAI Realtime API integration
+# OpenAI Realtime API integration (RECOMMENDED)
 ros2 launch by_your_command oai_realtime.launch.py
+
+# Dual-agent mode: Conversation + Command extraction
+ros2 launch by_your_command oai_dual_agent.launch.py
+
+# Enable voice recording for debugging
+ros2 launch by_your_command oai_realtime.launch.py enable_voice_recorder:=true
+
+# Basic voice detection pipeline (without LLM)
+ros2 launch by_your_command byc.launch.py
 
 # Individual nodes
 ros2 run by_your_command silero_vad_node
 ros2 run by_your_command voice_chunk_recorder
-ros2 run by_your_command interaction_node
+ros2 run by_your_command simple_audio_player
+ros2 run by_your_command echo_suppressor
+
+# Bridge and agents
+ros2 run by_your_command ros_ai_bridge
+ros2 run by_your_command oai_realtime_agent
 
 # Test utilities
 ros2 run by_your_command test_utterance_chunks
@@ -61,10 +105,93 @@ ros2 run by_your_command test_recorder_integration
 ## Architecture
 
 ### Core Pipeline
+
+#### Voice Input Flow
 ```
-Audio Capture → VAD → Voice Chunks → Bridge → Agents → LLM APIs
-     ↓              ↓      (with utterance metadata)   ↓        ↓
-Camera Feed → Image Processing → Bridge → Agents → Multimodal LLMs
+Microphone → audio_capturer → echo_suppressor → /audio_filtered → 
+silero_vad → /voice_chunks → ROS Bridge → WebSocket → 
+OpenAI Agent → OpenAI Realtime API
+```
+
+#### Voice Output Flow
+```
+OpenAI API → response.audio.delta → OpenAI Agent → WebSocket → 
+ROS Bridge → /audio_out → simple_audio_player → Speakers
+         ↓                                              ↓
+         └──────────→ /llm_transcript ──────────────────┘
+                                ↓
+                      /assistant_speaking → echo_suppressor (mutes mic)
+```
+
+#### Complete System Architecture
+```
+┌─────────────┐     ┌──────────────┐     ┌─────────────────┐
+│Audio Capture│     │Camera Capture│     │ Other Sensors   │
+└─────┬───────┘     └──────┬───────┘     └────────┬────────┘
+      ↓                    ↓                       ↓
+┌─────────────┐     ┌──────────────┐              ↓
+│    VAD      │     │Image Process │              ↓
+└─────┬───────┘     └──────┬───────┘              ↓
+      ↓                    ↓                       ↓
+/voice_chunks        /camera/image_raw      /sensor_data
+      ↓                    ↓                       ↓
+      └────────────────────┴───────────────────────┘
+                           ↓
+                  ┌────────────────┐
+                  │  ROS AI Bridge  │ (WebSocket Server)
+                  └────────┬───────┘
+                           ↓ WebSocket
+                  ┌────────────────┐
+                  │   LLM Agents   │ → External APIs
+                  └────────┬───────┘
+                           ↓ WebSocket
+                  ┌────────────────┐
+                  │  ROS AI Bridge  │
+                  └────────┬───────┘
+                           ↓
+    ┌──────────────┬───────┴────────┬─────────────┐
+/audio_out    /llm_transcript   /cmd_vel    /other_outputs
+    ↓              ↓                ↓              ↓
+┌─────────┐   ┌─────────┐      ┌────────┐    ┌────────┐
+│ Speaker │   │ Logger  │      │ Motors │    │ Other  │
+└─────────┘   └─────────┘      └────────┘    └────────┘
+```
+
+#### Dual-Agent Architecture
+```
+                        /voice_chunks
+                              ↓
+                    ┌─────────────────┐
+                    │  ROS AI Bridge  │
+                    │ (WebSocket:8765)│
+                    └────────┬────────┘
+                             │ WebSocket broadcast
+                ┌────────────┴────────────┐
+                ↓                         ↓
+        ┌───────────────┐         ┌──────────────────┐
+        │ Conversational│         │ Command Extractor│
+        │     Agent     │         │      Agent       │
+        │               │         │                  │
+        │ Friendly chat │         │ COMMAND: move... │
+        └───────┬───────┘         └────────┬─────────┘
+                ↓                           ↓
+        ┌───────────────┐         ┌──────────────────┐
+        │OpenAI RT API  │         │ OpenAI RT API    │
+        └───────┬───────┘         └────────┬─────────┘
+                ↓ WebSocket                 ↓ WebSocket
+        ┌───────────────┐         ┌──────────────────┐
+        │  ROS Bridge   │         │   ROS Bridge     │
+        └───────┬───────┘         └────────┬─────────┘
+                ↓                           ↓
+    ┌───────────┴─────────┐       ┌────────┴─────────┐
+    ↓                     ↓       ↓                  ↓
+/audio_out         /llm_transcript  /command_transcript
+    ↓                                                ↓
+┌────────┐                                  /command_detected
+│Speaker │                                          ↓
+└────────┘                                   ┌──────────────┐
+                                            │Robot Control │
+                                            └──────────────┘
 ```
 
 ### Package Structure
@@ -127,13 +254,59 @@ A node that subscribes to enhanced voice chunks and writes them to WAV files wit
 
 ### ros_ai_bridge
 A minimal data transport bridge that handles message queuing between ROS2's callback-based concurrency and agents using asyncio-based concurrency.
+
+**Features**:
+- WebSocket server for distributed agent deployment
+- Zero-copy message handling with MessageEnvelope
+- Dynamic topic subscription/publication
+- Configurable queue management
+
 **Topics**:
-- Subscribes: `/voice_chunks`, `/camera/image_raw`
-- Publishes: `/audio_out`, `/cmd_vel`
+- Subscribes: `/voice_chunks`, `/camera/image_raw` (configurable)
+- Publishes: `/audio_out`, `/cmd_vel`, `/llm_transcript` (configurable)
+
 **Parameters**:
 - `max_queue_size` (int, default 100): Maximum queue size before dropping messages
 - `subscribed_topics` (list): Topics to bridge from ROS to agents
 - `published_topics` (list): Topics to publish from agents to ROS
+- `websocket_server.enabled` (bool): Enable WebSocket server
+- `websocket_server.port` (int, default 8765): WebSocket server port
+
+### simple_audio_player
+A lightweight audio player specifically designed for playing AudioData messages at 24kHz from OpenAI Realtime API.
+
+**Subscribed Topics**:
+- `/audio_out` (audio_common_msgs/AudioData): Audio data to play
+
+**Published Topics**:
+- `/assistant_speaking` (std_msgs/Bool): True when playing audio, False when stopped
+
+**Parameters**:
+- `topic` (string, default "/audio_out"): Input audio topic
+- `sample_rate` (int, default 24000): Audio sample rate
+- `channels` (int, default 1): Number of audio channels
+- `device` (int, default -1): Audio output device (-1 for default)
+
+**Features**:
+- Direct PyAudio playback without format conversion
+- Automatic start/stop based on audio presence
+- Queue-based buffering for smooth playback
+- Assistant speaking status for echo suppression
+
+### echo_suppressor
+Prevents audio feedback loops by muting microphone input while the assistant is speaking.
+
+**Subscribed Topics**:
+- `/audio` (audio_common_msgs/AudioStamped): Raw audio from microphone
+- `/assistant_speaking` (std_msgs/Bool): Assistant speaking status
+
+**Published Topics**:
+- `/audio_filtered` (audio_common_msgs/AudioStamped): Filtered audio (muted when assistant speaks)
+
+**Features**:
+- Real-time audio gating based on assistant status
+- Zero-latency passthrough when assistant is quiet
+- Prevents feedback loops in open-mic scenarios
 
 ### interaction_node (Legacy)
 A node that transcribes voice chunks using Whisper and processes commands with an LLM via OpenAI.
@@ -192,24 +365,118 @@ ros2 run by_your_command test_recorder_integration
 
 ## LLM Integration
 
-### Supported APIs
-- **OpenAI Realtime API**: WebSocket-based streaming with built-in VAD and turn detection
-  - Models: `gpt-4o-realtime-preview`, `gpt-4o-audio-preview`
-  - Features: Bidirectional audio streaming, cached pricing optimization
-- **Google Gemini Live API - TBD**: Low-latency multimodal conversations
-  - Models: `gemini-live-2.5-flash-preview`, `gemini-2.5-flash-preview-native-audio-dialog`
-  - Features: Video support (1024x1024 JPEG), affective dialog capabilities
+### OpenAI Realtime API (Fully Implemented)
+WebSocket-based streaming with real-time voice conversations:
+
+**Features**:
+- ✅ Bidirectional audio streaming (16kHz input, 24kHz output)
+- ✅ Real-time speech-to-text transcription
+- ✅ Natural voice responses with multiple voice options
+- ✅ Manual response triggering (server VAD limitation workaround)
+- ✅ Session cost optimization through intelligent cycling
+- ✅ Echo suppression for open-mic scenarios
+
+**Models**: 
+- `gpt-4o-realtime-preview` (recommended)
+- `gpt-4o-realtime-preview-2024-12-17`
+
+**Configuration**:
+```yaml
+openai_api_key: "sk-..."  # Or set OPENAI_API_KEY env var
+model: "gpt-4o-realtime-preview"
+voice: "alloy"  # Options: alloy, echo, fable, onyx, nova, shimmer
+session_pause_timeout: 10.0  # Seconds before cycling session
+```
+
+### Google Gemini Live API (Planned)
+Low-latency multimodal conversations:
+- Models: `gemini-2.0-flash-exp`
+- Features: Native audio support, 15-minute context window
+- Status: Architecture ready, implementation pending
 
 ### Agent Architecture
-The system uses an agent-based approach for LLM integration:
-- **Separation of Concerns**: ROS bridge handles only data transport; agents handle LLM sessions
-- **Asyncio Concurrency**: Agents run in asyncio event loops for optimal WebSocket performance  
-- **Session Management**: Intelligent session lifecycle with cost optimization and timeout handling
-- **Provider Flexibility**: Pluggable architecture supports multiple LLM providers
+The system uses a distributed agent-based approach:
 
-### Performance Targets
-- **Audio Latency**: < 100ms from speech to LLM processing
-- **Command Latency**: < 200ms from LLM response to ROS2 action
-- **Session Spin-up**: < 500ms for new LLM connections
-- **Throughput**: 50Hz audio chunks, 5-30Hz video streams
+**Key Components**:
+- **ROS AI Bridge**: WebSocket server for agent connections
+- **OpenAI Realtime Agent**: Manages WebSocket sessions with OpenAI
+- **Session Manager**: Handles connection lifecycle and cost optimization
+- **Context Manager**: Preserves conversation continuity across sessions
+- **Named Prompt System**: Dynamic system prompts based on context
+
+**Design Principles**:
+- **Separation of Concerns**: ROS handles sensors/actuators, agents handle AI
+- **Asyncio Concurrency**: Optimal for WebSocket and streaming APIs
+- **Cost Optimization**: Aggressive session cycling on conversation pauses
+- **Fault Tolerance**: Automatic reconnection and state recovery
+
+### Performance Characteristics
+- **Voice Detection**: < 50ms latency (Silero VAD)
+- **Speech-to-Text**: Real-time streaming transcription
+- **Response Generation**: 1-2 seconds for voice response
+- **Audio Playback**: < 100ms from API to speakers
+- **Echo Suppression**: < 50ms response time
+
+### Dual-Agent Architecture
+The system supports running multiple specialized agents simultaneously:
+
+**Benefits**:
+- **Separation of Concerns**: One agent for conversation, one for commands
+- **Better Accuracy**: Specialized prompts for each task
+- **Parallel Processing**: Both agents process the same audio simultaneously
+- **No Conflicts**: Different output topics prevent interference
+
+**Configuration**:
+- Conversational agent publishes to: `/audio_out`, `/llm_transcript`
+- Command agent publishes to: `/command_transcript`, `/command_detected`
+- Both subscribe to: `/voice_chunks`
+
+**Usage**:
+```bash
+# Launch dual agents
+ros2 launch by_your_command oai_dual_agent.launch.py
+
+# Monitor command detection
+ros2 topic echo /command_transcript
+ros2 topic echo /command_detected
+```
+
+## Troubleshooting
+
+### No Audio Output
+- Check that PyAudio is installed: `pip3 install pyaudio`
+- Verify default audio device: `pactl info | grep "Default Sink"`
+- Check topic has data: `ros2 topic echo /audio_out --no-arr`
+- Save audio for debugging: `ros2 launch by_your_command oai_realtime.launch.py enable_voice_recorder:=true`
+
+### Feedback/Echo Issues
+- Ensure echo_suppressor is running: `ros2 node list | grep echo`
+- Use headphones instead of speakers
+- Increase distance between microphone and speakers
+- Check `/assistant_speaking` topic: `ros2 topic echo /assistant_speaking`
+
+### OpenAI Connection Issues
+- Verify API key is set: `echo $OPENAI_API_KEY`
+- Check agent logs for connection errors
+- Ensure WebSocket connectivity (no proxy blocking wss://)
+- Try standalone test: `python3 -m agents.oai_realtime.standalone_demo`
+
+### Voice Not Detected
+- Check VAD sensitivity in `config/config.yaml` (lower threshold = more sensitive)
+- Monitor VAD output: `ros2 topic echo /voice_activity`
+- Verify audio input: `ros2 topic hz /audio`
+
+## Contributing
+
+Contributions are welcome! Please follow the development guidelines in `devrules/agentic_rules.md`.
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the LICENSE file for details.
+
+## Acknowledgments
+
+- Silero Team for the excellent VAD model
+- OpenAI for the Realtime API
+- ROS 2 community for the audio_common package
 

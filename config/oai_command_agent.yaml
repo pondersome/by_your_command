@@ -1,7 +1,7 @@
-# OpenAI Realtime Agent Configuration
-openai_realtime_agent:
+# OpenAI Command Extractor Agent Configuration
+openai_command_agent:
   # Agent Identity
-  agent_id: "openai_realtime"
+  agent_id: "openai_command_extractor"
   
   # Bridge Connection (WebSocket-based distributed deployment)
   bridge_connection:
@@ -11,10 +11,11 @@ openai_realtime_agent:
     reconnect_interval: 5.0         # Seconds between reconnection attempts
     max_reconnect_attempts: 10      # Maximum reconnection attempts
     heartbeat_interval: 30          # WebSocket heartbeat interval
+    
   # OpenAI API Configuration
   openai_api_key: ""  # Set via OPENAI_API_KEY environment variable
   model: "gpt-4o-realtime-preview"
-  voice: "alloy"  # Options: alloy, echo, fable, onyx, nova, shimmer
+  voice: "alloy"  # Not used since we disable audio output
   
   # Session Management
   session_pause_timeout: 10.0      # Seconds of silence before session cycling
@@ -23,8 +24,8 @@ openai_realtime_agent:
   session_max_cost: 5.00           # Rough cost limit per session ($)
   
   # Context Management
-  max_context_tokens: 2000         # Maximum context tokens to preserve
-  max_context_age: 3600           # Maximum age of context (seconds)
+  max_context_tokens: 500          # Smaller context for command extraction
+  max_context_age: 300             # 5 minutes - commands are immediate
   
   # Voice Activity Detection (OpenAI API settings)
   vad_threshold: 0.5              # VAD sensitivity (0.0-1.0)
@@ -32,34 +33,19 @@ openai_realtime_agent:
   vad_silence_duration: 200       # Milliseconds of silence to detect end
   
   # Named prompt selection (from prompts.yaml)
-  prompt_id: "barney_command_visual"  # Default single-agent prompt
+  prompt_id: "barney_command_extractor"  # Command extraction prompt
+  
+  # Published topic configuration
+  audio_out_topic: ""  # Disable audio output for command extractor
+  transcript_topic: "/command_transcript"
+  command_detected_topic: "/command_detected"
   
   # Legacy system prompt (deprecated - use prompt_id instead)
   system_prompt: ""
 
-# ROS AI Bridge Configuration (WebSocket-enabled)
-ros_ai_bridge:
+# ROS AI Bridge Configuration for Command Agent
+ros_ai_bridge_command:
   ros__parameters:
-    # WebSocket Server Settings
-    websocket_server:
-      enabled: true
-      host: "0.0.0.0"          # Listen on all interfaces for distributed deployment
-      port: 8765               # Default WebSocket port
-      max_connections: 10      # Maximum concurrent agent connections
-      auth_required: false     # Authentication (future enhancement)
-      heartbeat_interval: 30   # Seconds between ping/pong
-      
-    # Agent Registration
-    agent_registration:
-      timeout_seconds: 60      # Registration timeout
-      allow_duplicate_ids: false
-      require_capabilities: []  # Required agent capabilities
-    
-    # Queue configuration
-    max_queue_size: 100
-    queue_timeout_ms: 1000
-    drop_policy: "oldest"
-    
     # Topics to bridge (ROS → Agent)
     subscribed_topics:
       - topic: "/voice_chunks"
@@ -67,11 +53,12 @@ ros_ai_bridge:
       - topic: "/text_input"
         msg_type: "std_msgs/String"
         
-    # Topics to publish (Agent → ROS)
+    # Topics to publish (Agent → ROS) - Different to avoid conflicts
     published_topics:
-      - topic: "/audio_out"
-        msg_type: "audio_common_msgs/AudioData"
-      - topic: "/llm_transcript" 
+      - topic: "/command_transcript"   # Different from /llm_transcript
         msg_type: "std_msgs/String"
-      - topic: "/cmd_vel"
+      - topic: "/cmd_vel"              # Same - both agents can command robot
         msg_type: "geometry_msgs/Twist"
+      - topic: "/command_detected"     # New - signals when command found
+        msg_type: "std_msgs/Bool"
+      # Note: No audio_out - command extractor doesn't speak

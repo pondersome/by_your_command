@@ -59,6 +59,10 @@ class SessionManager:
         
         # Named prompt system
         self.prompt_loader = PromptLoader()
+        # Check if prompt_id is specified in config
+        if config.get('prompt_id'):
+            self._prompt_override = config.get('prompt_id')
+            self.logger.info(f"Using configured prompt_id: {self._prompt_override}")
         # Fallback to config system_prompt if named prompts fail
         self.fallback_system_prompt = config.get('system_prompt', self._default_system_prompt())
         

@@ -58,7 +58,9 @@ The system implements a complete conversational loop with context preservation a
 **OpenAI Response Processing**:
 1. **Input Transcription**: OpenAI Whisper transcribes user speech → `conversation.item.input_audio_transcription.completed` events
 2. **Speech Detection**: Server-side VAD detects speech boundaries → `input_audio_buffer.speech_started/stopped` events  
-3. **Response Generation**: Automatic response creation enabled via `"create_response": true` configuration
+3. **Response Generation**: **CRITICAL IMPLEMENTATION NOTE** - Server VAD does NOT automatically trigger responses despite documentation
+   - Must manually send `{"type": "response.create"}` after transcription completes
+   - This is a discovered behavior not documented in OpenAI's API reference
 4. **Assistant Response**: Both text transcript and audio response generated
    - Text: `response.audio_transcript.done` → stored for context preservation
    - Audio: `response.audio.delta` → sent to ROS `/audio_out` topic for playback
@@ -75,8 +77,8 @@ The system implements a complete conversational loop with context preservation a
   "modalities": ["text", "audio"],
   "input_audio_transcription": {"model": "whisper-1"},
   "turn_detection": {
-    "type": "server_vad", 
-    "create_response": true
+    "type": "server_vad"
+    // NOTE: "create_response" is not a valid parameter - causes session configuration errors
   },
   "voice": "alloy",
   "input_audio_format": "pcm16",
@@ -1296,9 +1298,63 @@ class CostMonitor:
 - Context preservation accuracy
 - Session rotation smoothness
 
-## 4. Implementation TODOs
+## 4. Audio Architecture & Implementation Details
 
-### 4.1 Phase 1: Core Session Management & Bridge Integration
+### 4.1 Audio Pipeline
+The complete audio flow through the system:
+
+```
+Input Pipeline:
+Microphone → audio_capturer (16kHz) → echo_suppressor → /audio_filtered → 
+silero_vad → /voice_chunks (AudioDataUtterance) → ROS Bridge → 
+WebSocket → Agent → OpenAI API
+
+Output Pipeline:
+OpenAI API → response.audio.delta (24kHz PCM16) → Agent → 
+/audio_out (AudioData) → simple_audio_player → PyAudio → Speakers
+```
+
+### 4.2 Critical Implementation Discoveries
+
+#### 4.2.1 Manual Response Triggering Required
+- **Discovery**: OpenAI's server VAD successfully transcribes speech but does NOT automatically generate responses
+- **Solution**: Must manually send `{"type": "response.create"}` after receiving transcription
+- **Impact**: This undocumented behavior required significant debugging to discover
+
+#### 4.2.2 Audio Format Handling
+- **Issue**: OpenAI outputs 24kHz PCM16 audio (not the standard 16kHz)
+- **Challenge**: audio_common's audio_player_node requires AudioStamped messages with sample rate info
+- **Solution**: Created simple_audio_player that directly handles AudioData at 24kHz using PyAudio
+
+#### 4.2.3 Echo Suppression Architecture
+- **Problem**: Assistant hears itself when mic is near speakers, creating feedback loops
+- **Solution**: echo_suppressor node that:
+  - Monitors /assistant_speaking status from simple_audio_player
+  - Mutes microphone input while assistant is speaking
+  - Re-enables mic after assistant finishes
+  - Publishes filtered audio to /audio_filtered for VAD
+
+### 4.3 Message Type Considerations
+
+#### 4.3.1 AudioData vs AudioStamped
+- **AudioData**: Simple array of audio samples, no metadata
+- **AudioStamped**: Includes header + AudioInfo (format, rate, channels)
+- **Issue**: Bridge serialization issues with nested message types
+- **Resolution**: Use AudioData for simplicity, hardcode sample rates in nodes
+
+#### 4.3.2 Field Mapping Discovery
+- **Critical Finding**: AudioDataUtterance uses `int16_data` field (not `audio_data`)
+- **Impact**: Initial implementation sent empty audio due to incorrect field access
+- **Lesson**: Always verify message field names match between publishers and subscribers
+
+### 4.4 Audio Debugging Tools
+- **voice_chunk_recorder**: Enhanced with audio_data mode to save /audio_out to WAV files
+- **Parameters**: input_mode='audio_data', input_sample_rate=24000, audio_timeout=10.0
+- **Usage**: Verify audio format and content before debugging playback issues
+
+## 5. Implementation TODOs
+
+### 5.1 Phase 1: Core Session Management & Bridge Integration
 - [ ] Create ROSAIBridge instance and register agent interface
 - [ ] Implement OpenAI Realtime API serializer for audio messages (base64 PCM)
 - [ ] Create WebSocket connection manager for OpenAI Realtime API
@@ -1310,7 +1366,7 @@ class CostMonitor:
 - [ ] Add cost estimation calculator with token tracking
 - [ ] Add serialization performance monitoring and metrics
 
-### 4.2 Phase 2: Intelligent Session Cycling
+### 5.2 Phase 2: Intelligent Session Cycling
 - [ ] Implement session cycling on pause detection (PauseDetector integration)
 - [ ] Create conversation context extraction and text-based persistence  
 - [ ] Build context injection system for new sessions (system prompt modification)
@@ -1319,21 +1375,21 @@ class CostMonitor:
 - [ ] Create conversation summarizer for contexts > 2000 tokens
 - [ ] Test aggressive cycling with various pause timeout settings
 
-### 4.3 Phase 3: Advanced Features
+### 5.3 Phase 3: Advanced Features
 - [ ] Implement predictive rotation (anticipate before limits)
 - [ ] Add multi-provider rotation (OpenAI → Gemini fallback)
 - [ ] Create conversation analytics dashboard
 - [ ] Build automated testing for edge cases
 - [ ] Add support for conversation branching/merging
 
-### 4.4 Phase 4: Optimization
+### 5.4 Phase 4: Optimization
 - [ ] Implement token usage prediction models
 - [ ] Add dynamic timeout adjustment based on conversation flow
 - [ ] Create cost optimization recommendations
 - [ ] Build conversation quality scoring
 - [ ] Implement A/B testing framework for parameters
 
-## 5. Configuration Parameters
+## 6. Configuration Parameters
 
 ```yaml
 session_management:
@@ -1494,6 +1550,9 @@ ros2 launch by_your_command oai_realtime.launch.py
 - ✅ **Zero-copy message handling** - Efficient ROS message processing
 - ✅ **Metadata preservation** - Utterance context and conversation state
 - ✅ **Message envelope system** - Unified message format across components
+- ✅ **Manual response triggering** - Workaround for server VAD limitation
+- ✅ **24kHz audio playback** - Direct AudioData playback via simple_audio_player
+- ✅ **Echo suppression** - Prevents feedback loops by muting mic during assistant speech
 
 #### 7.1.4 Debug & Testing Infrastructure
 - ✅ **Debug interface** - Direct message injection for testing

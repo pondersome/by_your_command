@@ -47,8 +47,11 @@ Respond naturally to the user's speech and provide helpful information or assist
         try:
             with open(config_path, 'r') as f:
                 file_config = yaml.safe_load(f)
+                # Look for agent-specific configuration
                 if 'openai_realtime_agent' in file_config:
                     config.update(file_config['openai_realtime_agent'])
+                elif 'openai_command_agent' in file_config:
+                    config.update(file_config['openai_command_agent'])
                 else:
                     config.update(file_config)
             print(f"✅ Loaded configuration from {config_path}")
@@ -154,6 +157,11 @@ def main():
         type=str,
         help='OpenAI API key (overrides environment variable)'
     )
+    parser.add_argument(
+        '--prompt-id',
+        type=str,
+        help='Named prompt ID from prompts.yaml (overrides config file)'
+    )
     
     args = parser.parse_args()
     
@@ -167,6 +175,9 @@ def main():
             
         if args.api_key:
             config['openai_api_key'] = args.api_key
+            
+        if args.prompt_id:
+            config['prompt_id'] = args.prompt_id
             
         if args.verbose:
             config['log_level'] = logging.DEBUG

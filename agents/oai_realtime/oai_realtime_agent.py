@@ -74,6 +74,13 @@ class OpenAIRealtimeAgent:
         # Session ready event for synchronization
         self.session_ready = asyncio.Event()
         
+        # Published topic configuration (support command extractor agent)
+        self.published_topics = {
+            'audio_out': self.config.get('audio_out_topic', '/audio_out'),
+            'transcript': self.config.get('transcript_topic', '/llm_transcript'),
+            'command_detected': self.config.get('command_detected_topic', '/command_detected')
+        }
+        
         # Setup logging
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(self.config.get('log_level', logging.INFO))
@@ -554,18 +561,21 @@ class OpenAIRealtimeAgent:
             # deserialization first. The voice recorder confirmed the audio is good.
             audio_data_dict = {"int16_data": audio_array.tolist()}
             
-            # Send to ROS via bridge as AudioData for now
-            success = await self.bridge_interface.put_outbound_message(
-                "/audio_out", 
-                audio_data_dict, 
-                "audio_common_msgs/AudioData"
-            )
-            
-            if success:
-                self.metrics['messages_sent_to_ros'] += 1
-                self.logger.debug(f"🔊 Audio delta sent: {len(audio_array)} samples ({len(audio_b64)} b64 chars)")
+            # Send to ROS via bridge if audio output is enabled
+            if self.published_topics['audio_out']:  # Skip if topic is empty/disabled
+                success = await self.bridge_interface.put_outbound_message(
+                    self.published_topics['audio_out'], 
+                    audio_data_dict, 
+                    "audio_common_msgs/AudioData"
+                )
+                
+                if success:
+                    self.metrics['messages_sent_to_ros'] += 1
+                    self.logger.debug(f"🔊 Audio delta sent: {len(audio_array)} samples ({len(audio_b64)} b64 chars)")
+                else:
+                    self.logger.warning("⚠️ Failed to send audio delta to ROS")
             else:
-                self.logger.warning("⚠️ Failed to send audio delta to ROS")
+                self.logger.debug("🔇 Audio output disabled for this agent")
                 
         except Exception as e:
             self.logger.error(f"❌ Error processing audio delta: {e}")
@@ -612,7 +622,7 @@ class OpenAIRealtimeAgent:
             if self.bridge_interface:
                 transcript_data = {"data": final_transcript}
                 success = await self.bridge_interface.put_outbound_message(
-                    "/llm_transcript", 
+                    self.published_topics['transcript'], 
                     transcript_data, 
                     "std_msgs/String"
                 )
@@ -620,6 +630,18 @@ class OpenAIRealtimeAgent:
                 if success:
                     self.metrics['messages_sent_to_ros'] += 1
                     self.logger.info("📤 Assistant transcript sent to ROS")
+                    
+                    # For command extractor: check if this looks like a command
+                    if (self.published_topics.get('command_detected') and 
+                        final_transcript.startswith("COMMAND:")):
+                        # Publish command detected signal
+                        command_signal = {"data": True}
+                        await self.bridge_interface.put_outbound_message(
+                            self.published_topics['command_detected'],
+                            command_signal,
+                            "std_msgs/Bool"
+                        )
+                        self.logger.info("🤖 Command detected and signaled")
                 else:
                     self.logger.warning("⚠️ Failed to send assistant transcript to ROS")
         else:
