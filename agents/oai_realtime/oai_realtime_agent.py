@@ -76,9 +76,9 @@ class OpenAIRealtimeAgent:
         
         # Published topic configuration (support command extractor agent)
         self.published_topics = {
-            'audio_out': self.config.get('audio_out_topic', '/audio_out'),
-            'transcript': self.config.get('transcript_topic', '/llm_transcript'),
-            'command_detected': self.config.get('command_detected_topic', '/command_detected')
+            'audio_out': self.config.get('audio_out_topic', 'audio_out'),  # Relative for namespacing
+            'transcript': self.config.get('transcript_topic', 'llm_transcript'),  # Relative for namespacing
+            'command_detected': self.config.get('command_detected_topic', 'command_detected')  # Relative for namespacing
         }
         
         # Setup logging
@@ -268,6 +268,9 @@ class OpenAIRealtimeAgent:
                             
                             # Check if this is the end of utterance - commit audio buffer
                             if envelope.raw_data.is_utterance_end:
+                                # Add small delay to ensure audio is processed by OpenAI
+                                await asyncio.sleep(0.1)  # 100ms delay
+                                
                                 commit_msg = {"type": "input_audio_buffer.commit"}
                                 await self.session_manager.websocket.send(json.dumps(commit_msg))
                                 utterance_id = envelope.raw_data.utterance_id

@@ -37,8 +37,7 @@ openai_command_agent:
   
   # Published topic configuration
   audio_out_topic: ""  # Disable audio output for command extractor
-  transcript_topic: "/command_transcript"
-  command_detected_topic: "/command_detected"
+  transcript_topic: "command_transcript"  # Relative topic for namespacing
   
   # Legacy system prompt (deprecated - use prompt_id instead)
   system_prompt: ""
@@ -48,17 +47,15 @@ ros_ai_bridge_command:
   ros__parameters:
     # Topics to bridge (ROS → Agent)
     subscribed_topics:
-      - topic: "/voice_chunks"
+      - topic: "voice_chunks"  # Relative topic for namespacing
         msg_type: "by_your_command/AudioDataUtterance"
-      - topic: "/text_input"
+      - topic: "text_input"    # Relative topic for namespacing
         msg_type: "std_msgs/String"
         
     # Topics to publish (Agent → ROS) - Different to avoid conflicts
     published_topics:
-      - topic: "/command_transcript"   # Different from /llm_transcript
+      - topic: "command_transcript"  # Different from llm_transcript, relative for namespacing
         msg_type: "std_msgs/String"
-      - topic: "/cmd_vel"              # Same - both agents can command robot
+      - topic: "cmd_vel"             # Same - both agents can command robot, relative for namespacing
         msg_type: "geometry_msgs/Twist"
-      - topic: "/command_detected"     # New - signals when command found
-        msg_type: "std_msgs/Bool"
       # Note: No audio_out - command extractor doesn't speak

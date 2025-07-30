@@ -9,6 +9,7 @@ from by_your_command.msg import AudioDataUtterance
 import numpy as np
 import collections
 import time
+from datetime import datetime
 
 # Silero VAD imports - direct import from PyPI package
 from silero_vad import load_silero_vad, VADIterator, get_speech_timestamps
@@ -23,11 +24,17 @@ DEFAULT_UTTERANCE_CHUNK_FRAMES = 100
 DEFAULT_THRESHOLD = 0.5
 DEFAULT_MIN_SILENCE_DURATION_MS = 200
 
+def get_timestamp():
+    """Get formatted timestamp HH:MM:SS.mmm"""
+    now = datetime.now()
+    return now.strftime("%H:%M:%S.%f")[:-3]
+
 class SileroVADNode(Node):
     def __init__(self):
         super().__init__('silero_vad_node')
         # Set DEBUG log level to see more info
         self.get_logger().set_level(rclpy.logging.LoggingSeverity.DEBUG)
+        
         # Declare frame‐based parameters
         self.declare_parameter('sample_rate', SAMPLE_RATE)
         self.declare_parameter('max_buffer_frames', DEFAULT_MAX_BUFFER_FRAMES)
@@ -75,6 +82,23 @@ class SileroVADNode(Node):
         # End-of-utterance detection with one-frame delay
         self.pending_utterance_end = False
         self.last_chunk_data = None  # Store last chunk for end-of-utterance marking
+        
+    def log_info(self, msg):
+        """Log with custom format"""
+        # Use ROS logger but with our format
+        self.get_logger().info(f"[{get_timestamp()}] [vad] {msg}")
+        
+    def log_debug(self, msg):
+        """Debug log with custom format"""
+        self.get_logger().debug(f"[{get_timestamp()}] [vad] DEBUG: {msg}")
+            
+    def log_warning(self, msg):
+        """Warning log with custom format"""
+        self.get_logger().warning(f"[{get_timestamp()}] [vad] WARNING: {msg}")
+        
+    def log_error(self, msg):
+        """Error log with custom format"""
+        self.get_logger().error(f"[{get_timestamp()}] [vad] ERROR: {msg}")
 
     def audio_callback(self, msg: AudioStamped):
         # Convert incoming AudioStamped to numpy int16
@@ -111,7 +135,7 @@ class SileroVADNode(Node):
                 self._last_activity_log_time = current_time
                 
         if should_log:
-            self.get_logger().info(f'Voice activity: {voice_activity}')
+            self.log_info(f'Voice activity: {voice_activity}')
             
         self._prev_log_voice_activity = voice_activity
         # Append frame
@@ -125,7 +149,7 @@ class SileroVADNode(Node):
             # Mark the last chunk as end-of-utterance and publish
             self.last_chunk_data.is_utterance_end = True
             self.chunk_pub.publish(self.last_chunk_data)
-            self.get_logger().info(f'Published end-of-utterance chunk for utterance {self.last_chunk_data.utterance_id}')
+            self.log_info(f'Published end-of-utterance chunk for utterance {self.last_chunk_data.utterance_id}')
             self.pending_utterance_end = False
             self.last_chunk_data = None
         
@@ -136,19 +160,19 @@ class SileroVADNode(Node):
             # Create new utterance ID from current timestamp
             self.utterance_start_timestamp = msg.header.stamp
             self.current_utterance_id = int(msg.header.stamp.sec * 1e9 + msg.header.stamp.nanosec)
-            self.get_logger().info(f'Voice detected. Starting utterance {self.current_utterance_id}.')
+            self.log_info(f'Voice detected. Starting utterance {self.current_utterance_id}.')
             self.voice_pub.publish(Bool(data=True))
             
             if self.utterance_chunk_frames == 0:
                 # Full utterance mode: initialize with pre-roll from circular buffer
                 pre_roll_frames = list(self.frame_buffer)[-self.pre_roll_frames:]
                 self.utterance_buffer = pre_roll_frames[:]
-                self.get_logger().info(f'Initialized utterance buffer with {len(self.utterance_buffer)} pre-roll frames')
+                self.log_info(f'Initialized utterance buffer with {len(self.utterance_buffer)} pre-roll frames')
             else:
                 # Chunking mode: initialize chunking buffer with pre-roll
                 pre_roll_frames = list(self.frame_buffer)[-self.pre_roll_frames:]
                 self.chunking_buffer = pre_roll_frames[:]
-                self.get_logger().info(f'Initialized chunking buffer with {len(self.chunking_buffer)} pre-roll frames')
+                self.log_info(f'Initialized chunking buffer with {len(self.chunking_buffer)} pre-roll frames')
         
         # Accumulate current frame
         if self.in_utterance:
@@ -161,25 +185,25 @@ class SileroVADNode(Node):
                 
                 # Check if we need to publish an interim chunk
                 if len(self.chunking_buffer) >= self.utterance_chunk_frames:
-                    self.get_logger().info(f'Interim chunk reached. Publishing chunk with {len(self.chunking_buffer)} frames')
+                    self.log_info(f'Interim chunk reached. Publishing chunk with {len(self.chunking_buffer)} frames')
                     self._publish_chunking_buffer(is_end=False)
                     # Reset chunking buffer for next chunk (no pre-roll needed for interim chunks)
                     self.chunking_buffer = []
         # Utterance end by VAD state transition
         if vad_ended_voice:
             self.in_utterance = False
-            self.get_logger().info(f'Voice ended for utterance {self.current_utterance_id}. Preparing final chunk.')
+            self.log_info(f'Voice ended for utterance {self.current_utterance_id}. Preparing final chunk.')
             self.voice_pub.publish(Bool(data=False))
             # Set flag to mark end-of-utterance on next frame (one-frame delay)
             self.pending_utterance_end = True
             if self.utterance_chunk_frames > 0:
                 # Chunking mode: publish any remaining frames in chunking buffer
                 if len(self.chunking_buffer) > 0:
-                    self.get_logger().info(f'Publishing final chunk with {len(self.chunking_buffer)} remaining frames')
+                    self.log_info(f'Publishing final chunk with {len(self.chunking_buffer)} remaining frames')
                     # Store for end-of-utterance marking with delay
                     self.last_chunk_data = self._create_chunk_message(is_end=False)
                 else:
-                    self.get_logger().info('No remaining frames for final chunk')
+                    self.log_info('No remaining frames for final chunk')
             else:
                 # Full utterance mode: publish entire utterance
                 full_audio = b''.join(self.utterance_buffer)
@@ -188,7 +212,7 @@ class SileroVADNode(Node):
                     # Store for end-of-utterance marking with delay
                     self.last_chunk_data = chunk_msg
                 else:
-                    self.get_logger().warning('No audio data in utterance buffer, not publishing chunk')
+                    self.log_warning('No audio data in utterance buffer, not publishing chunk')
             self.vad_iterator.reset_states()
             
             # Reset buffers to prevent corruption on next utterance
@@ -211,7 +235,7 @@ class SileroVADNode(Node):
         frames = list(self.frame_buffer)[start_idx:total]
         audio_data = b''.join(frames)
         duration = len(audio_data) / 2 / self.sample_rate
-        self.get_logger().info(
+        self.log_info(
             f'Publishing chunk {self.chunk_count}: frames {start_idx}-{total}, duration {duration:.2f}s'
         )
         # Publish
@@ -229,7 +253,7 @@ class SileroVADNode(Node):
             # Publish immediately for interim chunks
             self.chunk_pub.publish(chunk_msg)
             duration = len(b''.join(self.chunking_buffer)) / 2 / self.sample_rate
-            self.get_logger().info(
+            self.log_info(
                 f'Published chunk {self.chunk_count}: {len(self.chunking_buffer)} frames, duration {duration:.2f}s'
             )
         else:
@@ -267,7 +291,7 @@ class SileroVADNode(Node):
             self.last_chunk_data.is_utterance_end = True
             if hasattr(self, 'chunk_pub'):
                 self.chunk_pub.publish(self.last_chunk_data)
-                self.get_logger().info(f'Published final end-of-utterance chunk during shutdown for utterance {self.last_chunk_data.utterance_id}')
+                self.log_info(f'Published final end-of-utterance chunk during shutdown for utterance {self.last_chunk_data.utterance_id}')
 
 
 def main(args=None):

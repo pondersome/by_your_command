@@ -17,6 +17,7 @@ import time
 from typing import Dict, List, Optional, Any
 import websockets
 from websockets import WebSocketClientProtocol
+from datetime import datetime
 
 
 class WebSocketMessageEnvelope:
@@ -180,6 +181,12 @@ class WebSocketBridgeInterface:
             if data.get("status") == "success":
                 session_id = data.get("session_id", "unknown")
                 self.logger.info(f"Agent registered successfully. Session: {session_id}")
+                
+                # Log namespace info if provided
+                namespace_info = data.get("namespace_info", {})
+                if namespace_info and (namespace_info.get("namespace") or namespace_info.get("prefix")):
+                    self.logger.info(f"Bridge namespace: /{namespace_info.get('full_prefix', '')}")
+                    
                 return True
             else:
                 error_msg = data.get("message", "Unknown error")

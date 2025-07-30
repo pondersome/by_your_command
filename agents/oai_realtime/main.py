@@ -15,6 +15,7 @@ import logging
 import os
 import yaml
 from typing import Dict, Any
+from datetime import datetime
 
 from agents.oai_realtime.oai_realtime_agent import OpenAIRealtimeAgent
 
@@ -87,13 +88,33 @@ Respond naturally to the user's speech and provide helpful information or assist
     return config
 
 
-def setup_logging(level: int = logging.INFO):
+class AgentFormatter(logging.Formatter):
+    """Custom formatter for agent logs"""
+    def __init__(self, agent_type='conv'):
+        self.agent_type = agent_type
+        super().__init__()
+        
+    def format(self, record):
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        # Skip the module name prefix to reduce clutter
+        msg = record.getMessage()
+        return f"[{timestamp}] [agent:{self.agent_type}] {msg}"
+
+def setup_logging(level: int = logging.INFO, config: Dict[str, Any] = None):
     """Setup logging configuration"""
-    logging.basicConfig(
-        level=level,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%H:%M:%S'
-    )
+    # Determine agent type from config
+    agent_id = config.get('agent_id', 'openai_realtime') if config else 'openai_realtime'
+    agent_type = 'cmd' if 'command' in agent_id.lower() else 'conv'
+    
+    # Create console handler with custom formatter
+    handler = logging.StreamHandler()
+    handler.setFormatter(AgentFormatter(agent_type))
+    
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
     
     # Set specific logger levels
     logging.getLogger('websockets').setLevel(logging.WARNING)
@@ -182,8 +203,8 @@ def main():
         if args.verbose:
             config['log_level'] = logging.DEBUG
             
-        # Setup logging
-        setup_logging(config['log_level'])
+        # Setup logging with agent type
+        setup_logging(config['log_level'], config)
         
         print("🤖 Starting OpenAI Realtime Agent...")
         

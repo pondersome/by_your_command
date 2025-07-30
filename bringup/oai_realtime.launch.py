@@ -14,10 +14,10 @@ Date: July 2025
 
 import os
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo, GroupAction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, EnvironmentVariable, PythonExpression
-from launch_ros.actions import Node
+from launch_ros.actions import Node, PushRosNamespace
 from ament_index_python.packages import get_package_share_directory
 
 
@@ -29,11 +29,23 @@ def generate_launch_description():
     bridge_config = os.path.join(pkg_dir, 'config', 'config.yaml')
     agent_config = os.path.join(pkg_dir, 'config', 'oai_realtime_agent.yaml')
     
+    # Namespace and prefix arguments
+    namespace_arg = DeclareLaunchArgument(
+        'namespace', 
+        default_value='',
+        description='Namespace for all nodes'
+    )
+    prefix_arg = DeclareLaunchArgument(
+        'prefix', 
+        default_value='',
+        description='Prefix/group for all nodes'
+    )
+    
     # Launch arguments
     openai_api_key_arg = DeclareLaunchArgument(
         'openai_api_key',
-        default_value='',
-        description='OpenAI API key (or set OPENAI_API_KEY environment variable)'
+        default_value=EnvironmentVariable('OPENAI_API_KEY', default_value=''),
+        description='OpenAI API key (defaults to OPENAI_API_KEY environment variable)'
     )
     
     pause_timeout_arg = DeclareLaunchArgument(
@@ -81,7 +93,7 @@ def generate_launch_description():
         name='simple_audio_player',
         output='screen',
         parameters=[{
-            'topic': '/audio_out',
+            'topic': 'audio_out',  # Relative topic for namespacing
             'sample_rate': 24000,
             'channels': 1,
             'device': -1    # Default output device
@@ -104,7 +116,7 @@ def generate_launch_description():
         output='screen',
         parameters=[bridge_config],
         remappings=[
-            ('/audio', '/audio_filtered')  # Listen to filtered audio
+            ('audio', 'audio_filtered')  # Listen to filtered audio (relative for namespacing)
         ]
     )
     
@@ -115,6 +127,8 @@ def generate_launch_description():
         name='ros_ai_bridge',
         output='screen',
         parameters=[{
+            'namespace': LaunchConfiguration('namespace'),
+            'prefix': LaunchConfiguration('prefix'),
             'config_file': agent_config,
             'websocket_server.enabled': True,
             'websocket_server.host': '0.0.0.0',
@@ -131,6 +145,7 @@ def generate_launch_description():
         ],
         output='screen',
         additional_env={
+            'OPENAI_API_KEY': LaunchConfiguration('openai_api_key'),
             'OPENAI_MODEL': LaunchConfiguration('model'),
             'OPENAI_VOICE': LaunchConfiguration('voice'),
             'PAUSE_TIMEOUT': LaunchConfiguration('pause_timeout')
@@ -146,7 +161,7 @@ def generate_launch_description():
         parameters=[{
             'output_dir': '/tmp/voice_chunks',
             'input_mode': 'audio_data',
-            'input_topic': '/audio_out',
+            'input_topic': 'audio_out',  # Relative topic for namespacing
             'input_sample_rate': 24000,
             'audio_timeout': 10.0
         }],
@@ -164,7 +179,28 @@ def generate_launch_description():
         ]
     )
     
+    # Group all nodes with namespace handling
+    nodes_group = GroupAction([
+        PushRosNamespace(LaunchConfiguration('namespace')),
+        PushRosNamespace(LaunchConfiguration('prefix')),
+        audio_capturer,
+        echo_suppressor,
+        audio_player,
+        silero_vad,
+        ros_ai_bridge,
+        voice_recorder
+    ])
+    
+    # Agent runs as separate process and handles namespace differently
+    agent_group = GroupAction([
+        openai_agent
+    ])
+    
     return LaunchDescription([
+        # Namespace arguments
+        namespace_arg,
+        prefix_arg,
+        
         # Launch arguments
         openai_api_key_arg,
         pause_timeout_arg,
@@ -176,12 +212,7 @@ def generate_launch_description():
         # Startup message
         startup_message,
         
-        # Nodes
-        audio_capturer,
-        echo_suppressor,
-        audio_player,
-        silero_vad,
-        ros_ai_bridge,
-        openai_agent,
-        voice_recorder
+        # Nodes and agent
+        nodes_group,
+        agent_group
     ])

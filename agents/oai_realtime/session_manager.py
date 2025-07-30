@@ -137,8 +137,17 @@ When users ask questions or make requests, provide clear and helpful responses."
         """Configure session with system prompt and context"""
         # Select appropriate prompt based on context and configuration
         try:
-            selected_prompt = self.prompt_loader.select_prompt(self.prompt_context)
-            self.logger.info("Using context-selected system prompt")
+            # Check for prompt override first
+            if hasattr(self, '_prompt_override') and self._prompt_override:
+                if self._prompt_override in self.prompt_loader.prompts:
+                    selected_prompt = self.prompt_loader.prompts[self._prompt_override].system_prompt
+                    self.logger.info(f"Using override prompt: {self._prompt_override}")
+                else:
+                    self.logger.warning(f"Override prompt '{self._prompt_override}' not found, using context selection")
+                    selected_prompt = self.prompt_loader.select_prompt(self.prompt_context)
+            else:
+                selected_prompt = self.prompt_loader.select_prompt(self.prompt_context)
+                self.logger.info("Using context-selected system prompt")
         except Exception as e:
             self.logger.warning(f"Prompt selection failed, using default: {e}")
             selected_prompt = self._default_system_prompt()

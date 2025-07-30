@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Callable, Set
 import yaml
 import importlib
+from datetime import datetime
 
 import rclpy
 from rclpy.node import Node
@@ -34,6 +35,11 @@ try:
 except ImportError:
     WEBSOCKETS_AVAILABLE = False
     WebSocketServerProtocol = None
+
+def get_timestamp():
+    """Get formatted timestamp HH:MM:SS.mmm"""
+    now = datetime.now()
+    return now.strftime("%H:%M:%S.%f")[:-3]
 
 
 @dataclass
@@ -163,7 +169,7 @@ class BridgeReconfigurer:
     def add_topic_subscription(self, topic: str, msg_type: str, qos_profile: Optional[QoSProfile] = None):
         """Add new topic subscription at runtime"""
         if topic in self.bridge._topic_subscriptions:
-            self.bridge.get_logger().warn(f"Topic {topic} already subscribed")
+            self.bridge.log_warning(f"Topic {topic} already subscribed")
             return
             
         try:
@@ -189,30 +195,30 @@ class BridgeReconfigurer:
             )
             
             self.bridge._topic_subscriptions[topic] = subscription
-            self.bridge.get_logger().info(f"Added subscription to {topic} ({msg_type})")
+            self.bridge.log_info(f"Added subscription to {topic} ({msg_type})")
             
         except Exception as e:
             import traceback
-            self.bridge.get_logger().error(f"Failed to add subscription {topic}: {e}")
-            self.bridge.get_logger().error(f"Full traceback: {traceback.format_exc()}")
+            self.bridge.log_error(f"Failed to add subscription {topic}: {e}")
+            self.bridge.log_error(f"Full traceback: {traceback.format_exc()}")
             
     def remove_topic_subscription(self, topic: str):
         """Remove topic subscription at runtime"""
         if topic not in self.bridge._topic_subscriptions:
-            self.bridge.get_logger().warn(f"Topic {topic} not subscribed")
+            self.bridge.log_warning(f"Topic {topic} not subscribed")
             return
             
         try:
             self.bridge._topic_subscriptions[topic].destroy()
             del self.bridge._topic_subscriptions[topic]
-            self.bridge.get_logger().info(f"Removed subscription to {topic}")
+            self.bridge.log_info(f"Removed subscription to {topic}")
         except Exception as e:
-            self.bridge.get_logger().error(f"Failed to remove subscription {topic}: {e}")
+            self.bridge.log_error(f"Failed to remove subscription {topic}: {e}")
             
     def update_queue_size(self, new_size: int):
         """Adjust queue sizes (takes effect for new queues)"""
         self.bridge.queues.max_size = new_size
-        self.bridge.get_logger().info(f"Updated queue max size to {new_size}")
+        self.bridge.log_info(f"Updated queue max size to {new_size}")
         
     def _import_message_type(self, msg_type: str):
         """Import ROS message type dynamically"""
@@ -224,10 +230,10 @@ class BridgeReconfigurer:
                 module = importlib.import_module(module_name)
                 return getattr(module, message)
             else:
-                self.bridge.get_logger().error(f"Invalid message type format: {msg_type}")
+                self.bridge.log_error(f"Invalid message type format: {msg_type}")
                 return None
         except Exception as e:
-            self.bridge.get_logger().error(f"Failed to import message type {msg_type}: {e}")
+            self.bridge.log_error(f"Failed to import message type {msg_type}: {e}")
             return None
 
 
@@ -240,12 +246,25 @@ class WebSocketAgentServer:
         self.connected_agents: Dict[str, WebSocketServerProtocol] = {}
         self.agent_subscriptions: Dict[str, List[str]] = {}
         self.agent_capabilities: Dict[str, List[str]] = {}
-        self.logger = bridge.get_logger()
+        self.logger = bridge  # Use bridge's logging methods
+        
+    def _get_full_prefix(self) -> str:
+        """Get the full namespace prefix for topics"""
+        parts = []
+        namespace = self.bridge._config.get('namespace', '')
+        prefix = self.bridge._config.get('prefix', '')
+        
+        if namespace:
+            parts.append(namespace)
+        if prefix:
+            parts.append(prefix)
+            
+        return '/'.join(parts) if parts else ''
         
     async def start_server(self, host: str = "0.0.0.0", port: int = 8765):
         """Start WebSocket server for agent connections"""
         if not WEBSOCKETS_AVAILABLE:
-            self.logger.error("WebSocket support not available. Install websockets package.")
+            self.logger.log_error("WebSocket support not available. Install websockets package.")
             return False
             
         try:
@@ -258,10 +277,10 @@ class WebSocketAgentServer:
                 max_size=10**6,  # 1MB max message size
                 max_queue=32
             )
-            self.logger.info(f"WebSocket server started on {host}:{port}")
+            self.logger.log_info(f"WebSocket server started on {host}:{port}")
             return True
         except Exception as e:
-            self.logger.error(f"Failed to start WebSocket server: {e}")
+            self.logger.log_error(f"Failed to start WebSocket server: {e}")
             return False
             
     async def stop_server(self):
@@ -269,7 +288,7 @@ class WebSocketAgentServer:
         if self.server:
             self.server.close()
             await self.server.wait_closed()
-            self.logger.info("WebSocket server stopped")
+            self.logger.log_info("WebSocket server stopped")
             
         # Disconnect all agents
         for agent_id in list(self.connected_agents.keys()):
@@ -279,7 +298,7 @@ class WebSocketAgentServer:
         """Handle new agent WebSocket connection"""
         agent_id = None
         remote_address = websocket.remote_address
-        self.logger.info(f"New WebSocket connection from {remote_address}")
+        self.logger.log_info(f"New WebSocket connection from {remote_address}")
         
         try:
             async for raw_message in websocket:
@@ -298,17 +317,17 @@ class WebSocketAgentServer:
                     elif message_type == "heartbeat":
                         await websocket.send(json.dumps({"type": "heartbeat_response"}))
                     else:
-                        self.logger.warn(f"Unknown message type from {agent_id}: {message_type}")
+                        self.logger.log_warning(f"Unknown message type from {agent_id}: {message_type}")
                         
                 except json.JSONDecodeError as e:
-                    self.logger.error(f"Invalid JSON from {agent_id}: {e}")
+                    self.logger.log_error(f"Invalid JSON from {agent_id}: {e}")
                 except Exception as e:
-                    self.logger.error(f"Error processing message from {agent_id}: {e}")
+                    self.logger.log_error(f"Error processing message from {agent_id}: {e}")
                     
         except websockets.exceptions.ConnectionClosed:
-            self.logger.info(f"Agent {agent_id} disconnected normally")
+            self.logger.log_info(f"Agent {agent_id} disconnected normally")
         except Exception as e:
-            self.logger.error(f"WebSocket connection error for {agent_id}: {e}")
+            self.logger.log_error(f"WebSocket connection error for {agent_id}: {e}")
         finally:
             if agent_id:
                 await self.unregister_agent(agent_id)
@@ -344,17 +363,22 @@ class WebSocketAgentServer:
         subscriptions = data.get("subscriptions", [])
         self.agent_subscriptions[agent_id] = [sub["topic"] for sub in subscriptions]
         
-        # Send success response
+        # Send success response with namespace info
         response = {
             "type": "register_response",
             "status": "success",
             "agent_id": agent_id,
-            "session_id": f"sess_{agent_id}_{int(time.time())}"
+            "session_id": f"sess_{agent_id}_{int(time.time())}",
+            "namespace_info": {
+                "namespace": self.bridge._config.get('namespace', ''),
+                "prefix": self.bridge._config.get('prefix', ''),
+                "full_prefix": self._get_full_prefix()
+            }
         }
         await websocket.send(json.dumps(response))
         
-        self.logger.info(f"Registered agent: {agent_id} with capabilities: {capabilities}")
-        self.logger.info(f"Agent {agent_id} subscribed to topics: {self.agent_subscriptions[agent_id]}")
+        self.logger.log_info(f"Registered agent: {agent_id} with capabilities: {capabilities}")
+        self.logger.log_info(f"Agent {agent_id} subscribed to topics: {self.agent_subscriptions[agent_id]}")
         
         return agent_id
         
@@ -366,7 +390,7 @@ class WebSocketAgentServer:
                 if not websocket.closed:
                     await websocket.close()
             except Exception as e:
-                self.logger.error(f"Error closing WebSocket for {agent_id}: {e}")
+                self.logger.log_error(f"Error closing WebSocket for {agent_id}: {e}")
                 
             del self.connected_agents[agent_id]
             
@@ -376,7 +400,7 @@ class WebSocketAgentServer:
         if agent_id in self.agent_capabilities:
             del self.agent_capabilities[agent_id]
             
-        self.logger.info(f"Unregistered agent: {agent_id}")
+        self.logger.log_info(f"Unregistered agent: {agent_id}")
         
     async def handle_outbound_message(self, data: Dict):
         """Handle outbound message from agent to ROS"""
@@ -386,22 +410,22 @@ class WebSocketAgentServer:
             msg_data = data.get("data", {})
             
             if not topic or not msg_type:
-                self.logger.error("Outbound message missing topic or msg_type")
+                self.logger.log_error("Outbound message missing topic or msg_type")
                 return
                 
             # Convert message data back to ROS message object
             ros_msg = self.deserialize_message_data(msg_data, msg_type)
             if ros_msg is None:
-                self.logger.error(f"Failed to deserialize message for {topic}")
+                self.logger.log_error(f"Failed to deserialize message for {topic}")
                 return
                 
             # Put into bridge outbound queue
             success = self.bridge.queues.put_outbound_topic(topic, ros_msg, msg_type)
             if not success:
-                self.logger.warn(f"Failed to queue outbound message for {topic}")
+                self.logger.log_warning(f"Failed to queue outbound message for {topic}")
                 
         except Exception as e:
-            self.logger.error(f"Error handling outbound message: {e}")
+            self.logger.log_error(f"Error handling outbound message: {e}")
             
     def deserialize_message_data(self, data: Dict, msg_type: str) -> Any:
         """Convert JSON data back to ROS message object"""
@@ -427,15 +451,15 @@ class WebSocketAgentServer:
                 return ros_msg
                 
         except Exception as e:
-            self.logger.error(f"Error deserializing message data for {msg_type}: {e}")
+            self.logger.log_error(f"Error deserializing message data for {msg_type}: {e}")
             return None
             
     async def broadcast_to_agents(self, envelope: MessageEnvelope):
         """Send ROS message to subscribed agents via WebSocket"""
-        self.logger.info(f"🔊 Broadcasting {envelope.ros_msg_type} from {envelope.topic_name} to {len(self.connected_agents)} agents")
+        self.logger.log_info(f"🔊 Broadcasting {envelope.ros_msg_type} from {envelope.topic_name} to {len(self.connected_agents)} agents")
         
         if not self.connected_agents:
-            self.logger.warn("No connected agents to broadcast to")
+            self.logger.log_warning("No connected agents to broadcast to")
             return
             
         disconnected_agents = []
@@ -443,10 +467,23 @@ class WebSocketAgentServer:
         for agent_id, websocket in self.connected_agents.items():
             # Check if agent subscribed to this topic
             agent_subscriptions = self.agent_subscriptions.get(agent_id, [])
-            self.logger.info(f"Agent {agent_id} subscriptions: {agent_subscriptions}")
             
-            if envelope.topic_name in agent_subscriptions:
-                self.logger.info(f"📤 Sending to agent {agent_id}: {envelope.topic_name}")
+            # Extract base topic name from full namespaced topic
+            # e.g., /robot1/voice/audio_out -> audio_out
+            base_topic = envelope.topic_name.split('/')[-1] if '/' in envelope.topic_name else envelope.topic_name
+            
+            # Also check if agent subscribed with the base topic name
+            matched = False
+            for sub_topic in agent_subscriptions:
+                # Match either full topic or base topic
+                if envelope.topic_name == sub_topic or base_topic == sub_topic.lstrip('/'):
+                    matched = True
+                    break
+                    
+            self.logger.log_info(f"Agent {agent_id} subscriptions: {agent_subscriptions}, checking {envelope.topic_name} (base: {base_topic})")
+            
+            if matched:
+                self.logger.log_info(f"📤 Sending to agent {agent_id}: {envelope.topic_name}")
                 try:
                     # Serialize ROS message for WebSocket transport
                     message = {
@@ -466,7 +503,7 @@ class WebSocketAgentServer:
                 except websockets.exceptions.ConnectionClosed:
                     disconnected_agents.append(agent_id)
                 except Exception as e:
-                    self.logger.error(f"Error sending message to agent {agent_id}: {e}")
+                    self.logger.log_error(f"Error sending message to agent {agent_id}: {e}")
                     
         # Clean up disconnected agents
         for agent_id in disconnected_agents:
@@ -483,7 +520,7 @@ class WebSocketAgentServer:
                     
                     # Debug logging for audio data fields
                     if field_name == 'int16_data':
-                        self.logger.info(f"🎧 Bridge serializing int16_data: type={type(value)}, length={len(value) if hasattr(value, '__len__') else 'N/A'}")
+                        self.logger.log_info(f"🎧 Bridge serializing int16_data: type={type(value)}, length={len(value) if hasattr(value, '__len__') else 'N/A'}")
                     
                     # Handle special types that need conversion
                     if hasattr(value, '__iter__') and not isinstance(value, (str, bytes)):
@@ -499,7 +536,7 @@ class WebSocketAgentServer:
                 else:
                     return {"data": str(ros_msg)}
         except Exception as e:
-            self.logger.error(f"Error serializing ROS message: {e}")
+            self.logger.log_error(f"Error serializing ROS message: {e}")
             return {"error": "serialization_failed"}
             
     def get_agent_status(self) -> Dict:
@@ -547,7 +584,23 @@ class ROSAIBridge(Node):
         self.asyncio_loop = None
         
         # Initialize logger level
-        self.get_logger().info("ROS AI Bridge initialized")
+        self.log_info("ROS AI Bridge initialized")
+        
+    def log_info(self, msg):
+        """Log with custom format"""
+        self.get_logger().info(f"[{get_timestamp()}] [bridge] {msg}")
+        
+    def log_debug(self, msg):
+        """Debug log with custom format"""
+        self.get_logger().debug(f"[{get_timestamp()}] [bridge] DEBUG: {msg}")
+            
+    def log_warning(self, msg):
+        """Warning log with custom format"""
+        self.get_logger().warning(f"[{get_timestamp()}] [bridge] WARNING: {msg}")
+        
+    def log_error(self, msg):
+        """Error log with custom format"""
+        self.get_logger().error(f"[{get_timestamp()}] [bridge] ERROR: {msg}")
         
     def _declare_parameters(self):
         """Declare ROS2 parameters with defaults"""
@@ -567,12 +620,18 @@ class ROSAIBridge(Node):
         self.declare_parameter('agent_registration.timeout_seconds', 60)
         self.declare_parameter('agent_registration.allow_duplicate_ids', False)
         
+        # Namespace configuration
+        self.declare_parameter('namespace', '')
+        self.declare_parameter('prefix', '')
+        
         # Topic configuration - will be loaded from YAML if provided
         self.declare_parameter('config_file', '')
         
     def _load_configuration(self) -> Dict:
         """Load bridge configuration from parameters and config file"""
         config = {
+            'namespace': self.get_parameter('namespace').value,
+            'prefix': self.get_parameter('prefix').value,
             'max_queue_size': self.get_parameter('max_queue_size').value,
             'queue_timeout_ms': self.get_parameter('queue_timeout_ms').value,
             'drop_policy': self.get_parameter('drop_policy').value,
@@ -610,32 +669,68 @@ class ROSAIBridge(Node):
                             for key, value in params.items():
                                 if key in ['subscribed_topics', 'published_topics', 'services']:
                                     # These should be lists, ensure they are
-                                    self.get_logger().info(f"Processing {key}: type={type(value)}, value={value}")
+                                    self.log_info(f"Processing {key}: type={type(value)}, value={value}")
                                     if isinstance(value, list):
                                         config[key] = value
                                     else:
-                                        self.get_logger().error(f"Configuration key '{key}' should be a list, got {type(value)}")
+                                        self.log_error(f"Configuration key '{key}' should be a list, got {type(value)}")
                                 else:
                                     config[key] = value
                             
-                            self.get_logger().info(f"Loaded configuration from {config_file}")
-                            self.get_logger().debug(f"Subscribed topics: {config['subscribed_topics']}")
-                            self.get_logger().debug(f"Published topics: {config['published_topics']}")
+                            self.log_info(f"Loaded configuration from {config_file}")
+                            self.log_debug(f"Subscribed topics: {config['subscribed_topics']}")
+                            self.log_debug(f"Published topics: {config['published_topics']}")
             except Exception as e:
-                self.get_logger().error(f"Failed to load config file {config_file}: {e}")
+                self.log_error(f"Failed to load config file {config_file}: {e}")
                 
         return config
+        
+    def _construct_topic_name(self, base_topic: str) -> str:
+        """Construct full topic name with namespace and prefix handling empty values"""
+        # If already absolute and no namespace/prefix, return as-is
+        if base_topic.startswith('/') and not self._config.get('namespace') and not self._config.get('prefix'):
+            return base_topic
+            
+        # Build topic parts
+        parts = []
+        
+        # Always start with / for absolute topics
+        if not base_topic.startswith('/'):
+            parts.append('')  # This creates leading / when joined
+            
+        # Add namespace if present
+        namespace = self._config.get('namespace', '')
+        if namespace:
+            parts.append(namespace)
+            
+        # Add prefix if present
+        prefix = self._config.get('prefix', '')
+        if prefix:
+            parts.append(prefix)
+            
+        # Add base topic (remove leading / if present)
+        base = base_topic.lstrip('/')
+        parts.append(base)
+        
+        # Join with / and handle multiple slashes
+        full_topic = '/'.join(parts)
+        
+        # Clean up any double slashes except at the beginning
+        while '//' in full_topic[1:]:
+            full_topic = full_topic[:1] + full_topic[1:].replace('//', '/', 1)
+            
+        return full_topic
         
     async def start_bridge(self):
         """Start bridge operations - call after ROS2 node initialization"""
         if self._started:
-            self.get_logger().warn("Bridge already started")
+            self.log_warning("Bridge already started")
             return
             
         try:
             # Store reference to current asyncio loop for thread-safe operations
             self.asyncio_loop = asyncio.get_event_loop()
-            self.get_logger().info(f"Stored asyncio loop reference: {id(self.asyncio_loop)}")
+            self.log_info(f"Stored asyncio loop reference: {id(self.asyncio_loop)}")
             
             # Initialize async queues
             await self.queues.initialize()
@@ -653,11 +748,11 @@ class ROSAIBridge(Node):
                 port = self._config['websocket_server']['port']
                 success = await self.websocket_server.start_server(host, port)
                 if success:
-                    self.get_logger().info(f"WebSocket server enabled on {host}:{port}")
+                    self.log_info(f"WebSocket server enabled on {host}:{port}")
                 else:
-                    self.get_logger().error("Failed to start WebSocket server")
+                    self.log_error("Failed to start WebSocket server")
             else:
-                self.get_logger().info("WebSocket server disabled")
+                self.log_info("WebSocket server disabled")
             
             # Start outbound message processing timer (1kHz)
             self.create_timer(0.001, self._process_outbound_queue)
@@ -668,18 +763,19 @@ class ROSAIBridge(Node):
             # WebSocket broadcasting is handled directly in ROS callbacks
             
             self._started = True
-            self.get_logger().info("ROS AI Bridge started successfully")
+            self.log_info("ROS AI Bridge started successfully")
             
         except Exception as e:
-            self.get_logger().error(f"Failed to start bridge: {e}")
+            self.log_error(f"Failed to start bridge: {e}")
             raise
             
     def _setup_configured_topics(self):
         """Set up topic subscriptions and publishers from configuration"""
-        self.get_logger().info(f"Setting up topics: subscribed_topics type={type(self._config.get('subscribed_topics'))}, value={self._config.get('subscribed_topics')}")
+        self.log_info(f"Setting up topics: subscribed_topics type={type(self._config.get('subscribed_topics'))}, value={self._config.get('subscribed_topics')}")
         # Set up subscriptions
         for topic_config in self._config.get('subscribed_topics', []):
-            topic = topic_config['topic']
+            base_topic = topic_config['topic']
+            full_topic = self._construct_topic_name(base_topic)
             msg_type = topic_config['msg_type']
             
             # Create QoS profile
@@ -689,27 +785,31 @@ class ROSAIBridge(Node):
                 reliability=QoSReliabilityPolicy.BEST_EFFORT
             )
             
-            self.reconfigurer.add_topic_subscription(topic, msg_type, qos_profile)
+            self.log_info(f"Subscribing to {full_topic} (base: {base_topic})")
+            self.reconfigurer.add_topic_subscription(full_topic, msg_type, qos_profile)
             
         # Set up publishers
         for topic_config in self._config.get('published_topics', []):
-            topic = topic_config['topic']
+            base_topic = topic_config['topic']
+            full_topic = self._construct_topic_name(base_topic)
             msg_type = topic_config['msg_type']
             
             try:
                 msg_class = self.reconfigurer._import_message_type(msg_type)
                 if msg_class:
-                    publisher = self.create_publisher(msg_class, topic, 10)
-                    self._topic_publishers[topic] = {
+                    publisher = self.create_publisher(msg_class, full_topic, 10)
+                    # Store with base topic as key for agent compatibility
+                    self._topic_publishers[base_topic] = {
                         'publisher': publisher,
                         'msg_class': msg_class,
-                        'msg_type': msg_type
+                        'msg_type': msg_type,
+                        'full_topic': full_topic
                     }
-                    self.get_logger().info(f"Created publisher for {topic} ({msg_type})")
+                    self.log_info(f"Created publisher for {full_topic} (base: {base_topic}, type: {msg_type})")
             except Exception as e:
                 import traceback
-                self.get_logger().error(f"Failed to create publisher {topic}: {e}")
-                self.get_logger().error(f"Full traceback: {traceback.format_exc()}")
+                self.log_error(f"Failed to create publisher {full_topic}: {e}")
+                self.log_error(f"Full traceback: {traceback.format_exc()}")
                 
     def _ros_callback(self, msg: Any, topic_name: str, msg_type: str):
         """ROS callback - broadcast message to all consumers"""
@@ -730,21 +830,21 @@ class ROSAIBridge(Node):
             # Also broadcast to WebSocket agents directly (non-blocking)
             if self.websocket_server and self.asyncio_loop:
                 # Schedule WebSocket broadcast in the asyncio thread (thread-safe)
-                self.get_logger().info(f"📡 Broadcasting message to WebSocket agents: {envelope.ros_msg_type}")
+                self.log_info(f"📡 Broadcasting message to WebSocket agents: {envelope.ros_msg_type}")
                 self.asyncio_loop.call_soon_threadsafe(
                     asyncio.create_task, 
                     self.websocket_server.broadcast_to_agents(envelope)
                 )
             elif self.websocket_server:
-                self.get_logger().warn("WebSocket server available but no asyncio loop reference")
+                self.log_warning("WebSocket server available but no asyncio loop reference")
             else:
-                self.get_logger().warn("No WebSocket server - cannot broadcast")
+                self.log_warning("No WebSocket server - cannot broadcast")
             
             if not success:
-                self.get_logger().warn(f"Inbound queue full, dropped message from {topic_name}")
+                self.log_warning(f"Inbound queue full, dropped message from {topic_name}")
                 
         except Exception as e:
-            self.get_logger().error(f"Error in ROS callback for {topic_name}: {e}")
+            self.log_error(f"Error in ROS callback for {topic_name}: {e}")
             
     def _process_outbound_queue(self):
         """Process outbound messages from agents and publish to ROS topics"""
@@ -763,18 +863,18 @@ class ROSAIBridge(Node):
                     try:
                         self._topic_publishers[topic]['publisher'].publish(ros_msg)
                     except Exception as e:
-                        self.get_logger().error(f"Failed to publish to {topic}: {e}")
+                        self.log_error(f"Failed to publish to {topic}: {e}")
                 else:
-                    self.get_logger().warn(f"No publisher configured for topic {topic}")
+                    self.log_warning(f"No publisher configured for topic {topic}")
                     
         except Exception as e:
-            self.get_logger().error(f"Error processing outbound queue: {e}")
+            self.log_error(f"Error processing outbound queue: {e}")
             
     def _log_metrics(self):
         """Log bridge metrics periodically"""
         metrics = self.queues.get_metrics()
         if metrics['total_messages'] > 0:
-            self.get_logger().info(
+            self.log_info(
                 f"Bridge metrics - Inbound: {metrics['inbound_queue_size']}, "
                 f"Outbound: {metrics['outbound_queue_size']}, "
                 f"Dropped: {metrics['dropped_messages']}, "
@@ -786,7 +886,7 @@ class ROSAIBridge(Node):
                 agent_status = self.websocket_server.get_agent_status()
                 connected_count = len(agent_status['connected_agents'])
                 if connected_count > 0:
-                    self.get_logger().info(f"WebSocket agents: {connected_count} connected")
+                    self.log_info(f"WebSocket agents: {connected_count} connected")
     
             
     def get_queues(self) -> MessageQueues:
@@ -797,7 +897,7 @@ class ROSAIBridge(Node):
         """Register agent and return dedicated interface with tracking"""
         interface = AgentInterface(agent_id, self.queues)
         self._agent_interfaces.append(interface)
-        self.get_logger().info(f"Registered agent interface: {agent_id}")
+        self.log_info(f"Registered agent interface: {agent_id}")
         return interface
         
     def get_agent_interfaces(self) -> List[AgentInterface]:
@@ -809,7 +909,7 @@ class ROSAIBridge(Node):
         if not self._started:
             return
             
-        self.get_logger().info("Stopping ROS AI Bridge...")
+        self.log_info("Stopping ROS AI Bridge...")
         
         try:
             # Signal shutdown
@@ -830,7 +930,7 @@ class ROSAIBridge(Node):
                     except asyncio.TimeoutError:
                         break
                 if drained > 0:
-                    self.get_logger().info(f"Drained {drained} inbound messages")
+                    self.log_info(f"Drained {drained} inbound messages")
                     
             # Close all agent interfaces
             for interface in self._agent_interfaces:
@@ -842,10 +942,10 @@ class ROSAIBridge(Node):
             self._topic_subscriptions.clear()
             
             self._started = False
-            self.get_logger().info("ROS AI Bridge stopped")
+            self.log_info("ROS AI Bridge stopped")
             
         except Exception as e:
-            self.get_logger().error(f"Error stopping bridge: {e}")
+            self.log_error(f"Error stopping bridge: {e}")
 
 
 async def run_bridge_async(bridge: ROSAIBridge):
