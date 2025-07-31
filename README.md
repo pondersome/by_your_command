@@ -70,6 +70,23 @@ export OPENAI_API_KEY="your-api-key-here"
 ### VAD Settings
 Edit `config/config.yaml` to tune voice detection parameters.
 
+### AEC Debug Setup
+The setup script automatically creates directories for AEC debugging. You can also run this manually:
+```bash
+# Run the setup script
+python3 scripts/setup_aec_debug.py
+
+# Or use the bash version
+./scripts/setup_aec_debug_dirs.sh
+```
+
+This creates the following structure at `/tmp/voice_chunks/`:
+- `test_tone/` - Clean test tone recordings
+- `test_raw/` - Raw microphone input with echo
+- `test_filtered/` - Echo-cancelled output
+- `vad_chunks/` - General voice activity recordings
+- `realtime/` - Recordings from realtime mode
+
 ## Usage
 
 Launch all nodes:

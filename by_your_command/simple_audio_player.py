@@ -99,8 +99,10 @@ class SimpleAudioPlayer(Node):
                     self.get_logger().warning("Audio queue full, dropping chunk")
                     
                 self.msg_count += 1
-                if self.msg_count % 100 == 0:
-                    self.get_logger().debug(f"Received {self.msg_count} audio chunks")
+                if self.msg_count == 1:
+                    self.get_logger().info(f"First audio chunk received! Size: {len(audio_array)} samples")
+                elif self.msg_count % 10 == 0:
+                    self.get_logger().info(f"Received {self.msg_count} audio chunks, queue size: {self.audio_queue.qsize()}")
                     
         except Exception as e:
             self.get_logger().error(f"Error in audio callback: {e}")
@@ -154,6 +156,8 @@ class SimpleAudioPlayer(Node):
                 # Play audio if stream is active
                 if self.playing and hasattr(self, 'stream'):
                     self.stream.write(audio_chunk.tobytes())
+                    if self.msg_count <= 10 or self.msg_count % 100 == 0:
+                        self.get_logger().info(f"Playing audio chunk {self.msg_count}, size: {len(audio_chunk)} samples")
                     
                 silence_count = 0
                 

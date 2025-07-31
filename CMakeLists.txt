@@ -70,6 +70,12 @@ install(PROGRAMS
   RENAME echo_suppressor
 )
 
+install(PROGRAMS
+  audio_processing/aec_node.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME aec_node
+)
+
 # Install configuration, launch files, and other resources
 install(DIRECTORY 
   bringup
