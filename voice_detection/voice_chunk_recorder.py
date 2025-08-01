@@ -3,7 +3,7 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool
 from by_your_command.msg import AudioDataUtterance
-from audio_common_msgs.msg import AudioData
+from audio_common_msgs.msg import AudioData, AudioStamped
 import wave
 from array import array
 from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy
@@ -20,7 +20,7 @@ class VoiceChunkRecorder(Node):
         self.declare_parameter('output_dir', '/tmp')
         self.declare_parameter('sample_rate', DEFAULT_SAMPLE_RATE)
         self.declare_parameter('close_timeout_sec', 2.0)  # Timeout for waiting for final chunk
-        self.declare_parameter('input_mode', 'utterance')  # 'utterance' or 'audio_data'
+        self.declare_parameter('input_mode', 'utterance')  # 'utterance', 'audio_data', or 'audio_stamped'
         self.declare_parameter('input_topic', '/audio_out')  # Topic for audio_data mode
         self.declare_parameter('input_sample_rate', 24000)  # Sample rate of input audio
         self.declare_parameter('audio_timeout', 10.0)  # Timeout for audio_data mode
@@ -61,6 +61,10 @@ class VoiceChunkRecorder(Node):
             self.get_logger().info(f"Starting in audio_data mode, subscribing to {self.input_topic}")
             self.get_logger().info(f"Input sample rate: {self.input_sample_rate} Hz, timeout: {self.audio_timeout} seconds")
             self.create_subscription(AudioData, self.input_topic, self.audio_data_callback, qos_profile=qos)
+        elif self.input_mode == 'audio_stamped':
+            self.get_logger().info(f"Starting in audio_stamped mode, subscribing to {self.input_topic}")
+            self.get_logger().info(f"Input sample rate: {self.input_sample_rate} Hz, timeout: {self.audio_timeout} seconds")
+            self.create_subscription(AudioStamped, self.input_topic, self.audio_stamped_callback, qos_profile=qos)
         else:
             self.get_logger().info("Starting in utterance mode")
             # Subscribe to enhanced chunks with utterance metadata
@@ -249,6 +253,12 @@ class VoiceChunkRecorder(Node):
         self.audio_data_file = None
         self.audio_data_start_time = None
         self.chunks_received = 0
+    
+    def audio_stamped_callback(self, msg: AudioStamped):
+        """Handle continuous AudioStamped data (wraps AudioData)"""
+        # AudioStamped contains header + audio, which contains audio_data + info
+        # Forward the audio_data part to the audio_data_callback
+        self.audio_data_callback(msg.audio.audio_data)
 
 
 def main(args=None):
@@ -260,7 +270,7 @@ def main(args=None):
         pass
     finally:
         if node.writer:
-            if node.input_mode == 'audio_data':
+            if node.input_mode in ['audio_data', 'audio_stamped']:
                 node._close_audio_file()
             else:
                 node._close_current_file("Node shutdown")

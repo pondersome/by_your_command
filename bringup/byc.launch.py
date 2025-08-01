@@ -31,7 +31,12 @@ def generate_launch_description():
         package='audio_common',
         executable='audio_capturer_node',
         name='audio_capturer_node',
-        output='screen'
+        output='screen',
+        parameters=[{
+            'chunk': 480,  # 30ms @ 16kHz = exactly 3 WebRTC frames (160 samples each)
+            'rate': 16000,
+            'device': 14  # Use PulseAudio
+        }]
     )
     
     silero_vad = Node(

@@ -87,12 +87,23 @@ def generate_launch_description():
         description='Enable voice chunk recorder for debugging'
     )
     
+    aec_method_arg = DeclareLaunchArgument(
+        'aec_method',
+        default_value='webrtc',
+        description='AEC method to use: webrtc or speex'
+    )
+    
     # Audio capture node
     audio_capturer = Node(
         package='audio_common',
         executable='audio_capturer_node',
         name='audio_capturer_node',
-        output='screen'
+        output='screen',
+        parameters=[{
+            'chunk': 480,  # 30ms @ 16kHz = exactly 3 WebRTC frames (160 samples each)
+            'rate': 16000,
+            'device': 14  # Use PulseAudio
+        }]
     )
     
     # Simple audio player for OpenAI response playback
@@ -118,7 +129,7 @@ def generate_launch_description():
         parameters=[{
             'mic_sample_rate': 16000,
             'speaker_sample_rate': 24000,  # Assistant voice is 24kHz
-            'aec_method': 'webrtc',  # Try WebRTC first, falls back to adaptive
+            'aec_method': LaunchConfiguration('aec_method'),
             'learning_rate': 0.3,
             'debug_logging': True  # Enable for testing
         }]
@@ -269,6 +280,7 @@ def generate_launch_description():
         voice_arg,
         verbose_arg,
         enable_voice_recorder_arg,
+        aec_method_arg,
         
         # Startup message
         startup_message,

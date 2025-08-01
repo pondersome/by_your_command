@@ -132,7 +132,8 @@ class AcousticEchoCancellerNode(Node):
             self._init_adaptive_aec()
             
         # Buffers for audio alignment
-        self.speaker_buffer = deque(maxlen=int(self.mic_sample_rate * 0.5))  # 500ms buffer
+        self.speaker_buffer = deque(maxlen=int(self.mic_sample_rate * 0.5))  # 500ms buffer at 16kHz (for non-WebRTC)
+        self.speaker_buffer_24k = deque(maxlen=int(self.speaker_sample_rate * 0.5))  # 500ms buffer at 24kHz (for WebRTC)
         self.mic_buffer = deque(maxlen=int(self.mic_sample_rate * 0.5))
         
         # Resampling ratio
@@ -141,6 +142,8 @@ class AcousticEchoCancellerNode(Node):
         # Delay compensation (speaker to mic path delay)
         self.delay_samples = int(0.13 * self.mic_sample_rate)  # Start with 130ms based on measurements
         self.delay_estimator = DelayEstimator(self.mic_sample_rate)
+        self.measured_delays = deque(maxlen=50)  # Track last 50 delay measurements
+        self.delay_update_counter = 0
         
         # State tracking
         self.assistant_speaking = False
@@ -151,6 +154,7 @@ class AcousticEchoCancellerNode(Node):
         self.speaker_chunks_received = 0
         self.echo_reduction_sum = 0.0
         self.webrtc_chunks_processed = 0
+        self.webrtc_underruns = 0
         self.last_status_time = time.time()
         
         # Test tone generation
@@ -320,24 +324,23 @@ class AcousticEchoCancellerNode(Node):
         elif self.speaker_chunks_received % 10 == 0:  # Log more frequently
             self.log_info(f"Received {self.speaker_chunks_received} speaker chunks, size={len(audio_data)}")
         
-        # For WebRTC, keep original sample rate; for others, resample
-        if self.aec_type == 'webrtc':
-            # WebRTC handles different sample rates natively
-            self.speaker_buffer.extend(audio_data)
-            self.log_debug(f"WebRTC: Using original {self.speaker_sample_rate}Hz speaker audio")
+        # Store original 24kHz audio for WebRTC
+        self.speaker_buffer_24k.extend(audio_data)
+        
+        # For non-WebRTC methods, also store resampled version
+        if self.speaker_sample_rate != self.mic_sample_rate:
+            if self.use_simple_resampling:
+                # Simple 3:2 decimation for 24kHz to 16kHz
+                audio_data_16k = self._simple_resample_24k_to_16k(audio_data)
+            else:
+                # Resample using scipy (24k to 16k is 3:2 ratio)
+                audio_data_16k = signal.resample_poly(audio_data, 2, 3)
+            self.log_debug(f"Resampled speaker audio: {len(audio_data)} → {len(audio_data_16k)} samples")
         else:
-            # Resample from 24kHz to 16kHz if needed
-            if self.speaker_sample_rate != self.mic_sample_rate:
-                if self.use_simple_resampling:
-                    # Simple 3:2 decimation for 24kHz to 16kHz
-                    audio_data = self._simple_resample_24k_to_16k(audio_data)
-                else:
-                    # Resample using scipy (24k to 16k is 3:2 ratio)
-                    audio_data = signal.resample_poly(audio_data, 2, 3)
-                self.log_debug(f"Resampled speaker audio: {len(msg.int16_data)} → {len(audio_data)} samples")
+            audio_data_16k = audio_data
             
-            # Add to speaker buffer for echo cancellation
-            self.speaker_buffer.extend(audio_data)
+        # Add resampled audio to 16kHz buffer for non-WebRTC methods
+        self.speaker_buffer.extend(audio_data_16k)
         
         # Update state
         self.assistant_speaking = True
@@ -386,17 +389,51 @@ class AcousticEchoCancellerNode(Node):
         # Only perform AEC if assistant is/was recently speaking
         elif self.assistant_speaking or time_since_speaker < 1.0:
             # Get aligned speaker reference (compensate for delay)
-            if len(self.speaker_buffer) > self.delay_samples + len(mic_data):
-                # Extract speaker reference that corresponds to current mic input
-                # The mic hears what was played delay_samples ago
-                # So we need the speaker audio from delay_samples back
-                start_idx = len(self.speaker_buffer) - self.delay_samples - len(mic_data)
-                end_idx = len(self.speaker_buffer) - self.delay_samples
+            # For WebRTC, we need to handle different sample rates properly
+            if self.aec_type == 'webrtc':
+                # WebRTC needs speaker data at original 24kHz sample rate
+                # Calculate delay in 24kHz samples
+                delay_samples_24k = int(self.delay_samples * self.speaker_sample_rate / self.mic_sample_rate)
+                speaker_chunk_24k = int(len(mic_data) * self.speaker_sample_rate / self.mic_sample_rate)
                 
-                if start_idx >= 0:
-                    speaker_ref = np.array(list(self.speaker_buffer))[start_idx:end_idx]
+                if len(self.speaker_buffer_24k) > delay_samples_24k + speaker_chunk_24k:
+                    # Extract 24kHz speaker reference
+                    start_idx = len(self.speaker_buffer_24k) - delay_samples_24k - speaker_chunk_24k
+                    end_idx = len(self.speaker_buffer_24k) - delay_samples_24k
+                    
+                    if start_idx >= 0:
+                        speaker_ref = np.array(list(self.speaker_buffer_24k))[start_idx:end_idx]
+                        # Log when we start processing
+                        if self.mic_chunks_processed <= 5 or self.mic_chunks_processed % 100 == 0:
+                            self.log_debug(f"WebRTC processing: speaker_buf_24k={len(self.speaker_buffer_24k)}, "
+                                         f"delay_24k={delay_samples_24k}, mic_len={len(mic_data)}, "
+                                         f"speaker_ref_len={len(speaker_ref)} @ 24kHz")
+                        
+                        processed = self._process_webrtc(mic_data, speaker_ref)
+                    else:
+                        # Not enough history, skip AEC
+                        processed = mic_data
+                        self.log_debug("Not enough speaker buffer history for delay compensation")
                 else:
-                    # Not enough history, use what we have
+                    # Not enough speaker data, skip AEC
+                    processed = mic_data
+                    if self.mic_chunks_processed % 50 == 0:
+                        self.log_debug(f"Insufficient speaker buffer: {len(self.speaker_buffer_24k)} samples")
+            else:
+                # For non-WebRTC methods, use resampled 16kHz data
+                if len(self.speaker_buffer) > self.delay_samples + len(mic_data):
+                    # Extract speaker reference that corresponds to current mic input
+                    # The mic hears what was played delay_samples ago
+                    # So we need the speaker audio from delay_samples back
+                    start_idx = len(self.speaker_buffer) - self.delay_samples - len(mic_data)
+                    end_idx = len(self.speaker_buffer) - self.delay_samples
+                    
+                    if start_idx >= 0:
+                        speaker_ref = np.array(list(self.speaker_buffer))[start_idx:end_idx]
+                    else:
+                        # Not enough history, use what we have
+                        speaker_ref = np.zeros(len(mic_data), dtype=np.int16)
+                else:
                     speaker_ref = np.zeros(len(mic_data), dtype=np.int16)
                 
                 # Log when we start processing
@@ -405,32 +442,51 @@ class AcousticEchoCancellerNode(Node):
                                  f"delay={self.delay_samples}, mic_len={len(mic_data)}, "
                                  f"speaker_ref_len={len(speaker_ref)}")
                 
-# Perform echo cancellation based on initialized type
-                if self.aec_type == 'webrtc':
-                    processed = self._process_webrtc(mic_data, speaker_ref)
-                elif self.aec_type == 'speex':
+                # Perform echo cancellation based on initialized type
+                if self.aec_type == 'speex':
                     processed = self._process_speex(mic_data, speaker_ref)
                 else:
                     processed = self._process_adaptive(mic_data, speaker_ref)
+            
+            # Calculate echo reduction
+            input_power = np.mean(mic_data**2)
+            output_power = np.mean(processed**2)
+            if input_power > 0 and output_power > 0:
+                reduction_db = 10 * np.log10(output_power / input_power)
+                if not np.isnan(reduction_db) and not np.isinf(reduction_db):
+                    self.echo_reduction_sum += reduction_db
+                    self.log_debug(f"AEC active: input={input_power:.0f}, output={output_power:.0f}, "
+                                 f"reduction={reduction_db:.1f}dB")
                     
-                # Calculate echo reduction
-                input_power = np.mean(mic_data**2)
-                output_power = np.mean(processed**2)
-                if input_power > 0 and output_power > 0:
-                    reduction_db = 10 * np.log10(output_power / input_power)
-                    if not np.isnan(reduction_db) and not np.isinf(reduction_db):
-                        self.echo_reduction_sum += reduction_db
-                        self.log_debug(f"AEC active: input={input_power:.0f}, output={output_power:.0f}, "
-                                     f"reduction={reduction_db:.1f}dB")
+                    # Log if no reduction with Speex
+                    if self.aec_type == 'speex' and abs(reduction_db) < 0.1:
+                        if self.mic_chunks_processed % 50 == 0:  # Every 50 chunks
+                            self.log_warning(f"Speex showing no reduction! Check initialization.")
+            
+            # Periodically measure and update delay
+            self.delay_update_counter += 1
+            if self.delay_update_counter % 50 == 0:  # Every 50 chunks
+                # Estimate delay using recent audio
+                if len(self.speaker_buffer) > self.delay_estimator.correlation_window:
+                    speaker_array = np.array(list(self.speaker_buffer))[-self.delay_estimator.correlation_window:]
+                    mic_array = np.array(list(self.mic_buffer))[-self.delay_estimator.correlation_window:]
+                    
+                    measured_delay = self.delay_estimator.estimate_delay(speaker_array, mic_array)
+                    if measured_delay > 0:
+                        self.measured_delays.append(measured_delay)
                         
-                        # Log if no reduction with Speex
-                        if self.aec_type == 'speex' and abs(reduction_db) < 0.1:
-                            if self.mic_chunks_processed % 50 == 0:  # Every 50 chunks
-                                self.log_warning(f"Speex showing no reduction! Check initialization.")
-            else:
-                # Not enough speaker data yet
-                processed = mic_data
-                self.log_debug("Not enough speaker data for AEC")
+                        # Update delay if we have enough measurements
+                        if len(self.measured_delays) >= 5:
+                            avg_delay = int(np.median(self.measured_delays))
+                            if abs(avg_delay - self.delay_samples) > 80:  # More than 5ms difference
+                                old_delay_ms = self.delay_samples * 1000 / self.mic_sample_rate
+                                new_delay_ms = avg_delay * 1000 / self.mic_sample_rate
+                                self.log_info(f"Updating delay: {old_delay_ms:.1f}ms -> {new_delay_ms:.1f}ms")
+                                self.delay_samples = avg_delay
+                                
+                                # Update WebRTC delay if applicable
+                                if self.aec_type == 'webrtc' and hasattr(self.aec, 'set_system_delay'):
+                                    self.aec.set_system_delay(int(new_delay_ms))
         else:
             # No echo cancellation needed
             processed = mic_data
@@ -475,28 +531,28 @@ class AcousticEchoCancellerNode(Node):
         try:
             # Add new data to buffers
             self.webrtc_mic_buffer.extend(mic_data.tolist())
-            # Note: speaker_ref is already at original sample rate for WebRTC
+            # speaker_ref is now at 24kHz for WebRTC
             self.webrtc_speaker_buffer.extend(speaker_ref.tolist())
+            
+            # Log buffer state periodically
+            if self.webrtc_chunks_processed % 100 == 0 or self.webrtc_chunks_processed < 5:
+                self.log_debug(f"WebRTC buffers before processing: mic={len(self.webrtc_mic_buffer)}, "
+                             f"speaker={len(self.webrtc_speaker_buffer)}")
             
             processed_output = []
             chunks_dropped = 0
             
-            # Process in 10ms chunks - process mic even if speaker is silent
-            while len(self.webrtc_mic_buffer) >= self.webrtc_mic_frame_size:
+            # Process in 10ms chunks - only when BOTH buffers have sufficient data
+            while (len(self.webrtc_mic_buffer) >= self.webrtc_mic_frame_size and 
+                   len(self.webrtc_speaker_buffer) >= self.webrtc_speaker_frame_size):
                 
                 # Extract mic chunk
                 mic_chunk = np.array(self.webrtc_mic_buffer[:self.webrtc_mic_frame_size], dtype=np.int16)
                 self.webrtc_mic_buffer = self.webrtc_mic_buffer[self.webrtc_mic_frame_size:]
                 
-                # Get speaker chunk or use silence (different frame size for 24kHz)
-                if len(self.webrtc_speaker_buffer) >= self.webrtc_speaker_frame_size:
-                    speaker_chunk = np.array(self.webrtc_speaker_buffer[:self.webrtc_speaker_frame_size], dtype=np.int16)
-                    self.webrtc_speaker_buffer = self.webrtc_speaker_buffer[self.webrtc_speaker_frame_size:]
-                else:
-                    # Use silence for speaker if not enough data
-                    speaker_chunk = np.zeros(self.webrtc_speaker_frame_size, dtype=np.int16)
-                    if chunks_dropped == 0:
-                        self.log_debug("Using silence for speaker reference")
+                # Extract speaker chunk
+                speaker_chunk = np.array(self.webrtc_speaker_buffer[:self.webrtc_speaker_frame_size], dtype=np.int16)
+                self.webrtc_speaker_buffer = self.webrtc_speaker_buffer[self.webrtc_speaker_frame_size:]
                 
                 # Convert to bytes for WebRTC
                 mic_bytes = mic_chunk.tobytes()
@@ -540,12 +596,30 @@ class AcousticEchoCancellerNode(Node):
                     if hasattr(self.aec, 'has_echo') and self.aec.has_echo:
                         self.log_debug(f"WebRTC detecting echo, AEC level: {self.aec.aec_level}")
             
+            # Check for buffer underrun (couldn't process all data)
+            if len(self.webrtc_mic_buffer) >= self.webrtc_mic_frame_size:
+                # We have mic data but no speaker data - this is an underrun
+                self.webrtc_underruns += 1
+                self.log_warning(f"Speaker buffer underrun #{self.webrtc_underruns}! "
+                               f"Mic buffer: {len(self.webrtc_mic_buffer)}, "
+                               f"Speaker buffer: {len(self.webrtc_speaker_buffer)}")
+                # Clear buffers to prevent desynchronization
+                self.webrtc_mic_buffer.clear()
+                self.webrtc_speaker_buffer.clear()
+                # Return original audio when AEC fails
+                return mic_data
+            
             # If we have processed data, return it; otherwise return original
             if processed_output:
-                # Pad with zeros if needed to match input length
-                while len(processed_output) < len(mic_data):
-                    processed_output.append(0)
-                return np.array(processed_output[:len(mic_data)], dtype=np.int16)
+                # Ensure output matches input length exactly
+                if len(processed_output) != len(mic_data):
+                    self.log_warning(f"Output length mismatch: {len(processed_output)} vs {len(mic_data)}")
+                    # Pad or truncate as needed
+                    if len(processed_output) < len(mic_data):
+                        processed_output.extend([0] * (len(mic_data) - len(processed_output)))
+                    else:
+                        processed_output = processed_output[:len(mic_data)]
+                return np.array(processed_output, dtype=np.int16)
             else:
                 # Not enough data for a full 10ms chunk yet
                 return mic_data
@@ -709,15 +783,27 @@ class AcousticEchoCancellerNode(Node):
         if self.mic_chunks_processed > 0:
             avg_reduction = self.echo_reduction_sum / self.mic_chunks_processed
             
+        # Get delay statistics
+        delay_info = ""
+        if self.measured_delays:
+            delays_ms = [d * 1000 / self.mic_sample_rate for d in self.measured_delays]
+            avg_delay_ms = np.mean(delays_ms)
+            std_delay_ms = np.std(delays_ms)
+            min_delay_ms = np.min(delays_ms)
+            max_delay_ms = np.max(delays_ms)
+            delay_info = f"\nDelay measurements: {avg_delay_ms:.1f}±{std_delay_ms:.1f}ms (range: {min_delay_ms:.1f}-{max_delay_ms:.1f}ms)"
+            
         self.log_info("=== AEC Status Report ===")
         self.log_info(f"AEC Type: {self.aec_type}")
         self.log_info(f"Mic chunks: {self.mic_chunks_processed}")
         self.log_info(f"Speaker chunks: {self.speaker_chunks_received}")
         self.log_info(f"Assistant speaking: {self.assistant_speaking}")
         self.log_info(f"Average echo reduction: {avg_reduction:.1f}dB")
+        self.log_info(f"Current delay: {self.delay_samples * 1000 / self.mic_sample_rate:.1f}ms{delay_info}")
         
         if self.aec_type == 'webrtc':
             self.log_info(f"WebRTC chunks processed: {self.webrtc_chunks_processed}")
+            self.log_info(f"WebRTC underruns: {self.webrtc_underruns}")
             self.log_info(f"WebRTC buffer sizes: mic={len(self.webrtc_mic_buffer)}, "
                          f"speaker={len(self.webrtc_speaker_buffer)}")
         
@@ -792,9 +878,9 @@ class DelayEstimator:
     
     def __init__(self, sample_rate):
         self.sample_rate = sample_rate
-        self.max_delay_ms = 200  # Maximum expected delay in milliseconds
+        self.max_delay_ms = 300  # Maximum expected delay in milliseconds (increased for safety)
         self.max_delay_samples = int(self.max_delay_ms * sample_rate / 1000)
-        self.correlation_window = int(0.1 * sample_rate)  # 100ms window
+        self.correlation_window = int(0.2 * sample_rate)  # 200ms window for better accuracy
         
     def estimate_delay(self, speaker_signal, mic_signal):
         """Estimate delay using cross-correlation"""
@@ -805,28 +891,49 @@ class DelayEstimator:
         speaker_segment = speaker_signal[-self.correlation_window:]
         mic_segment = mic_signal[-self.correlation_window:]
         
+        # Check if there's enough signal power
+        speaker_power = np.mean(speaker_segment**2)
+        mic_power = np.mean(mic_segment**2)
+        if speaker_power < 100 or mic_power < 100:  # Too quiet
+            return 0
+        
         # Normalize signals
-        speaker_norm = speaker_segment - np.mean(speaker_segment)
-        mic_norm = mic_segment - np.mean(mic_segment)
+        speaker_norm = (speaker_segment - np.mean(speaker_segment)) / (np.std(speaker_segment) + 1e-10)
+        mic_norm = (mic_segment - np.mean(mic_segment)) / (np.std(mic_segment) + 1e-10)
         
         # Compute cross-correlation for positive delays only
         max_lag = min(self.max_delay_samples, len(speaker_norm))
         correlation = np.zeros(max_lag)
         
-        for lag in range(max_lag):
-            if lag < len(mic_norm):
-                correlation[lag] = np.dot(
-                    speaker_norm[:len(speaker_norm)-lag],
-                    mic_norm[lag:]
-                ) / (len(speaker_norm) - lag)
+        # Use scipy for efficient correlation if available
+        try:
+            if SCIPY_AVAILABLE:
+                # Full correlation, then take only positive lags
+                full_corr = signal.correlate(mic_norm, speaker_norm, mode='full')
+                # Find the center (zero lag) and take positive delays
+                mid = len(full_corr) // 2
+                correlation = full_corr[mid:mid+max_lag]
+            else:
+                raise ImportError("scipy not available")
+        except (ImportError, AttributeError):
+            # Fallback to manual correlation
+            for lag in range(max_lag):
+                if lag < len(mic_norm):
+                    correlation[lag] = np.dot(
+                        speaker_norm[:len(speaker_norm)-lag],
+                        mic_norm[lag:]
+                    ) / (len(speaker_norm) - lag)
         
-        # Find peak
-        if np.max(np.abs(correlation)) > 0:
-            delay = np.argmax(np.abs(correlation))
-        else:
-            delay = 0
+        # Find peak with minimum threshold
+        if np.max(correlation) > 0.1:  # Minimum correlation threshold
+            delay = np.argmax(correlation)
+            # Sanity check - delays should typically be 50-200ms
+            expected_min = int(0.05 * self.sample_rate)  # 50ms
+            expected_max = int(0.25 * self.sample_rate)  # 250ms
+            if expected_min <= delay <= expected_max:
+                return int(delay)
         
-        return int(delay)
+        return 0  # No valid delay found
 
 
 def main(args=None):

@@ -12,7 +12,7 @@ Date: July 2025
 
 import os
 from launch import LaunchDescription
-from launch.actions import GroupAction
+from launch.actions import GroupAction, DeclareLaunchArgument
 from launch_ros.actions import Node, PushRosNamespace
 from launch.substitutions import LaunchConfiguration
 from ament_index_python.packages import get_package_share_directory
@@ -20,6 +20,9 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 
 def generate_launch_description():
+    
+    # Launch arguments
+    aec_method = LaunchConfiguration('aec_method')
     
     # Audio capture node
     audio_capturer = Node(
@@ -30,7 +33,7 @@ def generate_launch_description():
         parameters=[{
             'device': 14,  # Use pulse audio for automatic resampling
             'rate': 16000,
-            'chunk': 512
+            'chunk': 480  # 30ms @ 16kHz = exactly 3 WebRTC frames (160 samples each)
         }]
     )
     
@@ -57,7 +60,7 @@ def generate_launch_description():
         parameters=[{
             'mic_sample_rate': 16000,
             'speaker_sample_rate': 24000,
-            'aec_method': 'webrtc',  # Test with WebRTC
+            'aec_method': aec_method,  # Use launch parameter
             'debug_logging': True,
             'bypass': False,
             'test_mode': True,  # Enable tone generation
@@ -115,6 +118,11 @@ def generate_launch_description():
     )
     
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'aec_method',
+            default_value='webrtc',
+            description='AEC method to use: webrtc or speex'
+        ),
         audio_capturer,
         audio_player,
         aec_node,
