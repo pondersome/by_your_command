@@ -557,12 +557,14 @@ class OpenAIRealtimeAgent:
                 return
                 
             # Convert to int16 array for ROS
-            audio_array = np.frombuffer(audio_data, dtype=np.int16)
+            audio_array_24k = np.frombuffer(audio_data, dtype=np.int16)
             
-            # For now, let's go back to AudioData to avoid the header serialization issue
-            # The audio_player_node requires AudioStamped, but we need to fix the bridge
-            # deserialization first. The voice recorder confirmed the audio is good.
-            audio_data_dict = {"int16_data": audio_array.tolist()}
+            # Resample from 24kHz to 16kHz using simple 3:2 decimation
+            # For every 3 samples at 24kHz, output 2 samples at 16kHz
+            audio_array_16k = self._simple_resample_24k_to_16k(audio_array_24k)
+            
+            # Send audio as-is to preserve timing
+            audio_data_dict = {"int16_data": audio_array_16k.tolist()}
             
             # Send to ROS via bridge if audio output is enabled
             if self.published_topics['audio_out']:  # Skip if topic is empty/disabled
@@ -574,7 +576,7 @@ class OpenAIRealtimeAgent:
                 
                 if success:
                     self.metrics['messages_sent_to_ros'] += 1
-                    self.logger.debug(f"🔊 Audio delta sent: {len(audio_array)} samples ({len(audio_b64)} b64 chars)")
+                    self.logger.debug(f"🔊 Audio delta sent: {len(audio_array_16k)} samples @ 16kHz (from {len(audio_array_24k)} @ 24kHz)")
                 else:
                     self.logger.warning("⚠️ Failed to send audio delta to ROS")
             else:
@@ -710,6 +712,40 @@ class OpenAIRealtimeAgent:
             
     def _check_cycle_readiness(self):
         """Check if all responses are complete and we can cycle session"""
+        self._continue_check_cycle_readiness()
+        
+    def _simple_resample_24k_to_16k(self, audio_data):
+        """Simple 3:2 decimation from 24kHz to 16kHz
+        
+        For every 3 samples at 24kHz, we output 2 samples at 16kHz.
+        Uses linear interpolation for smoother resampling.
+        """
+        if len(audio_data) == 0:
+            return np.array([], dtype=np.int16)
+            
+        # Calculate output size (2/3 of input)
+        output_size = int(len(audio_data) * 2 / 3)
+        output = np.zeros(output_size, dtype=np.int16)
+        
+        # Resample using linear interpolation
+        for i in range(output_size):
+            # Map output index to input index
+            input_idx = i * 1.5  # 3/2 ratio
+            idx_int = int(input_idx)
+            fraction = input_idx - idx_int
+            
+            # Linear interpolation
+            if idx_int + 1 < len(audio_data):
+                sample1 = audio_data[idx_int]
+                sample2 = audio_data[idx_int + 1]
+                output[i] = int(sample1 * (1 - fraction) + sample2 * fraction)
+            elif idx_int < len(audio_data):
+                output[i] = audio_data[idx_int]
+                
+        return output
+        
+    def _continue_check_cycle_readiness(self):
+        """Continue the cycle readiness check logic"""
         all_complete = not any(self.pending_responses.values())
         pending_count = sum(self.pending_responses.values())
         

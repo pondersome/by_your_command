@@ -65,15 +65,9 @@ install(PROGRAMS
 )
 
 install(PROGRAMS
-  by_your_command/echo_suppressor.py
+  by_your_command/file_audio_publisher.py
   DESTINATION lib/${PROJECT_NAME}
-  RENAME echo_suppressor
-)
-
-install(PROGRAMS
-  audio_processing/aec_node.py
-  DESTINATION lib/${PROJECT_NAME}
-  RENAME aec_node
+  RENAME file_audio_publisher
 )
 
 # Install configuration, launch files, and other resources

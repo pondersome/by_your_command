@@ -17,6 +17,7 @@ import pyaudio
 import numpy as np
 import threading
 import queue
+from collections import deque
 
 
 class SimpleAudioPlayer(Node):
@@ -25,7 +26,7 @@ class SimpleAudioPlayer(Node):
         
         # Parameters
         self.declare_parameter('topic', '/audio_out')
-        self.declare_parameter('sample_rate', 24000)
+        self.declare_parameter('sample_rate', 16000)  # Default to 16kHz
         self.declare_parameter('channels', 1)
         self.declare_parameter('device', -1)
         
@@ -45,6 +46,11 @@ class SimpleAudioPlayer(Node):
         # Audio queue for smooth playback
         self.audio_queue = queue.Queue(maxsize=500)  # Increased for better buffering
         self.playing = False
+        
+        # Remove artificial delay - let AEC work with natural acoustic delay
+        # self.delay_buffer = deque()
+        # self.playback_delay_ms = 0
+        # self.playback_delay_samples = 0
         
         # QoS profile
         qos = QoSProfile(
@@ -76,6 +82,26 @@ class SimpleAudioPlayer(Node):
             f"Simple audio player started on topic {self.topic} "
             f"({self.sample_rate}Hz, {self.channels} channel(s), device {self.device})"
         )
+        if self.sample_rate != 16000:
+            self.get_logger().warning(f"WARNING: Sample rate is {self.sample_rate}Hz but test expects 16000Hz!")
+        
+        # Test audio device
+        try:
+            test_stream = self.p.open(
+                format=pyaudio.paInt16,
+                channels=self.channels,
+                rate=self.sample_rate,
+                output=True,
+                output_device_index=self.device,
+                frames_per_buffer=1024
+            )
+            # Play a short silent test
+            test_data = np.zeros(1024, dtype=np.int16)
+            test_stream.write(test_data.tobytes())
+            test_stream.close()
+            self.get_logger().info("Audio device test successful")
+        except Exception as e:
+            self.get_logger().error(f"Audio device test failed: {e}")
         
         self.msg_count = 0
         
@@ -87,12 +113,13 @@ class SimpleAudioPlayer(Node):
                 # Convert int16 list to numpy array
                 audio_array = np.array(msg.int16_data, dtype=np.int16)
                 
-                # Add to queue (non-blocking)
+                # Add to queue directly - no artificial delay
                 try:
                     self.audio_queue.put_nowait(audio_array)
                     
                     # Start playback if not already playing
                     if not self.playing:
+                        self.get_logger().info(f"Starting playback, queue size: {self.audio_queue.qsize()}")
                         self.start_playback()
                         
                 except queue.Full:
@@ -100,7 +127,13 @@ class SimpleAudioPlayer(Node):
                     
                 self.msg_count += 1
                 if self.msg_count == 1:
-                    self.get_logger().info(f"First audio chunk received! Size: {len(audio_array)} samples")
+                    self.get_logger().info(f"First audio chunk received! Size: {len(audio_array)} samples ({len(audio_array)/self.sample_rate:.3f}s)")
+                    self.get_logger().info(f"Queue empty: {self.audio_queue.empty()}, Playing: {self.playing}")
+                    # Don't assume chunk size - just log what we get
+                    if len(audio_array) > self.sample_rate * 2:  # More than 2 seconds
+                        self.get_logger().warning(f"Very large chunk: {len(audio_array)} samples ({len(audio_array)/self.sample_rate:.2f}s @ {self.sample_rate}Hz)")
+                elif self.msg_count <= 10:  # Log first 10 chunks
+                    self.get_logger().info(f"Audio chunk {self.msg_count}: {len(audio_array)} samples")
                 elif self.msg_count % 10 == 0:
                     self.get_logger().info(f"Received {self.msg_count} audio chunks, queue size: {self.audio_queue.qsize()}")
                     
@@ -146,7 +179,7 @@ class SimpleAudioPlayer(Node):
     def playback_loop(self):
         """Background thread for audio playback"""
         silence_count = 0
-        max_silence = 200  # ~2 seconds at 100Hz - increased to avoid cutting off
+        max_silence = 500  # ~5 seconds at 100Hz - longer for test mode
         
         while True:
             try:
@@ -155,9 +188,15 @@ class SimpleAudioPlayer(Node):
                 
                 # Play audio if stream is active
                 if self.playing and hasattr(self, 'stream'):
-                    self.stream.write(audio_chunk.tobytes())
-                    if self.msg_count <= 10 or self.msg_count % 100 == 0:
-                        self.get_logger().info(f"Playing audio chunk {self.msg_count}, size: {len(audio_chunk)} samples")
+                    try:
+                        self.stream.write(audio_chunk.tobytes())
+                        self.get_logger().info(f"Played audio chunk, size: {len(audio_chunk)} samples")
+                    except Exception as e:
+                        self.get_logger().error(f"Error writing to stream: {e}")
+                elif self.playing:
+                    self.get_logger().warning("Playing but no stream!")
+                else:
+                    self.get_logger().warning(f"Not playing, chunk dropped")
                     
                 silence_count = 0
                 

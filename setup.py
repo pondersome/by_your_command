@@ -35,6 +35,7 @@ setup(
             'oai_realtime_agent = agents.main:main',
             'audio_data_to_stamped = by_your_command.audio_data_to_stamped:main',
             'simple_audio_player = by_your_command.simple_audio_player:main',
+            'file_audio_publisher = by_your_command.file_audio_publisher:main',
         ],
     },
 )

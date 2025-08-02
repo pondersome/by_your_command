@@ -6,7 +6,4 @@ torch>=2.7.1
 python-dotenv>=1.1.1
 
 # Audio processing dependencies
-scipy>=1.11.0,<1.14.0  # For resampling in AEC (compatible with numpy<2.0)
-speexdsp-python>=0.1.2  # Optional: Speex echo cancellation
-webrtc-audio-processing>=0.1.3  # WebRTC AEC (requires swig)
-numpy>=1.24.0,<2.0.0  # For audio processing (keep <2.0 for scipy compatibility)
+numpy>=1.24.0  # For audio processing

@@ -78,11 +78,6 @@ def generate_launch_description():
         description='Enable voice chunk recorder for debugging'
     )
     
-    aec_method_arg = DeclareLaunchArgument(
-        'aec_method',
-        default_value='webrtc',
-        description='AEC method to use: webrtc or speex'
-    )
     
     # Audio capture node
     audio_capturer = Node(
@@ -91,9 +86,9 @@ def generate_launch_description():
         name='audio_capturer_node',
         output='screen',
         parameters=[{
-            'chunk': 480,  # 30ms @ 16kHz = exactly 3 WebRTC frames (160 samples each)
+            'chunk': 512,  # 32ms @ 16kHz - standard chunk size
             'rate': 16000,
-            'device': 14  # Use PulseAudio
+            'device': -1  # Use default device
         }]
     )
     
@@ -105,28 +100,12 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'topic': 'audio_out',  # Relative topic for namespacing
-            'sample_rate': 24000,
+            'sample_rate': 16000,  # Standardized from 24kHz
             'channels': 1,
             'device': -1    # Default output device
         }]
     )
     
-    # Acoustic Echo Cancellation - removes assistant voice from mic input
-    aec_node = Node(
-        package='by_your_command',
-        executable='aec_node',
-        name='aec_node',
-        output='screen',
-        parameters=[{
-            'mic_sample_rate': 16000,
-            'speaker_sample_rate': 24000,  # Assistant voice is 24kHz
-            'aec_method': LaunchConfiguration('aec_method'),
-            'learning_rate': 0.5,  # For adaptive fallback
-            'debug_logging': True,  # Enable for testing
-            'bypass': False,  # Set to True to disable AEC
-            'test_mode': False  # Set to True for tone testing
-        }]
-    )
     
     # Silero VAD node for speech detection
     silero_vad = Node(
@@ -136,7 +115,7 @@ def generate_launch_description():
         output='screen',
         parameters=[bridge_config],
         remappings=[
-            ('audio', 'audio_filtered')  # Listen to filtered audio (relative for namespacing)
+            ('audio', 'audio')  # Listen to raw audio directly (no AEC needed)
         ]
     )
     
@@ -187,20 +166,6 @@ def generate_launch_description():
         }]
     )
     
-    # Voice chunk recorder for filtered microphone (always enabled for debugging)
-    voice_recorder_filtered = Node(
-        package='by_your_command',
-        executable='voice_chunk_recorder',
-        name='voice_recorder_filtered',
-        output='screen',
-        parameters=[{
-            'output_dir': '/tmp/voice_chunks/filtered_mic',
-            'input_mode': 'audio_stamped',
-            'input_topic': 'audio_filtered',  # Filtered microphone after AEC
-            'input_sample_rate': 16000,
-            'audio_timeout': 10.0
-        }]
-    )
     
     # Startup message
     startup_message = LogInfo(
@@ -218,12 +183,10 @@ def generate_launch_description():
         PushRosNamespace(LaunchConfiguration('namespace')),
         PushRosNamespace(LaunchConfiguration('prefix')),
         audio_capturer,
-        aec_node,
         audio_player,
         silero_vad,
         ros_ai_bridge,
-        voice_recorder_output,
-        voice_recorder_filtered
+        voice_recorder_output
     ])
     
     # Agent runs as separate process and handles namespace differently
@@ -243,7 +206,6 @@ def generate_launch_description():
         voice_arg,
         verbose_arg,
         enable_voice_recorder_arg,
-        aec_method_arg,
         
         # Startup message
         startup_message,

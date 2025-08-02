@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This document details the implementation of Acoustic Echo Cancellation (AEC) for the ROS2-based voice assistant system. AEC is critical for enabling natural bidirectional conversations by removing the assistant's own voice from the microphone input, allowing users to interrupt while the assistant is speaking.
+This document details the implementation journey of Acoustic Echo Cancellation (AEC) for the ROS2-based voice assistant system. After extensive testing of multiple software AEC solutions (WebRTC, Speex, custom adaptive filters), we ultimately determined that PulseAudio's built-in echo cancellation module provides the most effective solution. This document preserves our learning journey and implementation attempts for future reference.
 
 ## Problem Statement
 
@@ -594,8 +594,81 @@ WebRTC detecting echo: True
    - Real-time dashboard for echo metrics
    - Automatic quality reporting
 
-## Conclusion
+## Final Implementation Decision
 
-The AEC implementation journey highlighted the complexity of real-time audio processing in robotics applications. While fraught with challenges from library incompatibilities to subtle timing issues, the final implementation provides robust echo cancellation enabling natural bidirectional conversations. The modular design supporting multiple algorithms ensures flexibility for different deployment scenarios.
+### Journey Summary
 
-Key takeaway: Audio processing requires meticulous attention to timing, buffering, and data flow. Success comes from methodical debugging, comprehensive logging, and always having a simpler fallback option.
+After implementing and testing multiple AEC approaches:
+
+1. **WebRTC AEC** - Achieved only -1.1dB to -1.5dB average reduction despite correct delay settings
+2. **Speex AEC** - Even worse at -0.1dB average reduction  
+3. **Custom Adaptive NLMS Filter** - Slightly better but still inadequate
+4. **Acoustic Delay Measurement** - Built custom tool, measured ~73ms with tone bursts, but actual delay in practice was ~180ms
+
+### Root Cause Analysis
+
+The poor performance wasn't due to incorrect implementation but rather:
+- Complex acoustic environment with multiple reflections
+- Non-linear distortions in the audio path
+- High echo levels relative to speech
+- Variable delays (measured 110-199ms range during operation)
+
+### Final Solution: PulseAudio Echo Cancellation
+
+After extensive testing, we discovered that PulseAudio's `module-echo-cancel` provides superior echo cancellation:
+
+```bash
+# Enable PulseAudio echo cancellation
+pactl load-module module-echo-cancel
+```
+
+This system-level solution:
+- Operates at the lowest level in the audio stack
+- Handles echo cancellation before audio reaches ROS nodes
+- Reduces microphone RMS from ~20-30 to ~0.5-1.0 during playback
+- Allows user speech to pass through while filtering residual echo
+
+### Simplified Architecture
+
+With PulseAudio handling AEC, we simplified the system:
+
+1. **Removed Components**:
+   - Deleted `aec_node.py` and all related files
+   - Removed echo suppressor implementations
+   - Deleted acoustic measurement tools
+   - Removed all AEC-related launch files
+
+2. **Standardized on 512-sample chunks** (32ms @ 16kHz):
+   - No longer need WebRTC-compatible 160/320 sample sizes
+   - Simplified audio pipeline
+   - Native Silero VAD compatibility
+
+3. **Added amplitude filtering** in Silero VAD:
+   - `amplitude_threshold` parameter filters residual low-level echo
+   - Works in conjunction with PulseAudio's echo cancellation
+   - Simple RMS-based filtering
+
+### Lessons Learned
+
+1. **System-level solutions often outperform application-level ones** - Hardware DSP or OS-level processing has advantages
+2. **Complex acoustic environments challenge software AEC** - Multiple reflections and reverb are difficult to handle
+3. **Measuring actual acoustic delay is non-trivial** - Simple correlation methods may find early reflections rather than the main path
+4. **Library compatibility matters** - NumPy 2.x broke scipy, affecting our implementation options
+
+### Setup Instructions
+
+For future deployments:
+
+1. Enable PulseAudio echo cancellation:
+   ```bash
+   pactl load-module module-echo-cancel
+   ```
+
+2. Configure Silero VAD with appropriate amplitude threshold:
+   ```yaml
+   amplitude_threshold: 100.0  # Adjust based on residual echo level
+   ```
+
+3. Use standard 512-sample audio chunks throughout the pipeline
+
+This approach provides effective echo cancellation while maintaining system simplicity and reliability.

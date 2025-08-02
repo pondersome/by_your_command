@@ -23,7 +23,7 @@ class AudioDataToStampedNode(Node):
         # Parameters
         self.declare_parameter('input_topic', '/audio_out')
         self.declare_parameter('output_topic', '/audio_out_stamped')
-        self.declare_parameter('sample_rate', 24000)
+        self.declare_parameter('sample_rate', 16000)  # Standardized to 16kHz
         self.declare_parameter('format', 8)  # paInt16
         self.declare_parameter('channels', 1)
         
