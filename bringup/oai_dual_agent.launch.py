@@ -87,6 +87,12 @@ def generate_launch_description():
         description='Enable voice chunk recorder for debugging'
     )
     
+    save_mic_arg = DeclareLaunchArgument(
+        'save_mic',
+        default_value='false',
+        description='Save raw microphone input (post echo suppression) for debugging'
+    )
+    
     
     # Audio capture node
     audio_capturer = Node(
@@ -194,6 +200,22 @@ def generate_launch_description():
         }]
     )
     
+    # Recorder for raw microphone input (post echo suppression)
+    voice_recorder_raw = Node(
+        package='by_your_command',
+        executable='voice_chunk_recorder',
+        name='voice_recorder_raw',
+        output='screen',
+        parameters=[{
+            'output_dir': '/tmp/voice_chunks/mic_raw',
+            'input_mode': 'audio_stamped',
+            'input_topic': 'audio_filtered',  # Post echo suppression
+            'input_sample_rate': 16000,
+            'audio_timeout': 10.0
+        }],
+        condition=IfCondition(LaunchConfiguration('save_mic'))
+    )
+    
     
     # Command transcript monitor (optional debug tool)
     command_monitor = LogInfo(
@@ -223,7 +245,8 @@ def generate_launch_description():
         audio_player,
         silero_vad,
         ros_ai_bridge,
-        voice_recorder_output
+        voice_recorder_output,
+        voice_recorder_raw
     ])
     
     # Agents run as separate processes and handle namespace differently
@@ -245,6 +268,7 @@ def generate_launch_description():
         voice_arg,
         verbose_arg,
         enable_voice_recorder_arg,
+        save_mic_arg,
         
         # Startup message
         startup_message,

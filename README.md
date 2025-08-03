@@ -70,22 +70,52 @@ export OPENAI_API_KEY="your-api-key-here"
 ### VAD Settings
 Edit `config/config.yaml` to tune voice detection parameters.
 
-### AEC Debug Setup
-The setup script automatically creates directories for AEC debugging. You can also run this manually:
-```bash
-# Run the setup script
-python3 scripts/setup_aec_debug.py
+### Acoustic Echo Cancellation (AEC)
 
-# Or use the bash version
-./scripts/setup_aec_debug_dirs.sh
+For the best voice interaction experience, echo cancellation is critical to prevent the robot from hearing its own voice. We recommend a three-tier approach:
+
+#### 1. Hardware Echo Cancellation (Recommended)
+The best solution is to use hardware with built-in echo cancellation:
+- **Headsets**: Any headset naturally prevents echo by physical separation
+- **Smart Speakers/Conference Systems**: Many USB speakerphones have DSP-based AEC
+- **Far-field Microphone Arrays**: Devices like ReSpeaker or Matrix Voice include AEC
+
+#### 2. PulseAudio Echo Cancellation Module
+When hardware AEC isn't available, use PulseAudio's software echo cancellation:
+
+```bash
+# Load the echo cancellation module
+pactl load-module module-echo-cancel aec_method=webrtc source_name=echo_cancelled_source sink_name=echo_cancelled_sink
+
+# Make it the default source
+pactl set-default-source echo_cancelled_source
+
+# To make this permanent, add to /etc/pulse/default.pa:
+load-module module-echo-cancel aec_method=webrtc source_name=echo_cancelled_source sink_name=echo_cancelled_sink
+set-default-source echo_cancelled_source
 ```
 
-This creates the following structure at `/tmp/voice_chunks/`:
-- `test_tone/` - Clean test tone recordings
-- `test_raw/` - Raw microphone input with echo
-- `test_filtered/` - Echo-cancelled output
-- `vad_chunks/` - General voice activity recordings
-- `realtime/` - Recordings from realtime mode
+The PulseAudio module provides:
+- WebRTC-based echo cancellation (same technology used in video calls)
+- Automatic gain control and noise suppression
+- Works with any standard audio hardware
+- No additional latency in the ROS pipeline
+
+#### 3. Echo Suppressor Node (Fallback)
+As a last resort, we provide a simple time-based echo suppressor that mutes the microphone while the assistant is speaking:
+
+```bash
+# The echo_suppressor node is included in launches but can be run standalone:
+ros2 run by_your_command echo_suppressor
+```
+
+This approach:
+- Prevents feedback loops but doesn't allow interruption
+- Has zero computational overhead
+- Works in any environment
+- Should only be used when options 1 and 2 aren't available
+
+**Note**: The custom AEC node has been removed in favor of these more robust solutions. Our testing showed that PulseAudio's echo cancellation module provides superior performance with less complexity.
 
 ## Usage
 
@@ -100,6 +130,9 @@ ros2 launch by_your_command oai_dual_agent.launch.py
 
 # Enable voice recording for debugging
 ros2 launch by_your_command oai_realtime.launch.py enable_voice_recorder:=true
+
+# Save raw microphone input (post echo suppression) for AEC debugging
+ros2 launch by_your_command oai_realtime.launch.py save_mic:=true
 
 # Basic voice detection pipeline (without LLM)
 ros2 launch by_your_command byc.launch.py
@@ -311,7 +344,7 @@ A lightweight audio player specifically designed for playing AudioData messages 
 - Assistant speaking status for echo suppression
 
 ### echo_suppressor
-Prevents audio feedback loops by muting microphone input while the assistant is speaking.
+A fallback echo suppression solution that prevents audio feedback loops by muting microphone input while the assistant is speaking. This should only be used when hardware AEC or PulseAudio echo cancellation are not available.
 
 **Subscribed Topics**:
 - `/audio` (audio_common_msgs/AudioStamped): Raw audio from microphone

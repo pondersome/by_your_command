@@ -21,7 +21,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 )
 
 # Install Python modules
-ament_python_install_package(voice_detection)
+ament_python_install_package(audio)
 ament_python_install_package(interactions)
 ament_python_install_package(ros_ai_bridge)
 ament_python_install_package(agents)
@@ -29,7 +29,7 @@ ament_python_install_package(tests)
 
 # Create symlinks for console scripts in lib/${PROJECT_NAME}
 install(PROGRAMS
-  voice_detection/silero_vad_node.py
+  audio/silero_vad_node.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME silero_vad_node
 )
@@ -41,7 +41,7 @@ install(PROGRAMS
 )
 
 install(PROGRAMS
-  voice_detection/voice_chunk_recorder.py
+  audio/voice_chunk_recorder.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME voice_chunk_recorder
 )
@@ -59,15 +59,21 @@ install(PROGRAMS
 )
 
 install(PROGRAMS
-  by_your_command/simple_audio_player.py
+  audio/simple_audio_player.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME simple_audio_player
 )
 
 install(PROGRAMS
-  by_your_command/file_audio_publisher.py
+  audio/file_audio_publisher.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME file_audio_publisher
+)
+
+install(PROGRAMS
+  audio/echo_suppressor.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME echo_suppressor
 )
 
 # Install configuration, launch files, and other resources
