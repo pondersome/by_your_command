@@ -45,7 +45,7 @@ class SessionManager:
         self.session_start_time: Optional[float] = None
         self.context_manager = ContextManager(
             max_context_tokens=config.get('max_context_tokens', 2000),
-            max_context_age=config.get('max_context_age', 3600)
+            max_context_age=config.get('conversation_timeout', config.get('max_context_age', 600.0))  # Use conversation_timeout
         )
         
         self.logger = logging.getLogger(__name__)
@@ -454,3 +454,45 @@ When users ask questions or make requests, provide clear and helpful responses."
         self.context_manager.reset_context()
         
         self.logger.info("Session metrics reset")
+        
+    def reset_conversation_context(self):
+        """Reset conversation context (called on conversation ID change)"""
+        self.logger.info("🧹 Resetting conversation context")
+        self.context_manager.reset_context()
+        
+        # If we have an active session, update it with fresh system prompt
+        if self.state == SessionState.ACTIVE and self.websocket:
+            asyncio.create_task(self._update_active_session_prompt())
+            
+    async def _update_active_session_prompt(self):
+        """Update the active session with a fresh system prompt (no context)"""
+        try:
+            # Select system prompt without context
+            selected_prompt = self._get_selected_prompt()
+            
+            # Send session update without context
+            update_msg = {
+                "type": "session.update",
+                "session": {
+                    "instructions": selected_prompt  # No context injection
+                }
+            }
+            
+            await self.websocket.send(json.dumps(update_msg))
+            self.logger.info("📤 Updated active session with fresh prompt (no context)")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to update active session prompt: {e}")
+            
+    def _get_selected_prompt(self) -> str:
+        """Get the currently selected system prompt"""
+        try:
+            # Check for prompt override first
+            if hasattr(self, '_prompt_override') and self._prompt_override:
+                if self._prompt_override in self.prompt_loader.prompts:
+                    return self.prompt_loader.prompts[self._prompt_override].system_prompt
+                    
+            return self.prompt_loader.select_prompt(self.prompt_context)
+        except Exception as e:
+            self.logger.warning(f"Prompt selection failed, using default: {e}")
+            return self._default_system_prompt()

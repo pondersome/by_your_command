@@ -166,8 +166,9 @@ class WebSocketBridgeInterface:
                 "agent_id": self.agent_id,
                 "capabilities": ["audio_processing", "realtime_api"],
                 "subscriptions": [
-                    {"topic": "/voice_chunks", "msg_type": "by_your_command/AudioDataUtterance"},
-                    {"topic": "/text_input", "msg_type": "std_msgs/String"}
+                    {"topic": "voice_chunks", "msg_type": "by_your_command/AudioDataUtterance"},
+                    {"topic": "text_input", "msg_type": "std_msgs/String"},
+                    {"topic": "conversation_id", "msg_type": "std_msgs/String"}
                 ]
             }
             
@@ -294,9 +295,11 @@ class WebSocketBridgeInterface:
                 "data": msg_data
             }
             
-            await self.websocket.send(json.dumps(outbound))
+            outbound_json = json.dumps(outbound)
+            self.logger.info(f"📤 Sending outbound message to bridge: {outbound_json[:100]}...")
+            await self.websocket.send(outbound_json)
             self.messages_sent += 1
-            self.logger.debug(f"Sent message to topic: {topic}")
+            self.logger.info(f"✅ Successfully sent message to topic: {topic}")
             return True
             
         except Exception as e:

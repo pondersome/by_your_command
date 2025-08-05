@@ -42,7 +42,6 @@ class SileroVADNode(Node):
         self.declare_parameter('utterance_chunk_frames', DEFAULT_UTTERANCE_CHUNK_FRAMES)
         self.declare_parameter('threshold', DEFAULT_THRESHOLD)
         self.declare_parameter('min_silence_duration_ms', DEFAULT_MIN_SILENCE_DURATION_MS)
-        self.declare_parameter('amplitude_threshold', 0.0)  # RMS threshold for PulseAudio echo filtering
         # Fetch parameter values
         self.sample_rate = self.get_parameter('sample_rate').get_parameter_value().integer_value
         self.max_buffer_frames = self.get_parameter('max_buffer_frames').get_parameter_value().integer_value
@@ -50,7 +49,6 @@ class SileroVADNode(Node):
         self.utterance_chunk_frames = self.get_parameter('utterance_chunk_frames').get_parameter_value().integer_value
         self.threshold = self.get_parameter('threshold').get_parameter_value().double_value
         self.min_silence_duration_ms = self.get_parameter('min_silence_duration_ms').get_parameter_value().integer_value
-        self.amplitude_threshold = self.get_parameter('amplitude_threshold').get_parameter_value().double_value
         # QoS and topics
         qos = QoSProfile(
             history=QoSHistoryPolicy.KEEP_LAST,
@@ -123,16 +121,6 @@ class SileroVADNode(Node):
             self.log_info(f"Audio chunk #{self._chunk_count}: {len(audio_list)} samples")
             
         audio_int16 = np.array(audio_list, dtype=np.int16)
-        
-        # Apply amplitude filter for PulseAudio echo residue
-        if self.amplitude_threshold > 0:
-            rms = np.sqrt(np.mean(audio_int16.astype(np.float32)**2))
-            if rms < self.amplitude_threshold:
-                # Below threshold - likely residual echo, skip
-                if self._chunk_count % 100 == 0:
-                    self.log_debug(f"Filtered out low amplitude chunk: RMS={rms:.1f} < threshold={self.amplitude_threshold}")
-                return
-        
         audio_bytes = audio_int16.tobytes()
         
         # Convert to float and add to VAD buffer

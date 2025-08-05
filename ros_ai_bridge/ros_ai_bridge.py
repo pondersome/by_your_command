@@ -404,6 +404,7 @@ class WebSocketAgentServer:
         
     async def handle_outbound_message(self, data: Dict):
         """Handle outbound message from agent to ROS"""
+        self.logger.log_info(f"📥 Received outbound message: topic={data.get('topic')}, type={data.get('msg_type')}")
         try:
             topic = data.get("topic", "")
             msg_type = data.get("msg_type", "")
@@ -420,8 +421,11 @@ class WebSocketAgentServer:
                 return
                 
             # Put into bridge outbound queue
+            self.logger.log_info(f"📤 Queueing outbound message for topic: {topic}")
             success = self.bridge.queues.put_outbound_topic(topic, ros_msg, msg_type)
-            if not success:
+            if success:
+                self.logger.log_info(f"✅ Successfully queued outbound message for {topic}")
+            else:
                 self.logger.log_warning(f"Failed to queue outbound message for {topic}")
                 
         except Exception as e:
@@ -773,10 +777,13 @@ class ROSAIBridge(Node):
         """Set up topic subscriptions and publishers from configuration"""
         self.log_info(f"Setting up topics: subscribed_topics type={type(self._config.get('subscribed_topics'))}, value={self._config.get('subscribed_topics')}")
         # Set up subscriptions
-        for topic_config in self._config.get('subscribed_topics', []):
+        subscribed_topics = self._config.get('subscribed_topics', [])
+        self.log_info(f"Setting up {len(subscribed_topics)} subscriptions")
+        for topic_config in subscribed_topics:
             base_topic = topic_config['topic']
             full_topic = self._construct_topic_name(base_topic)
             msg_type = topic_config['msg_type']
+            self.log_info(f"Processing subscription config: {topic_config}")
             
             # Create QoS profile
             qos_profile = QoSProfile(
@@ -789,10 +796,13 @@ class ROSAIBridge(Node):
             self.reconfigurer.add_topic_subscription(full_topic, msg_type, qos_profile)
             
         # Set up publishers
-        for topic_config in self._config.get('published_topics', []):
+        published_topics = self._config.get('published_topics', [])
+        self.log_info(f"Setting up {len(published_topics)} publishers")
+        for topic_config in published_topics:
             base_topic = topic_config['topic']
             full_topic = self._construct_topic_name(base_topic)
             msg_type = topic_config['msg_type']
+            self.log_info(f"Processing publisher config: {topic_config}")
             
             try:
                 msg_class = self.reconfigurer._import_message_type(msg_type)
@@ -854,7 +864,8 @@ class ROSAIBridge(Node):
                 msg_data = self.queues.get_outbound_topic(timeout=0.0)
                 if msg_data is None:
                     break
-                    
+                
+                self.log_info(f"📤 Processing outbound message from queue for topic: {msg_data['topic']}")
                 topic = msg_data['topic']
                 ros_msg = msg_data['msg']
                 
@@ -862,6 +873,7 @@ class ROSAIBridge(Node):
                 if topic in self._topic_publishers:
                     try:
                         self._topic_publishers[topic]['publisher'].publish(ros_msg)
+                        self.log_info(f"✅ Published message to ROS topic: /{topic}")
                     except Exception as e:
                         self.log_error(f"Failed to publish to {topic}: {e}")
                 else:

@@ -28,6 +28,7 @@ from .serializers import OpenAIRealtimeSerializer
 from .pause_detector import PauseDetector
 from .session_manager import SessionManager, SessionState
 from .context import ConversationContext
+from .conversation_monitor import ConversationMonitor
 from .debug_interface import DebugInterface
 
 
@@ -52,6 +53,14 @@ class OpenAIRealtimeAgent:
             pause_timeout=self.config.get('session_pause_timeout', 10.0)
         )
         self.session_manager = SessionManager(self.config)
+        
+        # Conversation monitoring
+        conversation_timeout = self.config.get('conversation_timeout', 
+                                              self.config.get('max_context_age', 600.0))
+        self.conversation_monitor = ConversationMonitor(
+            timeout=conversation_timeout,
+            on_conversation_change=self._handle_conversation_change
+        )
         
         # State
         self.running = False
@@ -101,6 +110,12 @@ class OpenAIRealtimeAgent:
         """Initialize agent components"""
         self.logger.info("Initializing OpenAI Realtime Agent...")
         
+        # Setup conversation ID logging after we have a conversation monitor
+        self._setup_conversation_logging()
+        
+        # Start conversation monitoring
+        await self.conversation_monitor.start_monitoring()
+        
         # Validate configuration
         api_key = self.config.get('openai_api_key', '')
         if not api_key:
@@ -121,6 +136,12 @@ class OpenAIRealtimeAgent:
             self.logger.info("🔧 Debug interface enabled for standalone mode")
             
         self.logger.info("Agent initialized successfully")
+        self.logger.info(f"🎭 Initial conversation ID: {self.conversation_monitor.current_conversation_id}")
+        
+        # Publish initial conversation ID after a small delay to ensure bridge is ready
+        if self.bridge_interface and self.bridge_interface.is_connected():
+            await asyncio.sleep(1.0)  # Give bridge time to set up publishers
+            await self._publish_conversation_id(self.conversation_monitor.current_conversation_id)
         
     async def _connect_to_bridge(self):
         """Connect to the ROS AI Bridge via WebSocket for distributed deployment"""
@@ -148,7 +169,7 @@ class OpenAIRealtimeAgent:
         """Main agent loop - consumes from bridge, manages sessions"""
         self.running = True
         self.start_time = time.time()
-        self.logger.info("Starting OpenAI Realtime Agent main loop...")
+        self.logger.info(f"[{self.conversation_monitor.current_conversation_id[-12:]}] Starting OpenAI Realtime Agent main loop...")
         
         try:
             while self.running:
@@ -209,10 +230,18 @@ class OpenAIRealtimeAgent:
             # Try to get message with short timeout
             envelope = await self.bridge_interface.get_inbound_message(timeout=0.1)
             
+            if envelope is None:
+                # No message available
+                return
+            
             if envelope:
                 self.pause_detector.record_message(envelope.ros_msg_type)
                 self.metrics['messages_processed'] += 1
-                self.logger.info(f"📨 Processing message: {envelope.ros_msg_type} from {envelope.topic_name}")
+                self.logger.info(f"[{self.conversation_monitor.current_conversation_id[-12:]}] 📨 Processing message: {envelope.ros_msg_type} from {envelope.topic_name}")
+                
+                # Record activity for conversation monitoring if it's a voice chunk
+                if envelope.ros_msg_type == "by_your_command/AudioDataUtterance":
+                    self.conversation_monitor.record_activity()
                 
                 # Ensure we have a session for incoming messages
                 if self.session_manager.state == SessionState.IDLE:
@@ -295,6 +324,13 @@ class OpenAIRealtimeAgent:
                         self.logger.warning("⚠️ AudioDataUtterance serialized but no active session")
                     else:
                         self.logger.error("❌ Failed to serialize AudioDataUtterance")
+                        
+                elif envelope.ros_msg_type == "std_msgs/String" and envelope.topic_name.endswith("/conversation_id"):
+                    # Handle external conversation ID changes
+                    new_conversation_id = envelope.raw_data.data
+                    if new_conversation_id != self.conversation_monitor.current_conversation_id:
+                        self.logger.info(f"📨 Received external conversation ID: {new_conversation_id}")
+                        self.conversation_monitor.handle_external_reset(new_conversation_id)
                         
                 else:
                     # Handle other message types
@@ -773,6 +809,9 @@ class OpenAIRealtimeAgent:
             
         self.logger.info("🧹 Cleaning up OpenAI Realtime Agent...")
         
+        # Stop conversation monitoring
+        await self.conversation_monitor.stop_monitoring()
+        
         # Stop response processor task
         if hasattr(self, '_response_processor_task') and not self._response_processor_task.done():
             self._response_processor_task.cancel()
@@ -810,6 +849,7 @@ class OpenAIRealtimeAgent:
             'serializer': self.serializer.get_metrics(),
             'pause_detector': self.pause_detector.get_metrics(),
             'session_manager': self.session_manager.get_metrics(),
+            'conversation_monitor': self.conversation_monitor.get_metrics(),
             'bridge_interface': self.bridge_interface.get_metrics() if self.bridge_interface else {}
         })
         
@@ -824,9 +864,10 @@ class OpenAIRealtimeAgent:
         session_status = f"Session: {self.session_manager.state.value}"
         bridge_status = self.bridge_interface.get_status_summary() if self.bridge_interface else "Bridge: Disconnected"
         pause_status = self.pause_detector.get_status_summary()
+        conv_status = self.conversation_monitor.get_status_summary()
         message_stats = f"Processed: {self.metrics['messages_processed']}"
         
-        return f"{session_status} | {bridge_status} | {pause_status} | {message_stats}"
+        return f"{session_status} | {bridge_status} | {pause_status} | {conv_status} | {message_stats}"
         
     def update_configuration(self, new_config: Dict):
         """Update agent configuration at runtime"""
@@ -907,6 +948,56 @@ class OpenAIRealtimeAgent:
     def is_standalone_mode(self) -> bool:
         """Check if agent is running in standalone mode"""
         return self.bridge_interface is None and self.debug_interface is not None
+        
+    def _setup_conversation_logging(self):
+        """Add conversation ID to all log messages"""
+        # Create a custom filter that adds conversation ID
+        class ConversationFilter(logging.Filter):
+            def __init__(self, monitor):
+                self.monitor = monitor
+                
+            def filter(self, record):
+                # Add conversation ID to log record
+                record.conversation_id = self.monitor.current_conversation_id[-12:]  # Last 12 chars
+                return True
+                
+        # Add filter to logger
+        conv_filter = ConversationFilter(self.conversation_monitor)
+        self.logger.addFilter(conv_filter)
+        
+        # For now, just log conversation ID in messages rather than changing formatter
+        # This avoids conflicts with existing log formats
+                
+    def _handle_conversation_change(self, old_id: str, new_id: str):
+        """Handle conversation ID change callback"""
+        self.logger.info(f"🎭 CONVERSATION CHANGE: {old_id[-12:]} → {new_id[-12:]}")
+        
+        # Clear conversation context
+        self.session_manager.reset_conversation_context()
+        
+        # If we have an active session, we'll keep it but with cleared context
+        if self.session_manager.state == SessionState.ACTIVE:
+            self.logger.info("🔄 Active session will continue with fresh context")
+            
+        # Publish new conversation ID to ROS topic
+        if self.bridge_interface and self.bridge_interface.is_connected():
+            asyncio.create_task(self._publish_conversation_id(new_id))
+            
+    async def _publish_conversation_id(self, conversation_id: str):
+        """Publish conversation ID to ROS topic"""
+        try:
+            conv_msg = {"data": conversation_id}
+            success = await self.bridge_interface.put_outbound_message(
+                "conversation_id",  # Use relative topic name for bridge compatibility
+                conv_msg,
+                "std_msgs/String"
+            )
+            if success:
+                self.logger.info(f"📤 Published conversation ID: {conversation_id}")
+            else:
+                self.logger.warning("Failed to publish conversation ID")
+        except Exception as e:
+            self.logger.error(f"Error publishing conversation ID: {e}")
 
 
 # Convenience function for standalone usage

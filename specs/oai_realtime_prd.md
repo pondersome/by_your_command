@@ -614,9 +614,52 @@ async def put_outbound_message(self, topic: str, msg_data: Dict, msg_type: str) 
 
 6. **Testing Requirements**: End-to-end testing revealed that unit tests alone are insufficient. System-level integration tests are essential for validating the WebSocket communication layer.
 
-### 3.1 Session Lifecycle Management
+### 3.1 Conversation Lifecycle Terminology
 
-#### 3.1.1 Session States
+#### 3.1.1 Three-Tier Hierarchy
+The system manages audio interactions through a well-defined three-tier hierarchy:
+
+1. **Utterance** (Lowest Level)
+   - **Definition**: A single continuous speech segment from VAD detection start to end
+   - **Identifier**: `utterance_id` - timestamp in nanoseconds from first audio frame
+   - **Boundaries**: Determined by Silero VAD detecting speech start/stop
+   - **Duration**: Typically 1-30 seconds
+   - **Message Type**: `AudioDataUtterance` with metadata (utterance_id, is_utterance_end, chunk_sequence)
+   - **Purpose**: Track individual speech segments for recording and processing
+
+2. **Session** (Middle Level)
+   - **Definition**: A single WebSocket connection to OpenAI Realtime API
+   - **Identifier**: Internal session ID managed by SessionManager
+   - **Boundaries**: Connection establishment to closure (pause-based or limit-based)
+   - **Duration**: 10s-120s depending on pause patterns
+   - **Lifecycle**: IDLE → CONNECTING → ACTIVE → CLOSING → CLOSED
+   - **Purpose**: Cost optimization unit - reset token accumulation
+
+3. **Conversation** (Highest Level)
+   - **Definition**: A complete dialog that may span multiple sessions
+   - **Identifier**: `conversation_id` - timestamp format `conv_YYYYMMDD_HHMMSS_microseconds`
+   - **Boundaries**: Timeout-based (600s default) or external reset
+   - **Duration**: Minutes to hours
+   - **Persistence**: Text context preserved across session boundaries
+   - **Purpose**: Maintain conversational continuity for user experience
+
+#### 3.1.2 Relationship Mapping
+```
+Conversation (10+ minutes)
+├── Session 1 (30 seconds)
+│   ├── Utterance 1 (5 seconds) 
+│   ├── Utterance 2 (3 seconds)
+│   └── Utterance 3 (8 seconds)
+├── [Pause - Session Cycling]
+├── Session 2 (45 seconds)
+│   ├── Utterance 4 (12 seconds)
+│   └── Utterance 5 (20 seconds)
+└── ... (continues until conversation timeout)
+```
+
+### 3.2 Session Lifecycle Management
+
+#### 3.2.1 Session States
 ```
 IDLE → CONNECTING → ACTIVE → CLOSING → CLOSED → IDLE
                         ↓                          ↑
@@ -694,13 +737,81 @@ class PauseDetector:
    - Cost estimate exceeds `session_max_cost` threshold
 
 **Conversation Reset Triggers**:
-- Total conversation timeout exceeded
-- Explicit reset command (`/conversation_reset`)
-- User change detected (voice/face recognition)
+1. **Timeout-Based Reset** (Automatic):
+   - Triggered when no voice chunks received for `conversation_timeout` seconds (default: 600s)
+   - ConversationMonitor generates new conversation_id with timestamp format
+   - Publishes new ID to `/conversation_id` topic for system-wide coordination
+   - Session manager clears conversation context on ID change
 
-### 3.2 Named Prompt System (Implemented)
+2. **External Reset** (Manual/System):
+   - Any component can publish new conversation_id to `/conversation_id` topic
+   - Agent subscribes to topic and detects ID changes
+   - Triggers immediate context reset and session cycling if active
+   - Used for user switching, manual reset, or multi-agent coordination
 
-#### 3.2.1 Prompt Configuration Structure
+3. **Future Triggers** (Planned):
+   - User change detection via voice/face recognition
+   - Explicit "new conversation" command from user
+   - Context overflow or quality degradation
+
+### 3.2 Conversation Management Implementation
+
+#### 3.2.1 ConversationMonitor Class
+The `ConversationMonitor` class manages conversation lifecycle and ID generation:
+
+```python
+class ConversationMonitor:
+    """Monitors conversation lifecycle and manages conversation IDs"""
+    
+    def __init__(self, timeout: float = 600.0, 
+                 on_conversation_change: Optional[Callable[[str, str], None]] = None):
+        # Generates initial conversation_id on startup
+        self.current_conversation_id = self._generate_conversation_id()
+        
+    def _generate_conversation_id(self) -> str:
+        """Format: conv_YYYYMMDD_HHMMSS_microseconds"""
+        now = datetime.now()
+        return f"conv_{now.strftime('%Y%m%d_%H%M%S_%f')}"
+        
+    def record_activity(self):
+        """Called on each voice chunk to reset timeout"""
+        
+    async def _monitor_loop(self):
+        """Background task checking for conversation timeout"""
+```
+
+#### 3.2.2 ROS Topic Integration
+**Topic**: `conversation_id` (relative topic - respects namespace/prefix)
+- **Message Type**: `std_msgs/String`
+- **Publishers**: Agent on timeout or reset
+- **Subscribers**: All agents and components needing conversation boundaries
+- **With Namespaces**: e.g., `/robot1/voice/conversation_id`
+
+**Publishing Behavior**:
+```python
+# On timeout detection
+if self.check_timeout():
+    new_id = self._generate_conversation_id()
+    # Publish to ROS topic
+    await self.publish_conversation_id(new_id)
+    
+# On external reset
+elif envelope.topic_name == "/conversation_id":
+    new_id = envelope.raw_data.data
+    if new_id != self.current_conversation_id:
+        self.conversation_monitor.handle_external_reset(new_id)
+```
+
+#### 3.2.3 Context Reset on Conversation Change
+When conversation ID changes (timeout or external):
+1. Current session context is finalized and cleared
+2. Active sessions are cycled to start fresh
+3. New conversation ID is used for all logging
+4. Conversation statistics are updated
+
+### 3.3 Named Prompt System (Implemented)
+
+#### 3.3.1 Prompt Configuration Structure
 The agent uses a sophisticated named prompt system via `config/prompts.yaml`:
 
 ```yaml
@@ -1403,8 +1514,9 @@ session_management:
   session_max_cost: 5.00        # USD cost limit per session
   
   # Conversation Limits
-  conversation_max_duration: 600.0  # total conversation timeout
-  conversation_buffer_size: 10000   # max text tokens to preserve
+  conversation_timeout: 600.0      # Seconds of inactivity before new conversation_id (default: 10 min)
+  conversation_buffer_size: 10000  # Max text tokens to preserve across sessions
+  # Note: max_context_age is deprecated - use conversation_timeout instead
   
   # Performance Tuning
   rotation_overlap_ms: 200      # overlap time during rotation
@@ -1565,6 +1677,15 @@ ros2 launch by_your_command oai_realtime.launch.py
 - ✅ **Metrics and monitoring** - Comprehensive stats and performance tracking
 - ✅ **Error handling and recovery** - Graceful failure handling
 - ✅ **Hot-reloading capabilities** - Reload prompts and config from files
+
+#### 7.1.6 Conversation Lifecycle Management
+- ✅ **Three-tier hierarchy** - Utterance → Session → Conversation tracking
+- ✅ **ConversationMonitor class** - Timeout detection and ID generation
+- ✅ **Bidirectional conversation_id topic** - System-wide conversation coordination
+- ✅ **Timestamp-based conversation IDs** - Format: conv_YYYYMMDD_HHMMSS_microseconds
+- ✅ **Automatic timeout detection** - 600s default conversation timeout
+- ✅ **External reset handling** - Subscribe to conversation_id changes
+- ✅ **Context reset on conversation change** - Clean session cycling
 
 ### 7.2 Architecture Validation ✅
 

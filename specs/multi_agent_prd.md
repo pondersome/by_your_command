@@ -54,6 +54,7 @@ ROS2 Topics → [ros_ai_bridge] → [Agent Queues] → [LLM APIs] → [Response 
 Audio Capture    Message Queue   Session Mgmt   WebSocket     Command Parse      /cmd_vel
 Camera Feed      BEST_EFFORT     Context Mgmt   Streaming     Tool Calling       /audio_out
 Sensor Data      Async Bridge    Cost Control   Real-time     Action Planning    Custom Actions
+/conversation_id  Conversation    Conv Monitor   API Calls     Response Format    /conversation_id
 ```
 
 ## Provider Implementations
@@ -162,6 +163,14 @@ class BaseAgent:
 - **voice_detection**: Speech chunk generation and VAD
 - **audio_common**: Audio capture and output
 - **camera**: Visual input streams (future)
+- **conversation_id topic**: System-wide conversation boundary coordination
+  - **Topic Name**: `conversation_id` (relative topic - respects namespace/prefix)
+  - **Message Type**: `std_msgs/String`
+  - **Format**: `conv_YYYYMMDD_HHMMSS_microseconds` (e.g., `conv_20250804_143052_123456`)
+  - **Publishers**: All agents publish on conversation timeout or reset
+  - **Subscribers**: All agents subscribe to detect external conversation changes
+  - **Behavior**: Any ID change triggers immediate context reset across all agents
+  - **With Namespaces**: e.g., `/robot1/voice/conversation_id` for multi-robot scenarios
 
 ### Downstream Interfaces
 - **ROS2 Actions**: Robot movement and manipulation commands
@@ -188,6 +197,51 @@ agents:
     video_resolution: "1024x1024"
     affective_mode: true
 ```
+
+## Conversation Coordination
+
+### Multi-Agent Conversation Synchronization
+
+The conversation_id topic enables synchronized conversation boundaries across multiple agents:
+
+#### Conversation Lifecycle
+1. **Shared Conversation Context**: All agents operate within the same conversation boundary
+2. **Synchronized Resets**: When any agent detects timeout or reset, all agents transition together
+3. **Unified User Experience**: Users perceive a single coherent conversation across agents
+
+#### Implementation Pattern
+```python
+class BaseAgent:
+    def __init__(self):
+        # Subscribe to conversation_id for external changes (relative topic)
+        self.conversation_id_sub = self.create_subscription(
+            String, 'conversation_id', self.handle_conversation_change
+        )
+        
+        # Publish conversation_id on timeout or reset (relative topic)
+        self.conversation_id_pub = self.create_publisher(
+            String, 'conversation_id'
+        )
+        
+    async def handle_conversation_change(self, msg):
+        """Handle external conversation ID changes"""
+        if msg.data != self.current_conversation_id:
+            # Reset context and session
+            await self.reset_conversation_context()
+            self.current_conversation_id = msg.data
+```
+
+#### Coordination Scenarios
+1. **Timeout Coordination**: When conversational agent times out, command agent also resets
+2. **Manual Reset**: Operator can publish new conversation_id to reset all agents
+3. **User Switching**: Future voice/face recognition triggers coordinated reset
+4. **Error Recovery**: Critical errors can trigger system-wide conversation reset
+
+#### Benefits
+- **Consistent State**: All agents maintain synchronized conversation boundaries
+- **Clean Handoffs**: Context resets prevent cross-conversation contamination
+- **Debugging**: Conversation IDs in logs enable easy correlation across agents
+- **Metrics**: System-wide conversation tracking and analytics
 
 ## Quality Assurance
 

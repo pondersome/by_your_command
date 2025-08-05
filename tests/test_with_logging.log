@@ -1,0 +1,338 @@
+[INFO] [launch]: All log files can be found below /home/karim/.ros/log/2025-08-04-18-50-46-327699-barney-1845180
+[INFO] [launch]: Default logging verbosity is set to INFO
+[INFO] [launch.user]: 🚀 Starting OpenAI Realtime Agent System
+📡 Model: gpt-4o-realtime-preview
+🎙️  Voice: alloy
+⏱️  Pause timeout: 10.0s
+🔊 Listening for speech...
+[INFO] [audio_capturer_node-1]: process started with pid [1845181]
+[INFO] [simple_audio_player-2]: process started with pid [1845183]
+[INFO] [silero_vad_node-3]: process started with pid [1845185]
+[INFO] [ros_ai_bridge-4]: process started with pid [1845187]
+[INFO] [voice_chunk_recorder-5]: process started with pid [1845189]
+[INFO] [oai_realtime_agent-6]: process started with pid [1845191]
+[audio_capturer_node-1] ALSA lib pcm.c:2664:(snd_pcm_open_noupdate) Unknown PCM cards.pcm.rear
+[audio_capturer_node-1] ALSA lib pcm.c:2664:(snd_pcm_open_noupdate) Unknown PCM cards.pcm.center_lfe
+[audio_capturer_node-1] ALSA lib pcm.c:2664:(snd_pcm_open_noupdate) Unknown PCM cards.pcm.side
+[audio_capturer_node-1] ALSA lib pcm_route.c:877:(find_matching_chmap) Found no matching channel map
+[audio_capturer_node-1] ALSA lib pcm_route.c:877:(find_matching_chmap) Found no matching channel map
+[audio_capturer_node-1] ALSA lib pcm_route.c:877:(find_matching_chmap) Found no matching channel map
+[audio_capturer_node-1] ALSA lib pcm_route.c:877:(find_matching_chmap) Found no matching channel map
+[audio_capturer_node-1] ALSA lib pcm_oss.c:397:(_snd_pcm_oss_open) Cannot open device /dev/dsp
+[audio_capturer_node-1] ALSA lib pcm_oss.c:397:(_snd_pcm_oss_open) Cannot open device /dev/dsp
+[audio_capturer_node-1] ALSA lib confmisc.c:160:(snd_config_get_card) Invalid field card
+[audio_capturer_node-1] ALSA lib pcm_usb_stream.c:482:(_snd_pcm_usb_stream_open) Invalid card 'card'
+[audio_capturer_node-1] ALSA lib confmisc.c:160:(snd_config_get_card) Invalid field card
+[audio_capturer_node-1] ALSA lib pcm_usb_stream.c:482:(_snd_pcm_usb_stream_open) Invalid card 'card'
+[audio_capturer_node-1] [INFO] [1754351446.886735468] [audio_capturer_node]: AudioCapturer node started
+[ros_ai_bridge-4] /home/karim/ros2_ws/src/by_your_command/install/by_your_command/lib/by_your_command/ros_ai_bridge:33: DeprecationWarning: websockets.WebSocketServerProtocol is deprecated
+[ros_ai_bridge-4]   from websockets import WebSocketServerProtocol
+[ros_ai_bridge-4] [INFO] [1754351447.350031329] [ros_ai_bridge]: [18:50:47.253] [bridge] Processing subscribed_topics: type=<class 'list'>, value=[{'topic': 'voice_chunks', 'msg_type': 'by_your_command/AudioDataUtterance'}, {'topic': 'text_input', 'msg_type': 'std_msgs/String'}]
+[ros_ai_bridge-4] [INFO] [1754351447.350780028] [ros_ai_bridge]: [18:50:47.350] [bridge] Processing published_topics: type=<class 'list'>, value=[{'topic': 'audio_out', 'msg_type': 'audio_common_msgs/AudioData'}, {'topic': 'llm_transcript', 'msg_type': 'std_msgs/String'}, {'topic': 'cmd_vel', 'msg_type': 'geometry_msgs/Twist'}, {'topic': 'conversation_id', 'msg_type': 'std_msgs/String'}]
+[ros_ai_bridge-4] [INFO] [1754351447.351404990] [ros_ai_bridge]: [18:50:47.350] [bridge] Loaded configuration from /home/karim/ros2_ws/src/by_your_command/install/by_your_command/share/by_your_command/config/oai_realtime_agent.yaml
+[ros_ai_bridge-4] [INFO] [1754351447.352036833] [ros_ai_bridge]: [18:50:47.351] [bridge] ROS AI Bridge initialized
+[ros_ai_bridge-4] [INFO] [1754351447.365706122] [ros_ai_bridge]: [18:50:47.365] [bridge] Stored asyncio loop reference: 132079539951776
+[ros_ai_bridge-4] [INFO] [1754351447.366339556] [ros_ai_bridge]: [18:50:47.365] [bridge] Setting up topics: subscribed_topics type=<class 'list'>, value=[{'topic': 'voice_chunks', 'msg_type': 'by_your_command/AudioDataUtterance'}, {'topic': 'text_input', 'msg_type': 'std_msgs/String'}]
+[ros_ai_bridge-4] [INFO] [1754351447.366879201] [ros_ai_bridge]: [18:50:47.366] [bridge] Subscribing to /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351447.378318254] [ros_ai_bridge]: Starting ROS2 node spinning...
+[ros_ai_bridge-4] [INFO] [1754351447.396115340] [ros_ai_bridge]: [18:50:47.395] [bridge] Added subscription to /voice_chunks (by_your_command/AudioDataUtterance)
+[ros_ai_bridge-4] [INFO] [1754351447.396682389] [ros_ai_bridge]: [18:50:47.396] [bridge] Subscribing to /text_input (base: text_input)
+[ros_ai_bridge-4] [INFO] [1754351447.498715776] [ros_ai_bridge]: [18:50:47.497] [bridge] Added subscription to /text_input (std_msgs/String)
+[ros_ai_bridge-4] [INFO] [1754351447.514521442] [ros_ai_bridge]: [18:50:47.513] [bridge] Created publisher for /audio_out (base: audio_out, type: audio_common_msgs/AudioData)
+[ros_ai_bridge-4] [INFO] [1754351447.518451659] [ros_ai_bridge]: [18:50:47.517] [bridge] Created publisher for /llm_transcript (base: llm_transcript, type: std_msgs/String)
+[oai_realtime_agent-6] [18:50:47.910] [agent:conv] Loaded 5 prompts from /home/karim/ros2_ws/src/by_your_command/config/prompts.yaml
+[oai_realtime_agent-6] [18:50:47.911] [agent:conv] Using configured prompt_id: barney_command_visual
+[oai_realtime_agent-6] [18:50:47.911] [agent:conv] 🎭 Conversation monitor initialized - ID: conv_20250804_185047_911717, timeout: 600.0s
+[oai_realtime_agent-6] [18:50:47.912] [agent:conv] Initializing OpenAI Realtime Agent...
+[oai_realtime_agent-6] [18:50:47.912] [agent:conv] 🔄 Started conversation timeout monitoring
+[oai_realtime_agent-6] [18:50:47.912] [agent:conv] 🔑 OpenAI API key configured: sk-proj-...4VkA
+[oai_realtime_agent-6] [18:50:47.912] [agent:conv] Connecting to ROS AI Bridge via WebSocket...
+[oai_realtime_agent-6] [18:50:47.912] [agent:conv] Initial connection attempt 1/10
+[oai_realtime_agent-6] [18:50:47.912] [agent:conv] Connecting to bridge at ws://localhost:8765 (attempt 1)
+[oai_realtime_agent-6] [18:50:47.925] [agent:conv] Connection failed: [Errno 111] Connect call failed ('127.0.0.1', 8765)
+[oai_realtime_agent-6] [18:50:47.925] [agent:conv] Connection failed, retrying in 5.0s...
+[ros_ai_bridge-4] [INFO] [1754351447.997610684] [ros_ai_bridge]: [18:50:47.993] [bridge] Created publisher for /cmd_vel (base: cmd_vel, type: geometry_msgs/Twist)
+[ros_ai_bridge-4] [INFO] [1754351448.008697178] [ros_ai_bridge]: [18:50:48.005] [bridge] Created publisher for /conversation_id (base: conversation_id, type: std_msgs/String)
+[ros_ai_bridge-4] [INFO] [1754351448.024441170] [ros_ai_bridge]: [18:50:48.023] [bridge] WebSocket server started on 0.0.0.0:8765
+[ros_ai_bridge-4] [INFO] [1754351448.030288948] [ros_ai_bridge]: [18:50:48.024] [bridge] WebSocket server enabled on 0.0.0.0:8765
+[ros_ai_bridge-4] [INFO] [1754351448.032574187] [ros_ai_bridge]: [18:50:48.030] [bridge] ROS AI Bridge started successfully
+[voice_chunk_recorder-5] [INFO] [1754351448.092258255] [voice_recorder_output]: Starting in audio_data mode, subscribing to audio_out
+[voice_chunk_recorder-5] [INFO] [1754351448.094460857] [voice_recorder_output]: Input sample rate: 24000 Hz, timeout: 10.0 seconds
+[simple_audio_player-2] ALSA lib pcm.c:2664:(snd_pcm_open_noupdate) Unknown PCM cards.pcm.rear
+[simple_audio_player-2] ALSA lib pcm.c:2664:(snd_pcm_open_noupdate) Unknown PCM cards.pcm.center_lfe
+[simple_audio_player-2] ALSA lib pcm.c:2664:(snd_pcm_open_noupdate) Unknown PCM cards.pcm.side
+[simple_audio_player-2] ALSA lib pcm_route.c:877:(find_matching_chmap) Found no matching channel map
+[simple_audio_player-2] ALSA lib pcm_route.c:877:(find_matching_chmap) Found no matching channel map
+[simple_audio_player-2] ALSA lib pcm_route.c:877:(find_matching_chmap) Found no matching channel map
+[simple_audio_player-2] ALSA lib pcm_route.c:877:(find_matching_chmap) Found no matching channel map
+[simple_audio_player-2] ALSA lib pcm_oss.c:397:(_snd_pcm_oss_open) Cannot open device /dev/dsp
+[simple_audio_player-2] ALSA lib pcm_oss.c:397:(_snd_pcm_oss_open) Cannot open device /dev/dsp
+[simple_audio_player-2] ALSA lib confmisc.c:160:(snd_config_get_card) Invalid field card
+[simple_audio_player-2] ALSA lib pcm_usb_stream.c:482:(_snd_pcm_usb_stream_open) Invalid card 'card'
+[simple_audio_player-2] ALSA lib confmisc.c:160:(snd_config_get_card) Invalid field card
+[simple_audio_player-2] ALSA lib pcm_usb_stream.c:482:(_snd_pcm_usb_stream_open) Invalid card 'card'
+[simple_audio_player-2] [INFO] [1754351448.544460630] [simple_audio_player]: Simple audio player started on topic audio_out (16000Hz, 1 channel(s), device 18)
+[simple_audio_player-2] [INFO] [1754351448.557549408] [simple_audio_player]: Audio device test successful
+[silero_vad_node-3] [INFO] [1754351451.474045739] [silero_vad_node]: [18:50:51.472] [vad] Silero VAD requires exactly 512 samples at 16kHz
+[oai_realtime_agent-6] [18:50:52.927] [agent:conv] Initial connection attempt 2/10
+[oai_realtime_agent-6] [18:50:52.927] [agent:conv] Connecting to bridge at ws://localhost:8765 (attempt 2)
+[ros_ai_bridge-4] [INFO] [1754351452.938346116] [ros_ai_bridge]: [18:50:52.934] [bridge] New WebSocket connection from ('127.0.0.1', 50426)
+[ros_ai_bridge-4] [INFO] [1754351452.941155517] [ros_ai_bridge]: [18:50:52.940] [bridge] Registered agent: openai_realtime with capabilities: ['audio_processing', 'realtime_api']
+[oai_realtime_agent-6] [18:50:52.941] [agent:conv] Agent registered successfully. Session: sess_openai_realtime_1754351452
+[oai_realtime_agent-6] [18:50:52.942] [agent:conv] ✅ Connected to bridge at ws://localhost:8765
+[oai_realtime_agent-6] [18:50:52.942] [agent:conv] ✅ Successfully connected to bridge via WebSocket
+[oai_realtime_agent-6] [18:50:52.942] [agent:conv] Agent initialized successfully
+[oai_realtime_agent-6] [18:50:52.942] [agent:conv] 🎭 Initial conversation ID: conv_20250804_185047_911717
+[ros_ai_bridge-4] [INFO] [1754351452.943270671] [ros_ai_bridge]: [18:50:52.942] [bridge] Agent openai_realtime subscribed to topics: ['/voice_chunks', '/text_input', '/conversation_id']
+[silero_vad_node-3] [INFO] [1754351453.132974641] [silero_vad_node]: [18:50:53.132] [vad] Audio chunk #1: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351453.416618797] [silero_vad_node]: [18:50:53.415] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[silero_vad_node-3] [INFO] [1754351453.417294934] [silero_vad_node]: [18:50:53.416] [vad] Voice activity: False
+[silero_vad_node-3] [INFO] [1754351453.421037764] [silero_vad_node]: [18:50:53.418] [vad] Audio chunk #2: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351453.498300228] [silero_vad_node]: [18:50:53.492] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[silero_vad_node-3] [INFO] [1754351453.500832164] [silero_vad_node]: [18:50:53.500] [vad] Audio chunk #3: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351453.505149267] [silero_vad_node]: [18:50:53.502] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[silero_vad_node-3] [INFO] [1754351453.506571559] [silero_vad_node]: [18:50:53.505] [vad] Audio chunk #4: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351453.510897461] [silero_vad_node]: [18:50:53.510] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[silero_vad_node-3] [INFO] [1754351453.512623992] [silero_vad_node]: [18:50:53.511] [vad] Audio chunk #5: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351453.515138269] [silero_vad_node]: [18:50:53.514] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[silero_vad_node-3] [INFO] [1754351453.516493430] [silero_vad_node]: [18:50:53.515] [vad] Audio chunk #6: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351453.523663541] [silero_vad_node]: [18:50:53.518] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[silero_vad_node-3] [INFO] [1754351453.528343449] [silero_vad_node]: [18:50:53.527] [vad] Audio chunk #7: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351453.532561952] [silero_vad_node]: [18:50:53.531] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[silero_vad_node-3] [INFO] [1754351453.534594378] [silero_vad_node]: [18:50:53.533] [vad] Audio chunk #8: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351453.538134742] [silero_vad_node]: [18:50:53.537] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[silero_vad_node-3] [INFO] [1754351453.539899640] [silero_vad_node]: [18:50:53.539] [vad] Audio chunk #9: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351453.543763670] [silero_vad_node]: [18:50:53.543] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[silero_vad_node-3] [INFO] [1754351453.551186451] [silero_vad_node]: [18:50:53.544] [vad] Audio chunk #10: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351453.554693864] [silero_vad_node]: [18:50:53.553] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[oai_realtime_agent-6] [18:50:53.943] [agent:conv] 📤 Sending outbound message to bridge: {"type": "outbound_message", "topic": "conversation_id", "msg_type": "std_msgs/String", "data": {"da...
+[oai_realtime_agent-6] [18:50:53.943] [agent:conv] ✅ Successfully sent message to topic: conversation_id
+[oai_realtime_agent-6] [18:50:53.943] [agent:conv] 📤 Published conversation ID: conv_20250804_185047_911717
+[oai_realtime_agent-6] [18:50:53.943] [agent:conv] [85047_911717] Starting OpenAI Realtime Agent main loop...
+[ros_ai_bridge-4] [INFO] [1754351453.952218211] [ros_ai_bridge]: [18:50:53.946] [bridge] 📥 Received outbound message: topic=conversation_id, type=std_msgs/String
+[ros_ai_bridge-4] [INFO] [1754351454.031716255] [ros_ai_bridge]: [18:50:54.030] [bridge] Bridge metrics - Inbound: 0, Outbound: 0, Dropped: 0, Total: 1
+[ros_ai_bridge-4] [INFO] [1754351454.032441387] [ros_ai_bridge]: [18:50:54.031] [bridge] WebSocket agents: 1 connected
+[ros_ai_bridge-4] [INFO] [1754351455.031721907] [ros_ai_bridge]: [18:50:55.030] [bridge] Bridge metrics - Inbound: 0, Outbound: 0, Dropped: 0, Total: 1
+[ros_ai_bridge-4] [INFO] [1754351455.032613934] [ros_ai_bridge]: [18:50:55.031] [bridge] WebSocket agents: 1 connected
+[ros_ai_bridge-4] [INFO] [1754351456.031465730] [ros_ai_bridge]: [18:50:56.030] [bridge] Bridge metrics - Inbound: 0, Outbound: 0, Dropped: 0, Total: 1
+[ros_ai_bridge-4] [INFO] [1754351456.032130529] [ros_ai_bridge]: [18:50:56.031] [bridge] WebSocket agents: 1 connected
+[silero_vad_node-3] [INFO] [1754351456.315309351] [silero_vad_node]: [18:50:56.314] [vad] Audio chunk #100: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351456.317983742] [silero_vad_node]: [18:50:56.317] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[ros_ai_bridge-4] [INFO] [1754351457.031664623] [ros_ai_bridge]: [18:50:57.030] [bridge] Bridge metrics - Inbound: 0, Outbound: 0, Dropped: 0, Total: 1
+[ros_ai_bridge-4] [INFO] [1754351457.033050947] [ros_ai_bridge]: [18:50:57.031] [bridge] WebSocket agents: 1 connected
+[ros_ai_bridge-4] [INFO] [1754351458.031585749] [ros_ai_bridge]: [18:50:58.030] [bridge] Bridge metrics - Inbound: 0, Outbound: 0, Dropped: 0, Total: 1
+[ros_ai_bridge-4] [INFO] [1754351458.032468529] [ros_ai_bridge]: [18:50:58.031] [bridge] WebSocket agents: 1 connected
+[ros_ai_bridge-4] [INFO] [1754351459.031296462] [ros_ai_bridge]: [18:50:59.030] [bridge] Bridge metrics - Inbound: 0, Outbound: 0, Dropped: 0, Total: 1
+[ros_ai_bridge-4] [INFO] [1754351459.032108845] [ros_ai_bridge]: [18:50:59.031] [bridge] WebSocket agents: 1 connected
+[silero_vad_node-3] [INFO] [1754351459.526616824] [silero_vad_node]: [18:50:59.525] [vad] Audio chunk #200: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351459.528928798] [silero_vad_node]: [18:50:59.528] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[ros_ai_bridge-4] [INFO] [1754351460.031480909] [ros_ai_bridge]: [18:51:00.030] [bridge] Bridge metrics - Inbound: 0, Outbound: 0, Dropped: 0, Total: 1
+[ros_ai_bridge-4] [INFO] [1754351460.032219709] [ros_ai_bridge]: [18:51:00.031] [bridge] WebSocket agents: 1 connected
+[ros_ai_bridge-4] [INFO] [1754351461.032355998] [ros_ai_bridge]: [18:51:01.030] [bridge] Bridge metrics - Inbound: 0, Outbound: 0, Dropped: 0, Total: 1
+[ros_ai_bridge-4] [INFO] [1754351461.033065557] [ros_ai_bridge]: [18:51:01.032] [bridge] WebSocket agents: 1 connected
+[ros_ai_bridge-4] [INFO] [1754351462.036106380] [ros_ai_bridge]: [18:51:02.035] [bridge] Bridge metrics - Inbound: 0, Outbound: 0, Dropped: 0, Total: 1
+[ros_ai_bridge-4] [INFO] [1754351462.036904274] [ros_ai_bridge]: [18:51:02.036] [bridge] WebSocket agents: 1 connected
+[silero_vad_node-3] [INFO] [1754351462.729769901] [silero_vad_node]: [18:51:02.728] [vad] Audio chunk #300: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351462.734523842] [silero_vad_node]: [18:51:02.733] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[ros_ai_bridge-4] [INFO] [1754351463.031615795] [ros_ai_bridge]: [18:51:03.030] [bridge] Bridge metrics - Inbound: 0, Outbound: 0, Dropped: 0, Total: 1
+[ros_ai_bridge-4] [INFO] [1754351463.032423509] [ros_ai_bridge]: [18:51:03.031] [bridge] WebSocket agents: 1 connected
+[silero_vad_node-3] [INFO] [1754351463.434187264] [silero_vad_node]: [18:51:03.433] [vad] Voice activity: False
+[ros_ai_bridge-4] [INFO] [1754351464.031423811] [ros_ai_bridge]: [18:51:04.030] [bridge] Bridge metrics - Inbound: 0, Outbound: 0, Dropped: 0, Total: 1
+[ros_ai_bridge-4] [INFO] [1754351464.032078882] [ros_ai_bridge]: [18:51:04.031] [bridge] WebSocket agents: 1 connected
+[ros_ai_bridge-4] [INFO] [1754351465.031295867] [ros_ai_bridge]: [18:51:05.030] [bridge] Bridge metrics - Inbound: 0, Outbound: 0, Dropped: 0, Total: 1
+[ros_ai_bridge-4] [INFO] [1754351465.031909380] [ros_ai_bridge]: [18:51:05.031] [bridge] WebSocket agents: 1 connected
+[silero_vad_node-3] [INFO] [1754351465.899194677] [silero_vad_node]: [18:51:05.898] [vad] Audio chunk #400: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351465.902774926] [silero_vad_node]: [18:51:05.901] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[ros_ai_bridge-4] [INFO] [1754351466.031393157] [ros_ai_bridge]: [18:51:06.030] [bridge] Bridge metrics - Inbound: 0, Outbound: 0, Dropped: 0, Total: 1
+[ros_ai_bridge-4] [INFO] [1754351466.032065027] [ros_ai_bridge]: [18:51:06.031] [bridge] WebSocket agents: 1 connected
+[ros_ai_bridge-4] [INFO] [1754351467.031350863] [ros_ai_bridge]: [18:51:07.030] [bridge] Bridge metrics - Inbound: 0, Outbound: 0, Dropped: 0, Total: 1
+[ros_ai_bridge-4] [INFO] [1754351467.031941048] [ros_ai_bridge]: [18:51:07.031] [bridge] WebSocket agents: 1 connected
+[ros_ai_bridge-4] [INFO] [1754351468.031275464] [ros_ai_bridge]: [18:51:08.030] [bridge] Bridge metrics - Inbound: 0, Outbound: 0, Dropped: 0, Total: 1
+[ros_ai_bridge-4] [INFO] [1754351468.031851378] [ros_ai_bridge]: [18:51:08.031] [bridge] WebSocket agents: 1 connected
+[silero_vad_node-3] [INFO] [1754351468.251105633] [silero_vad_node]: [18:51:08.250] [vad] Voice activity: True
+[silero_vad_node-3] [INFO] [1754351468.251942023] [silero_vad_node]: [18:51:08.251] [vad] Voice detected. Starting utterance 1754351468240090368.
+[silero_vad_node-3] [INFO] [1754351468.252744156] [silero_vad_node]: [18:51:08.252] [vad] Initialized chunking buffer with 15 pre-roll frames
+[silero_vad_node-3] [INFO] [1754351468.254800485] [silero_vad_node]: [18:51:08.254] [vad] Interim chunk reached. Publishing chunk with 16 frames
+[silero_vad_node-3] [INFO] [1754351468.259188773] [silero_vad_node]: [18:51:08.258] [vad] Published chunk 0: 16 frames, duration 0.51s
+[ros_ai_bridge-4] [INFO] [1754351468.259384406] [ros_ai_bridge]: [18:51:08.258] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351468.263239055] [ros_ai_bridge]: [18:51:08.260] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351468.266249811] [ros_ai_bridge]: [18:51:08.263] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351468.267504490] [ros_ai_bridge]: [18:51:08.266] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351468.269450335] [ros_ai_bridge]: [18:51:08.267] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=8192
+[oai_realtime_agent-6] [18:51:08.275] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 1)
+[oai_realtime_agent-6] [18:51:08.276] [agent:conv] 📤 Retrieved message: by_your_command/AudioDataUtterance
+[oai_realtime_agent-6] [18:51:08.276] [agent:conv] 🔍 WebSocket envelope int16_data: type=<class 'list'>, length=8192
+[oai_realtime_agent-6] [18:51:08.276] [agent:conv] [85047_911717] 📨 Processing message: by_your_command/AudioDataUtterance from /voice_chunks
+[oai_realtime_agent-6] [18:51:08.276] [agent:conv] 🔗 Creating OpenAI session for incoming message...
+[oai_realtime_agent-6] [18:51:08.276] [agent:conv] Connecting to OpenAI Realtime API...
+[silero_vad_node-3] [INFO] [1754351468.572260496] [silero_vad_node]: [18:51:08.571] [vad] Interim chunk reached. Publishing chunk with 10 frames
+[silero_vad_node-3] [INFO] [1754351468.575452845] [silero_vad_node]: [18:51:08.574] [vad] Published chunk 1: 10 frames, duration 0.32s
+[ros_ai_bridge-4] [INFO] [1754351468.575736824] [ros_ai_bridge]: [18:51:08.575] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351468.579541301] [ros_ai_bridge]: [18:51:08.578] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351468.588929203] [ros_ai_bridge]: [18:51:08.579] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351468.598511946] [ros_ai_bridge]: [18:51:08.589] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351468.600256234] [ros_ai_bridge]: [18:51:08.598] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=5120
+[oai_realtime_agent-6] [18:51:08.604] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 1)
+[silero_vad_node-3] [INFO] [1754351468.901610744] [silero_vad_node]: [18:51:08.900] [vad] Interim chunk reached. Publishing chunk with 10 frames
+[silero_vad_node-3] [INFO] [1754351468.903388312] [silero_vad_node]: [18:51:08.902] [vad] Published chunk 2: 10 frames, duration 0.32s
+[ros_ai_bridge-4] [INFO] [1754351468.903721910] [ros_ai_bridge]: [18:51:08.903] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351468.906357999] [ros_ai_bridge]: [18:51:08.905] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351468.906972737] [ros_ai_bridge]: [18:51:08.906] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351468.907483700] [ros_ai_bridge]: [18:51:08.907] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351468.908714532] [ros_ai_bridge]: [18:51:08.907] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=5120
+[oai_realtime_agent-6] [18:51:08.912] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 2)
+[ros_ai_bridge-4] [INFO] [1754351469.031480114] [ros_ai_bridge]: [18:51:09.030] [bridge] Bridge metrics - Inbound: 3, Outbound: 0, Dropped: 0, Total: 4
+[ros_ai_bridge-4] [INFO] [1754351469.032468292] [ros_ai_bridge]: [18:51:09.031] [bridge] WebSocket agents: 1 connected
+[silero_vad_node-3] [INFO] [1754351469.114205960] [silero_vad_node]: [18:51:09.113] [vad] Audio chunk #500: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351469.116491193] [silero_vad_node]: [18:51:09.115] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[silero_vad_node-3] [INFO] [1754351469.210230970] [silero_vad_node]: [18:51:09.209] [vad] Interim chunk reached. Publishing chunk with 10 frames
+[silero_vad_node-3] [INFO] [1754351469.212114923] [silero_vad_node]: [18:51:09.211] [vad] Published chunk 3: 10 frames, duration 0.32s
+[ros_ai_bridge-4] [INFO] [1754351469.213479003] [ros_ai_bridge]: [18:51:09.212] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351469.215207384] [ros_ai_bridge]: [18:51:09.214] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351469.215775417] [ros_ai_bridge]: [18:51:09.215] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351469.216303017] [ros_ai_bridge]: [18:51:09.215] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351469.216881024] [ros_ai_bridge]: [18:51:09.216] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=5120
+[oai_realtime_agent-6] [18:51:09.223] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 3)
+[silero_vad_node-3] [INFO] [1754351469.526540627] [silero_vad_node]: [18:51:09.525] [vad] Interim chunk reached. Publishing chunk with 10 frames
+[silero_vad_node-3] [INFO] [1754351469.528314785] [silero_vad_node]: [18:51:09.527] [vad] Published chunk 4: 10 frames, duration 0.32s
+[ros_ai_bridge-4] [INFO] [1754351469.528709586] [ros_ai_bridge]: [18:51:09.528] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351469.530512469] [ros_ai_bridge]: [18:51:09.529] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351469.534686222] [ros_ai_bridge]: [18:51:09.530] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351469.542734911] [ros_ai_bridge]: [18:51:09.534] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351469.545024471] [ros_ai_bridge]: [18:51:09.542] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=5120
+[oai_realtime_agent-6] [18:51:09.552] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 4)
+[silero_vad_node-3] [INFO] [1754351469.821620478] [silero_vad_node]: [18:51:09.820] [vad] Voice activity: False
+[silero_vad_node-3] [INFO] [1754351469.822408873] [silero_vad_node]: [18:51:09.821] [vad] Voice ended for utterance 1754351468240090368. Preparing final chunk.
+[silero_vad_node-3] [INFO] [1754351469.824870615] [silero_vad_node]: [18:51:09.822] [vad] Publishing final chunk with 9 remaining frames
+[silero_vad_node-3] [INFO] [1754351469.858148345] [silero_vad_node]: [18:51:09.857] [vad] Published end-of-utterance chunk for utterance 1754351468240090368
+[ros_ai_bridge-4] [INFO] [1754351469.859379836] [ros_ai_bridge]: [18:51:09.858] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351469.861421031] [ros_ai_bridge]: [18:51:09.860] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351469.862504731] [ros_ai_bridge]: [18:51:09.861] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351469.864060570] [ros_ai_bridge]: [18:51:09.862] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351469.865232054] [ros_ai_bridge]: [18:51:09.864] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=4608
+[oai_realtime_agent-6] [18:51:09.868] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 5)
+[ros_ai_bridge-4] [INFO] [1754351470.031451089] [ros_ai_bridge]: [18:51:10.030] [bridge] Bridge metrics - Inbound: 6, Outbound: 0, Dropped: 0, Total: 7
+[ros_ai_bridge-4] [INFO] [1754351470.032029239] [ros_ai_bridge]: [18:51:10.031] [bridge] WebSocket agents: 1 connected
+[silero_vad_node-3] [INFO] [1754351470.508806577] [silero_vad_node]: [18:51:10.507] [vad] Voice activity: True
+[silero_vad_node-3] [INFO] [1754351470.509584172] [silero_vad_node]: [18:51:10.509] [vad] Voice detected. Starting utterance 1754351470463573760.
+[silero_vad_node-3] [INFO] [1754351470.510274351] [silero_vad_node]: [18:51:10.509] [vad] Initialized chunking buffer with 15 pre-roll frames
+[silero_vad_node-3] [INFO] [1754351470.510820162] [silero_vad_node]: [18:51:10.510] [vad] Interim chunk reached. Publishing chunk with 16 frames
+[silero_vad_node-3] [INFO] [1754351470.515859299] [silero_vad_node]: [18:51:10.515] [vad] Published chunk 0: 16 frames, duration 0.51s
+[ros_ai_bridge-4] [INFO] [1754351470.516392872] [ros_ai_bridge]: [18:51:10.515] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351470.520165393] [ros_ai_bridge]: [18:51:10.517] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351470.520885754] [ros_ai_bridge]: [18:51:10.520] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351470.521471252] [ros_ai_bridge]: [18:51:10.520] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351470.523079777] [ros_ai_bridge]: [18:51:10.521] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=8192
+[oai_realtime_agent-6] [18:51:10.528] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 6)
+[silero_vad_node-3] [INFO] [1754351470.798800013] [silero_vad_node]: [18:51:10.798] [vad] Interim chunk reached. Publishing chunk with 10 frames
+[silero_vad_node-3] [INFO] [1754351470.801124552] [silero_vad_node]: [18:51:10.800] [vad] Published chunk 1: 10 frames, duration 0.32s
+[ros_ai_bridge-4] [INFO] [1754351470.804165440] [ros_ai_bridge]: [18:51:10.803] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351470.805302779] [ros_ai_bridge]: [18:51:10.804] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351470.806679763] [ros_ai_bridge]: [18:51:10.805] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351470.807352717] [ros_ai_bridge]: [18:51:10.806] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351470.811029548] [ros_ai_bridge]: [18:51:10.807] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=5120
+[oai_realtime_agent-6] [18:51:10.819] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 7)
+[ros_ai_bridge-4] [INFO] [1754351471.031426961] [ros_ai_bridge]: [18:51:11.030] [bridge] Bridge metrics - Inbound: 8, Outbound: 0, Dropped: 0, Total: 9
+[ros_ai_bridge-4] [INFO] [1754351471.032074918] [ros_ai_bridge]: [18:51:11.031] [bridge] WebSocket agents: 1 connected
+[silero_vad_node-3] [INFO] [1754351471.041294550] [silero_vad_node]: [18:51:11.040] [vad] Voice activity: False
+[silero_vad_node-3] [INFO] [1754351471.042058059] [silero_vad_node]: [18:51:11.041] [vad] Voice ended for utterance 1754351470463573760. Preparing final chunk.
+[silero_vad_node-3] [INFO] [1754351471.042697059] [silero_vad_node]: [18:51:11.042] [vad] Publishing final chunk with 7 remaining frames
+[ros_ai_bridge-4] [INFO] [1754351471.084869047] [ros_ai_bridge]: [18:51:11.084] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351471.085656673] [ros_ai_bridge]: [18:51:11.085] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[silero_vad_node-3] [INFO] [1754351471.086319773] [silero_vad_node]: [18:51:11.084] [vad] Published end-of-utterance chunk for utterance 1754351470463573760
+[ros_ai_bridge-4] [INFO] [1754351471.089511582] [ros_ai_bridge]: [18:51:11.085] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351471.091516952] [ros_ai_bridge]: [18:51:11.089] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351471.093120570] [ros_ai_bridge]: [18:51:11.091] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=3584
+[oai_realtime_agent-6] [18:51:11.096] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 8)
+[silero_vad_node-3] [INFO] [1754351471.704314095] [silero_vad_node]: [18:51:11.703] [vad] Voice activity: True
+[silero_vad_node-3] [INFO] [1754351471.711919902] [silero_vad_node]: [18:51:11.704] [vad] Voice detected. Starting utterance 1754351471659415296.
+[silero_vad_node-3] [INFO] [1754351471.712612079] [silero_vad_node]: [18:51:11.712] [vad] Initialized chunking buffer with 15 pre-roll frames
+[silero_vad_node-3] [INFO] [1754351471.714918230] [silero_vad_node]: [18:51:11.712] [vad] Interim chunk reached. Publishing chunk with 16 frames
+[silero_vad_node-3] [INFO] [1754351471.717210265] [silero_vad_node]: [18:51:11.716] [vad] Published chunk 0: 16 frames, duration 0.51s
+[ros_ai_bridge-4] [INFO] [1754351471.717926778] [ros_ai_bridge]: [18:51:11.717] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351471.720510431] [ros_ai_bridge]: [18:51:11.719] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351471.723171793] [ros_ai_bridge]: [18:51:11.720] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351471.724454915] [ros_ai_bridge]: [18:51:11.723] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351471.727507582] [ros_ai_bridge]: [18:51:11.724] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=8192
+[oai_realtime_agent-6] [18:51:11.734] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 9)
+[ros_ai_bridge-4] [INFO] [1754351472.031267924] [ros_ai_bridge]: [18:51:12.030] [bridge] Bridge metrics - Inbound: 10, Outbound: 0, Dropped: 0, Total: 11
+[ros_ai_bridge-4] [INFO] [1754351472.031849916] [ros_ai_bridge]: [18:51:12.031] [bridge] WebSocket agents: 1 connected
+[silero_vad_node-3] [INFO] [1754351472.036237442] [silero_vad_node]: [18:51:12.035] [vad] Interim chunk reached. Publishing chunk with 10 frames
+[silero_vad_node-3] [INFO] [1754351472.038512582] [silero_vad_node]: [18:51:12.037] [vad] Published chunk 1: 10 frames, duration 0.32s
+[ros_ai_bridge-4] [INFO] [1754351472.039997219] [ros_ai_bridge]: [18:51:12.039] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351472.042905969] [ros_ai_bridge]: [18:51:12.041] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351472.044467517] [ros_ai_bridge]: [18:51:12.043] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351472.045341043] [ros_ai_bridge]: [18:51:12.044] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351472.047311563] [ros_ai_bridge]: [18:51:12.045] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=5120
+[oai_realtime_agent-6] [18:51:12.051] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 10)
+[silero_vad_node-3] [INFO] [1754351472.301116417] [silero_vad_node]: [18:51:12.300] [vad] Audio chunk #600: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351472.303605444] [silero_vad_node]: [18:51:12.302] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[silero_vad_node-3] [INFO] [1754351472.340429451] [silero_vad_node]: [18:51:12.338] [vad] Interim chunk reached. Publishing chunk with 10 frames
+[ros_ai_bridge-4] [INFO] [1754351472.344254944] [ros_ai_bridge]: [18:51:12.343] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[silero_vad_node-3] [INFO] [1754351472.346157329] [silero_vad_node]: [18:51:12.345] [vad] Published chunk 2: 10 frames, duration 0.32s
+[ros_ai_bridge-4] [INFO] [1754351472.347131223] [ros_ai_bridge]: [18:51:12.346] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351472.347746208] [ros_ai_bridge]: [18:51:12.347] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351472.348289617] [ros_ai_bridge]: [18:51:12.347] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351472.352553275] [ros_ai_bridge]: [18:51:12.348] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=5120
+[oai_realtime_agent-6] [18:51:12.360] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 11)
+[silero_vad_node-3] [INFO] [1754351472.670984291] [silero_vad_node]: [18:51:12.668] [vad] Interim chunk reached. Publishing chunk with 10 frames
+[silero_vad_node-3] [INFO] [1754351472.674726097] [silero_vad_node]: [18:51:12.673] [vad] Published chunk 3: 10 frames, duration 0.32s
+[ros_ai_bridge-4] [INFO] [1754351472.675648950] [ros_ai_bridge]: [18:51:12.675] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351472.677290556] [ros_ai_bridge]: [18:51:12.676] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351472.679325895] [ros_ai_bridge]: [18:51:12.677] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351472.680488712] [ros_ai_bridge]: [18:51:12.679] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351472.682262206] [ros_ai_bridge]: [18:51:12.680] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=5120
+[oai_realtime_agent-6] [18:51:12.686] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 12)
+[silero_vad_node-3] [INFO] [1754351472.996476927] [silero_vad_node]: [18:51:12.995] [vad] Interim chunk reached. Publishing chunk with 10 frames
+[silero_vad_node-3] [INFO] [1754351473.000219730] [silero_vad_node]: [18:51:12.999] [vad] Published chunk 4: 10 frames, duration 0.32s
+[ros_ai_bridge-4] [INFO] [1754351473.000642638] [ros_ai_bridge]: [18:51:13.000] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351473.004772600] [ros_ai_bridge]: [18:51:13.001] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351473.008512582] [ros_ai_bridge]: [18:51:13.004] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351473.011042123] [ros_ai_bridge]: [18:51:13.008] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351473.011734282] [ros_ai_bridge]: [18:51:13.011] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=5120
+[oai_realtime_agent-6] [18:51:13.016] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 13)
+[ros_ai_bridge-4] [INFO] [1754351473.031848763] [ros_ai_bridge]: [18:51:13.030] [bridge] Bridge metrics - Inbound: 14, Outbound: 0, Dropped: 0, Total: 15
+[ros_ai_bridge-4] [INFO] [1754351473.032638473] [ros_ai_bridge]: [18:51:13.031] [bridge] WebSocket agents: 1 connected
+[silero_vad_node-3] [INFO] [1754351473.037064052] [silero_vad_node]: [18:51:13.036] [vad] Voice activity: False
+[silero_vad_node-3] [INFO] [1754351473.037839057] [silero_vad_node]: [18:51:13.037] [vad] Voice ended for utterance 1754351471659415296. Preparing final chunk.
+[silero_vad_node-3] [INFO] [1754351473.038519432] [silero_vad_node]: [18:51:13.037] [vad] Publishing final chunk with 1 remaining frames
+[silero_vad_node-3] [INFO] [1754351473.041693835] [silero_vad_node]: [18:51:13.041] [vad] Published end-of-utterance chunk for utterance 1754351471659415296
+[ros_ai_bridge-4] [INFO] [1754351473.041746436] [ros_ai_bridge]: [18:51:13.041] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351473.043224870] [ros_ai_bridge]: [18:51:13.042] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351473.044686787] [ros_ai_bridge]: [18:51:13.043] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351473.047491279] [ros_ai_bridge]: [18:51:13.044] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351473.049549153] [ros_ai_bridge]: [18:51:13.047] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=512
+[oai_realtime_agent-6] [18:51:13.051] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 14)
+[ros_ai_bridge-4] [INFO] [1754351474.031321616] [ros_ai_bridge]: [18:51:14.030] [bridge] Bridge metrics - Inbound: 15, Outbound: 0, Dropped: 0, Total: 16
+[ros_ai_bridge-4] [INFO] [1754351474.032052775] [ros_ai_bridge]: [18:51:14.031] [bridge] WebSocket agents: 1 connected
+[silero_vad_node-3] [INFO] [1754351474.964805641] [silero_vad_node]: [18:51:14.963] [vad] Voice activity: True
+[silero_vad_node-3] [INFO] [1754351474.965423865] [silero_vad_node]: [18:51:14.964] [vad] Voice detected. Starting utterance 1754351474919518976.
+[silero_vad_node-3] [INFO] [1754351474.966112161] [silero_vad_node]: [18:51:14.965] [vad] Initialized chunking buffer with 15 pre-roll frames
+[silero_vad_node-3] [INFO] [1754351474.966638280] [silero_vad_node]: [18:51:14.966] [vad] Interim chunk reached. Publishing chunk with 16 frames
+[silero_vad_node-3] [INFO] [1754351474.968830297] [silero_vad_node]: [18:51:14.968] [vad] Published chunk 0: 16 frames, duration 0.51s
+[ros_ai_bridge-4] [INFO] [1754351474.969186228] [ros_ai_bridge]: [18:51:14.968] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351474.970951009] [ros_ai_bridge]: [18:51:14.970] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351474.971584204] [ros_ai_bridge]: [18:51:14.971] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351474.972130381] [ros_ai_bridge]: [18:51:14.971] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351474.974401766] [ros_ai_bridge]: [18:51:14.972] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=8192
+[oai_realtime_agent-6] [18:51:14.980] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 15)
+[ros_ai_bridge-4] [INFO] [1754351475.032022392] [ros_ai_bridge]: [18:51:15.030] [bridge] Bridge metrics - Inbound: 16, Outbound: 0, Dropped: 0, Total: 17
+[ros_ai_bridge-4] [INFO] [1754351475.032736051] [ros_ai_bridge]: [18:51:15.032] [bridge] WebSocket agents: 1 connected
+[silero_vad_node-3] [INFO] [1754351475.260820969] [silero_vad_node]: [18:51:15.256] [vad] Interim chunk reached. Publishing chunk with 10 frames
+[silero_vad_node-3] [INFO] [1754351475.263077068] [silero_vad_node]: [18:51:15.262] [vad] Published chunk 1: 10 frames, duration 0.32s
+[ros_ai_bridge-4] [INFO] [1754351475.263153952] [ros_ai_bridge]: [18:51:15.262] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351475.266184276] [ros_ai_bridge]: [18:51:15.264] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351475.268093500] [ros_ai_bridge]: [18:51:15.266] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351475.269445409] [ros_ai_bridge]: [18:51:15.268] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351475.270091152] [ros_ai_bridge]: [18:51:15.269] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=5120
+[oai_realtime_agent-6] [18:51:15.274] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 16)
+[silero_vad_node-3] [INFO] [1754351475.501381270] [silero_vad_node]: [18:51:15.500] [vad] Audio chunk #700: 512 samples
+[silero_vad_node-3] [DEBUG] [1754351475.507039272] [silero_vad_node]: [18:51:15.506] [vad] DEBUG: Processed 512-sample VAD chunk, 0 samples remaining in buffer
+[silero_vad_node-3] [INFO] [1754351475.586327147] [silero_vad_node]: [18:51:15.585] [vad] Interim chunk reached. Publishing chunk with 10 frames
+[silero_vad_node-3] [INFO] [1754351475.589369798] [silero_vad_node]: [18:51:15.588] [vad] Published chunk 2: 10 frames, duration 0.32s
+[ros_ai_bridge-4] [INFO] [1754351475.593538589] [ros_ai_bridge]: [18:51:15.591] [bridge] 📡 Broadcasting message to WebSocket agents: by_your_command/AudioDataUtterance
+[ros_ai_bridge-4] [INFO] [1754351475.597323841] [ros_ai_bridge]: [18:51:15.595] [bridge] 🔊 Broadcasting by_your_command/AudioDataUtterance from /voice_chunks to 1 agents
+[ros_ai_bridge-4] [INFO] [1754351475.599329105] [ros_ai_bridge]: [18:51:15.598] [bridge] Agent openai_realtime subscriptions: ['/voice_chunks', '/text_input', '/conversation_id'], checking /voice_chunks (base: voice_chunks)
+[ros_ai_bridge-4] [INFO] [1754351475.602869773] [ros_ai_bridge]: [18:51:15.600] [bridge] 📤 Sending to agent openai_realtime: /voice_chunks
+[ros_ai_bridge-4] [INFO] [1754351475.603684010] [ros_ai_bridge]: [18:51:15.603] [bridge] 🎧 Bridge serializing int16_data: type=<class 'array.array'>, length=5120
+[oai_realtime_agent-6] [18:51:15.612] [agent:conv] 📥 Queued message: by_your_command/AudioDataUtterance (queue size: 17)

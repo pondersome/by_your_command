@@ -33,7 +33,7 @@ def load_config(config_path: str = None) -> Dict[str, Any]:
         'session_max_tokens': 50000,
         'session_max_cost': 5.00,
         'max_context_tokens': 2000,
-        'max_context_age': 3600,
+        'conversation_timeout': 600.0,  # 10 minutes
         'vad_threshold': 0.5,
         'vad_prefix_padding': 300,
         'vad_silence_duration': 200,
