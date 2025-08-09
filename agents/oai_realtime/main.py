@@ -50,9 +50,17 @@ Respond naturally to the user's speech and provide helpful information or assist
                 file_config = yaml.safe_load(f)
                 # Look for agent-specific configuration
                 if 'openai_realtime_agent' in file_config:
-                    config.update(file_config['openai_realtime_agent'])
+                    agent_config = file_config['openai_realtime_agent']
+                    print(f"✅ Found openai_realtime_agent config with keys: {list(agent_config.keys())}")
+                    if 'voice' in agent_config:
+                        print(f"✅ Voice setting in YAML: {agent_config['voice']}")
+                    config.update(agent_config)
                 elif 'openai_command_agent' in file_config:
-                    config.update(file_config['openai_command_agent'])
+                    agent_config = file_config['openai_command_agent']
+                    print(f"✅ Found openai_command_agent config with keys: {list(agent_config.keys())}")
+                    if 'voice' in agent_config:
+                        print(f"✅ Voice setting in YAML: {agent_config['voice']}")
+                    config.update(agent_config)
                 else:
                     config.update(file_config)
             print(f"✅ Loaded configuration from {config_path}")
@@ -84,6 +92,9 @@ Respond naturally to the user's speech and provide helpful information or assist
     # Validate required configuration
     if not config.get('openai_api_key'):
         raise ValueError("OpenAI API key required. Set OPENAI_API_KEY environment variable or add to config file.")
+    
+    # Debug: Show final config
+    print(f"📋 Final config - voice: {config.get('voice', 'NOT SET')}, model: {config.get('model', 'NOT SET')}")
     
     return config
 

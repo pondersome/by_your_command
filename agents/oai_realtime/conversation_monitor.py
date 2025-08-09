@@ -28,13 +28,13 @@ class ConversationMonitor:
     """
     
     def __init__(self, timeout: float = 600.0, 
-                 on_conversation_change: Optional[Callable[[str, str], None]] = None):
+                 on_conversation_change: Optional[Callable[[str, str, bool], None]] = None):
         """
         Initialize conversation monitor.
         
         Args:
             timeout: Conversation timeout in seconds (default 600s = 10 minutes)
-            on_conversation_change: Callback when conversation ID changes (old_id, new_id)
+            on_conversation_change: Callback when conversation ID changes (old_id, new_id, is_external)
         """
         self.timeout = timeout
         self.on_conversation_change = on_conversation_change
@@ -129,9 +129,9 @@ class ConversationMonitor:
         
         self.logger.info(f"🔄 Conversation reset on timeout: {old_id} → {new_id}")
         
-        # Notify callback
+        # Notify callback (False = not external, this is a timeout)
         if self.on_conversation_change:
-            self.on_conversation_change(old_id, new_id)
+            self.on_conversation_change(old_id, new_id, False)
             
     def handle_external_reset(self, new_conversation_id: str) -> bool:
         """
@@ -155,9 +155,9 @@ class ConversationMonitor:
         
         self.logger.info(f"🔄 Conversation reset externally: {old_id} → {new_conversation_id}")
         
-        # Notify callback
+        # Notify callback (True = external reset)
         if self.on_conversation_change:
-            self.on_conversation_change(old_id, new_conversation_id)
+            self.on_conversation_change(old_id, new_conversation_id, True)
             
         return True
         

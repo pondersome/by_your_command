@@ -57,6 +57,9 @@ class SessionManager:
         self.api_key = config.get('openai_api_key', '')
         self.model = config.get('model', 'gpt-4o-realtime-preview')
         
+        # Log config for debugging
+        self.logger.info(f"SessionManager config: voice={config.get('voice', 'not set')}, model={self.model}")
+        
         # Named prompt system
         self.prompt_loader = PromptLoader()
         # Check if prompt_id is specified in config
@@ -142,6 +145,8 @@ When users ask questions or make requests, provide clear and helpful responses."
                 if self._prompt_override in self.prompt_loader.prompts:
                     selected_prompt = self.prompt_loader.prompts[self._prompt_override].system_prompt
                     self.logger.info(f"Using override prompt: {self._prompt_override}")
+                    # Log first 200 chars of expanded prompt
+                    self.logger.debug(f"Expanded prompt preview: {selected_prompt[:200]}...")
                 else:
                     self.logger.warning(f"Override prompt '{self._prompt_override}' not found, using context selection")
                     selected_prompt = self.prompt_loader.select_prompt(self.prompt_context)
@@ -158,12 +163,16 @@ When users ask questions or make requests, provide clear and helpful responses."
             context
         )
         
+        # Log voice configuration for debugging
+        voice_setting = self.config.get('voice', 'alloy')
+        self.logger.info(f"Using voice: {voice_setting} (from config)")
+        
         config_msg = {
             "type": "session.update",
             "session": {
                 "modalities": ["text", "audio"],
                 "instructions": system_prompt,
-                "voice": self.config.get('voice', 'alloy'),
+                "voice": voice_setting,
                 "input_audio_format": "pcm16",
                 "output_audio_format": "pcm16",
                 "input_audio_transcription": {

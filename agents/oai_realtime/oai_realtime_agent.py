@@ -968,7 +968,7 @@ class OpenAIRealtimeAgent:
         # For now, just log conversation ID in messages rather than changing formatter
         # This avoids conflicts with existing log formats
                 
-    def _handle_conversation_change(self, old_id: str, new_id: str):
+    def _handle_conversation_change(self, old_id: str, new_id: str, is_external: bool = False):
         """Handle conversation ID change callback"""
         self.logger.info(f"🎭 CONVERSATION CHANGE: {old_id[-12:]} → {new_id[-12:]}")
         
@@ -979,8 +979,9 @@ class OpenAIRealtimeAgent:
         if self.session_manager.state == SessionState.ACTIVE:
             self.logger.info("🔄 Active session will continue with fresh context")
             
-        # Publish new conversation ID to ROS topic
-        if self.bridge_interface and self.bridge_interface.is_connected():
+        # Only publish conversation ID if this was an internal change (timeout)
+        # External changes should not be re-published to avoid loops
+        if not is_external and self.bridge_interface and self.bridge_interface.is_connected():
             asyncio.create_task(self._publish_conversation_id(new_id))
             
     async def _publish_conversation_id(self, conversation_id: str):

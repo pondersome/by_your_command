@@ -152,7 +152,7 @@ def generate_launch_description():
         additional_env={
             'OPENAI_API_KEY': LaunchConfiguration('openai_api_key'),
             'OPENAI_MODEL': LaunchConfiguration('model'),
-            'OPENAI_VOICE': LaunchConfiguration('voice'),
+            # Voice is configured in the YAML file, not via env var
             'PAUSE_TIMEOUT': LaunchConfiguration('pause_timeout')
         }
     )

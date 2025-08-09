@@ -73,6 +73,7 @@ class PromptLoader:
         self.prompts_file = prompts_file
         self.prompts: Dict[str, PromptInfo] = {}
         self.user_prefixes: Dict[str, UserPrefixInfo] = {}
+        self.macros: Dict[str, str] = {}
         self.selection_rules: Dict[str, Any] = {}
         self.metadata: Dict[str, Any] = {}
         
@@ -90,14 +91,27 @@ class PromptLoader:
             with open(self.prompts_file, 'r') as f:
                 data = yaml.safe_load(f)
                 
+            # Load macros first (before prompts so they can be expanded)
+            self.macros = data.get('macros', {})
+            self.logger.info(f"Loaded {len(self.macros)} macros: {list(self.macros.keys())}")
+                
             # Load named prompts
             for prompt_id, prompt_data in data.get('prompts', {}).items():
+                # Expand macros in system_prompt
+                system_prompt = prompt_data.get('system_prompt', '')
+                expanded_prompt = self._expand_macros(system_prompt)
+                
+                # Log macro expansion for debugging
+                macro_count = system_prompt.count('{{')
+                if macro_count > 0:
+                    self.logger.info(f"Expanded {macro_count} macros in prompt '{prompt_id}'")
+                
                 self.prompts[prompt_id] = PromptInfo(
                     name=prompt_data.get('name', prompt_id),
                     description=prompt_data.get('description', ''),
                     version=prompt_data.get('version', '1.0'),
                     tested_with=prompt_data.get('tested_with', []),
-                    system_prompt=prompt_data.get('system_prompt', ''),
+                    system_prompt=expanded_prompt,
                     parent=prompt_data.get('parent')
                 )
                 
@@ -139,6 +153,50 @@ Always prioritize safety and ask for clarification if commands are ambiguous."""
         
         self.selection_rules = {'default': 'fallback'}
         self.logger.warning("Using fallback prompt due to loading error")
+        
+    def _expand_macros(self, text: str, max_depth: int = 10) -> str:
+        """Expand macro placeholders in text recursively
+        
+        Args:
+            text: Text containing {{macro_name}} placeholders
+            max_depth: Maximum recursion depth to prevent infinite loops
+            
+        Returns:
+            Text with all macros expanded
+        """
+        if max_depth <= 0:
+            self.logger.warning("Maximum macro expansion depth reached")
+            return text
+            
+        # Find all macro placeholders
+        import re
+        pattern = r'\{\{(\w+)\}\}'
+        
+        # Track if any replacements were made
+        replacements_made = False
+        
+        def replace_macro(match):
+            nonlocal replacements_made
+            macro_name = match.group(1)
+            
+            if macro_name in self.macros:
+                replacements_made = True
+                # Get macro content and strip leading/trailing whitespace
+                macro_content = self.macros[macro_name].strip()
+                self.logger.debug(f"Expanding macro '{macro_name}'")
+                return macro_content
+            else:
+                self.logger.warning(f"Macro '{macro_name}' not found")
+                return match.group(0)  # Return original placeholder
+        
+        # Replace all macros in text
+        expanded = re.sub(pattern, replace_macro, text)
+        
+        # If replacements were made, recursively expand any nested macros
+        if replacements_made:
+            expanded = self._expand_macros(expanded, max_depth - 1)
+            
+        return expanded
         
     def select_prompt(self, context: Dict[str, Any] = None) -> str:
         """Select appropriate prompt based on rules and context"""
@@ -295,6 +353,10 @@ Always prioritize safety and ask for clarification if commands are ambiguous."""
         """List all available prompt IDs"""
         return list(self.prompts.keys())
         
+    def list_macros(self) -> Dict[str, str]:
+        """List all available macros and their content"""
+        return self.macros.copy()
+        
     def get_metadata(self) -> Dict[str, Any]:
         """Get prompt metadata"""
         return self.metadata.copy()
@@ -304,6 +366,7 @@ Always prioritize safety and ask for clarification if commands are ambiguous."""
         self.logger.info("Reloading prompts from file...")
         self.prompts.clear()
         self.user_prefixes.clear()
+        self.macros.clear()
         self.selection_rules.clear()
         self.metadata.clear()
         self._load_prompts()

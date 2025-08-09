@@ -47,15 +47,15 @@ ros_ai_bridge_command:
   ros__parameters:
     # Topics to bridge (ROS → Agent)
     subscribed_topics:
-      - topic: "voice_chunks"  # Relative topic for namespacing
+      - topic: "voice_chunks"  # incoming human voice data
         msg_type: "by_your_command/AudioDataUtterance"
-      - topic: "text_input"    # Relative topic for namespacing
+      - topic: "text_input"    # incoming text prompts
         msg_type: "std_msgs/String"
         
     # Topics to publish (Agent → ROS) - Different to avoid conflicts
     published_topics:
-      - topic: "command_transcript"  # Different from llm_transcript, relative for namespacing
+      - topic: "command_transcript"  # outgoing command transcript
         msg_type: "std_msgs/String"
-      - topic: "cmd_vel"             # Same - both agents can command robot, relative for namespacing
+      - topic: "cmd_vel"             # not a good idea to let an llm give direct motion commands
         msg_type: "geometry_msgs/Twist"
       # Note: No audio_out - command extractor doesn't speak

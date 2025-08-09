@@ -14,7 +14,7 @@ openai_realtime_agent:
   # OpenAI API Configuration
   openai_api_key: ""  # Set via OPENAI_API_KEY environment variable
   model: "gpt-4o-realtime-preview"
-  voice: "alloy"  # Options: alloy, echo, fable, onyx, nova, shimmer
+  voice: "echo"  # Options: alloy, echo, fable, onyx, nova, shimmer
   
   # Session Management
   session_pause_timeout: 10.0      # Seconds of silence before session cycling
@@ -62,20 +62,20 @@ ros_ai_bridge:
     
     # Topics to bridge (ROS → Agent)
     subscribed_topics:
-      - topic: "voice_chunks"  # Relative topic for namespacing
+      - topic: "voice_chunks"  # incoming human voice data
         msg_type: "by_your_command/AudioDataUtterance"
-      - topic: "text_input"    # Relative topic for namespacing
+      - topic: "text_input"    # incoming text prompts
         msg_type: "std_msgs/String"
       - topic: "conversation_id" # Bidirectional - external conversation resets
         msg_type: "std_msgs/String"
         
     # Topics to publish (Agent → ROS)
     published_topics:
-      - topic: "audio_out"       # Relative topic for namespacing
+      - topic: "audio_out"       # generated voice response
         msg_type: "audio_common_msgs/AudioData"
-      - topic: "llm_transcript"  # Relative topic for namespacing
+      - topic: "llm_transcript"  # response transcript
         msg_type: "std_msgs/String"
-      - topic: "cmd_vel"         # Relative topic for namespacing
+      - topic: "cmd_vel"         # bad idea to let an llm give direct motion commands
         msg_type: "geometry_msgs/Twist"
       - topic: "conversation_id" # Conversation boundary tracking
         msg_type: "std_msgs/String"
