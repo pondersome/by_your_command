@@ -33,7 +33,7 @@ class EchoSuppressor(Node):
         # Subscribe to assistant speaking status
         self.speaking_sub = self.create_subscription(
             Bool,
-            '/assistant_speaking',
+            'assistant_speaking',  # Relative topic - will be in same namespace
             self.speaking_callback,
             10
         )
@@ -41,7 +41,7 @@ class EchoSuppressor(Node):
         # Subscribe to raw audio input
         self.audio_sub = self.create_subscription(
             AudioStamped,
-            '/audio',
+            'audio',  # Relative topic - will be in same namespace
             self.audio_callback,
             qos
         )
@@ -49,7 +49,7 @@ class EchoSuppressor(Node):
         # Publisher for filtered audio
         self.audio_pub = self.create_publisher(
             AudioStamped,
-            '/audio_filtered',
+            'audio_filtered',  # Relative topic - will be in same namespace
             qos
         )
         

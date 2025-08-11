@@ -217,6 +217,19 @@ def generate_launch_description():
     )
     
     
+    # Command processor node
+    command_processor = Node(
+        package='by_your_command',
+        executable='command_processor',
+        name='command_processor',
+        output='screen',
+        parameters=[{
+            'command_transcript_topic': 'command_transcript',
+            'arm_preset_topic': '/grunt1/arm_preset',  # Absolute path outside namespace
+            'behavior_command_topic': '/grunt1/behavior_command'  # Absolute path outside namespace
+        }]
+    )
+    
     # Command transcript monitor (optional debug tool)
     command_monitor = LogInfo(
         msg=['Command extractor will publish to /command_transcript and /command_detected']
@@ -245,6 +258,7 @@ def generate_launch_description():
         audio_player,
         silero_vad,
         ros_ai_bridge,
+        command_processor,
         voice_recorder_output,
         voice_recorder_raw
     ])

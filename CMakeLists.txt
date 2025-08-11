@@ -76,6 +76,24 @@ install(PROGRAMS
   RENAME echo_suppressor
 )
 
+install(PROGRAMS
+  nodes/command_processor.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME command_processor
+)
+
+install(PROGRAMS
+  tests/test_command_processor.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME test_command_processor
+)
+
+install(PROGRAMS
+  tests/publish_command.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME publish_command
+)
+
 # Install configuration, launch files, and other resources
 install(DIRECTORY 
   bringup

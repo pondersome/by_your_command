@@ -9,7 +9,10 @@ by_your_command is a ROS 2 package for multimodal human-robot interaction suppor
 - **Echo Suppression**: Prevents feedback loops in open-mic scenarios
 - **Distributed Architecture**: WebSocket-based agent deployment for flexibility
 - **Cost-Optimized Sessions**: Intelligent session cycling to manage API costs
-- **Multi-Agent Support**: Extensible architecture for multiple LLM providers
+- **Multi-Agent Support**: Dual-agent mode for simultaneous conversation and command extraction
+- **Command Processing**: Automatic robot command extraction and routing
+- **Namespace Support**: Full ROS2 namespace and prefix flexibility for multi-robot deployments
+- **Recursive Macro System**: Configurable prompts with nested macro expansion
 
 ## Quick Start
 
@@ -60,6 +63,31 @@ source install/setup.bash
 ```
 
 ## Configuration
+
+### Prompt Macros
+The system supports recursive macro expansion in prompts, allowing for modular and maintainable prompt engineering:
+
+```yaml
+# Define macros in config/prompts.yaml
+macros:
+  robot_name: "Barney"
+  arm_presets: "bumper, tenhut, lookup, lookout, reach"
+  compound_commands: |
+    {{arm_presets}} combined with @{{bearing_presets}}
+
+# Use in prompts
+system_prompts:
+  my_agent:
+    system_prompt: |
+      You are {{robot_name}}, a helpful robot.
+      You can move to: {{arm_presets}}
+```
+
+**Features**:
+- Recursive expansion up to 10 levels deep
+- Circular reference detection
+- Shared macros across multiple agents
+- Dynamic prompt composition
 
 ### API Keys
 Set your OpenAI API key either in `config/oai_realtime_agent.yaml` or as an environment variable:
@@ -142,6 +170,7 @@ ros2 run by_your_command silero_vad_node
 ros2 run by_your_command voice_chunk_recorder
 ros2 run by_your_command simple_audio_player
 ros2 run by_your_command echo_suppressor
+ros2 run by_your_command command_processor
 
 # Bridge and agents
 ros2 run by_your_command ros_ai_bridge
@@ -150,6 +179,8 @@ ros2 run by_your_command oai_realtime_agent
 # Test utilities
 ros2 run by_your_command test_utterance_chunks
 ros2 run by_your_command test_recorder_integration
+ros2 run by_your_command test_command_processor
+ros2 run by_your_command publish_command "lookup"
 ```
 
 ## Architecture
@@ -240,21 +271,36 @@ ROS Bridge → /audio_out → simple_audio_player → Speakers
 ┌────────┐                                  /command_detected
 │Speaker │                                          ↓
 └────────┘                                   ┌──────────────┐
+                                            │   Command    │
+                                            │  Processor   │
+                                            └──────┬───────┘
+                                                   ↓
+                                            ┌──────────────────┐
+                                            │/arm_preset       │
+                                            │/behavior_command │
+                                            └──────┬───────────┘
+                                                   ↓
+                                            ┌──────────────┐
                                             │Robot Control │
                                             └──────────────┘
 ```
 
 ### Package Structure
+- `audio/`: Audio processing nodes (simple_audio_player, echo_suppressor)
 - `voice_detection/`: Silero VAD for voice activity detection and voice chunk recording
 - `msg/`: Custom ROS message definitions (AudioDataUtterance, AudioDataUtteranceStamped)
+- `nodes/`: Core processing nodes (command_processor)
 - `ros_ai_bridge/`: Minimal data transport layer between ROS2 and async agents
 - `agents/`: LLM integration agents with asyncio concurrency
   - `graph.py`: Agent orchestration and workflow management
-  - `oai_realtime/`: OpenAI Realtime API integration
+  - `oai_realtime/`: OpenAI Realtime API integration with prompt macros
   - `tools/`: Command processing and ROS action tools
 - `interactions/`: Legacy Whisper → LLM interaction (being replaced by agents)
 - `tests/`: Test utilities and integration tests
-- `config/`: Configuration files for API keys, prompts, and parameters
+- `config/`: Configuration files with recursive macro support
+  - `prompts.yaml`: System prompts with macro definitions
+  - `oai_realtime_agent.yaml`: Agent configuration
+  - `oai_command_agent.yaml`: Command extractor configuration
 - `specs/`: Technical specifications and PRDs for complex components
 - `bringup/`: Launch files and system orchestration
 - `setup/`: Installation scripts and dependencies
@@ -329,11 +375,11 @@ A lightweight audio player specifically designed for playing AudioData messages 
 - `/audio_out` (audio_common_msgs/AudioData): Audio data to play
 
 **Published Topics**:
-- `/assistant_speaking` (std_msgs/Bool): True when playing audio, False when stopped
+- `assistant_speaking` (std_msgs/Bool): True when playing audio, False when stopped (respects namespace)
 
 **Parameters**:
-- `topic` (string, default "/audio_out"): Input audio topic
-- `sample_rate` (int, default 24000): Audio sample rate
+- `topic` (string, default "audio_out"): Input audio topic (relative, respects namespace)
+- `sample_rate` (int, default 16000): Audio sample rate (standardized from 24kHz)
 - `channels` (int, default 1): Number of audio channels
 - `device` (int, default -1): Audio output device (-1 for default)
 
@@ -343,15 +389,42 @@ A lightweight audio player specifically designed for playing AudioData messages 
 - Queue-based buffering for smooth playback
 - Assistant speaking status for echo suppression
 
+### command_processor
+A node that listens for command transcripts from AI agents and routes them to appropriate robot subsystems.
+
+**Subscribed Topics**:
+- `command_transcript` (std_msgs/String): Commands extracted by the AI agent
+
+**Published Topics**:
+- `/grunt1/arm_preset` (std_msgs/String): Arm preset commands (absolute path, no namespace)
+- `/grunt1/behavior_command` (std_msgs/String): Behavior commands (absolute path, no namespace)
+
+**Parameters**:
+- `command_transcript_topic` (string, default "command_transcript"): Input topic for commands
+- `arm_preset_topic` (string, default "/grunt1/arm_preset"): Output topic for arm commands
+- `behavior_command_topic` (string, default "/grunt1/behavior_command"): Output topic for behavior commands
+
+**Features**:
+- Parses compound commands with @ separator (e.g., "tenhut@rightish")
+- Routes arm presets to arm control system
+- Routes behavior commands to behavior system
+- Validates command syntax and modifiers
+- Supports bearings as standalone pan commands
+
+**Supported Commands**:
+- **Arm Presets**: bumper, tenhut, lookup, lookout, reach, pan (with bearing modifier)
+- **Behavior Commands**: stop, follow, track, sleep, wake, move, turn
+- **Bearings** (standalone becomes pan@bearing): back-left, full-left, left, leftish, forward, rightish, right, full-right, back-right, back
+
 ### echo_suppressor
 A fallback echo suppression solution that prevents audio feedback loops by muting microphone input while the assistant is speaking. This should only be used when hardware AEC or PulseAudio echo cancellation are not available.
 
 **Subscribed Topics**:
-- `/audio` (audio_common_msgs/AudioStamped): Raw audio from microphone
-- `/assistant_speaking` (std_msgs/Bool): Assistant speaking status
+- `audio` (audio_common_msgs/AudioStamped): Raw audio from microphone (respects namespace)
+- `assistant_speaking` (std_msgs/Bool): Assistant speaking status (respects namespace)
 
 **Published Topics**:
-- `/audio_filtered` (audio_common_msgs/AudioStamped): Filtered audio (muted when assistant speaks)
+- `audio_filtered` (audio_common_msgs/AudioStamped): Filtered audio (muted when assistant speaks, respects namespace)
 
 **Features**:
 - Real-time audio gating based on assistant status

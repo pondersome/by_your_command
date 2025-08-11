@@ -70,7 +70,7 @@ class SimpleAudioPlayer(Node):
         # Publisher to signal when assistant is speaking (for echo suppression)
         self.speaking_pub = self.create_publisher(
             Bool,
-            '/assistant_speaking',
+            'assistant_speaking',  # Relative topic name - will be in node's namespace
             10
         )
         
