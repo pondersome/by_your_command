@@ -1,0 +1,6390 @@
+Directory structure:
+└── word-wrangler-gemini-live/
+    ├── README.md
+    ├── client/
+    │   ├── env.example
+    │   ├── eslint.config.mjs
+    │   ├── next.config.ts
+    │   ├── package.json
+    │   ├── postcss.config.mjs
+    │   ├── tsconfig.json
+    │   └── src/
+    │       ├── components/
+    │       │   ├── Card.tsx
+    │       │   ├── Game/
+    │       │   │   ├── GameContent.tsx
+    │       │   │   ├── GameWord.tsx
+    │       │   │   ├── Timer.tsx
+    │       │   │   ├── WordWrangler.module.css
+    │       │   │   ├── WordWrangler.tsx
+    │       │   │   └── ScoreRow/
+    │       │   │       ├── index.tsx
+    │       │   │       └── ScoreRow.module.css
+    │       │   └── StartButton/
+    │       │       └── index.tsx
+    │       ├── constants/
+    │       │   └── gameConstants.ts
+    │       ├── contexts/
+    │       │   └── Configuration.tsx
+    │       ├── data/
+    │       │   └── wordWranglerWords.ts
+    │       ├── hooks/
+    │       │   ├── useConnectionState.ts
+    │       │   ├── useGameState.ts
+    │       │   ├── useGameTimer.ts
+    │       │   ├── useVisualFeedback.ts
+    │       │   └── useWordDetection.ts
+    │       ├── pages/
+    │       │   ├── _app.tsx
+    │       │   ├── _document.tsx
+    │       │   ├── index.tsx
+    │       │   └── api/
+    │       │       └── connect.ts
+    │       ├── providers/
+    │       │   └── PipecatProvider.tsx
+    │       ├── styles/
+    │       │   ├── globals.css
+    │       │   └── HomeStyles.ts
+    │       ├── types/
+    │       │   └── personality.ts
+    │       └── utils/
+    │           ├── formatTime.ts
+    │           ├── timerUtils.ts
+    │           └── wordDetection.ts
+    └── server/
+        ├── bot.py
+        ├── bot_phone_local.py
+        ├── bot_phone_twilio.py
+        ├── Dockerfile
+        ├── env.example
+        ├── requirements.txt
+        ├── runner.py
+        ├── server.py
+        └── word_list.py
+
+================================================
+FILE: word-wrangler-gemini-live/README.md
+================================================
+# Word Wrangler
+
+Word Wrangler is a voice-based word guessing game powered by [Pipecat](https://github.com/pipecat-ai/pipecat) and the [Gemini Live API](https://ai.google.dev/gemini-api/docs/live). The game is available in two versions: a web-based experience and a phone-based experience. Test your description skills in this AI-powered twist on classic word games!
+
+## Game Modes
+
+### Web-Based Game
+
+In this version, you provide the words, and an AI player attempts to guess them based on your descriptions.
+
+**Try it now:** https://word-wrangler.vercel.app
+
+<img src="images/word-wrangler-web-screenshot.png" width="800">
+
+### Phone-Based Game
+
+In this three-way conversation, an AI host provides words, you describe them without saying the actual word, and an AI player tries to guess. The host tracks your score and manages game flow.
+
+**Try it now:** Call +1-929-**LLM-GAME** (+1-929-556-4263)
+
+## Game Rules
+
+### Web-based Game
+
+1. The web app provides words for you to describe
+2. You describe the word WITHOUT saying any part of it
+3. The AI player tries to guess based on your description
+4. The app will automatically check the guesses and keep score
+5. Click "Skip" to advance to the next word
+6. You have 60 seconds to score as many points as possible
+
+### Phone Game
+
+1. The AI host provides a word for you to describe
+2. You describe the word WITHOUT saying any part of it
+3. The AI player tries to guess based on your description
+4. Score points for each correct guess
+5. Use commands like "skip" to get a new word or "repeat" to hear the current word again
+6. You have 120 seconds to score as many points as possible
+
+## Architecture
+
+### Web Game Architecture
+
+The web game uses a simple linear flow:
+
+1. **Transport Input** - Receives audio from the web browser via a Daily WebRTC transport.
+2. **RTVIProcessor** - RTVI is a standard for client/server communication in a voice AI context. This processor collects server-side information and makes it available to the client. Additionally, the client can send events to the server, which are handled through this processor.
+3. **STTMuteFilter** - Filters out speech during specific conditions. In this game, the user's initial speech is "muted", ensuring that the bot can deliver the entire initial message without being interrupted.
+4. **User Context Aggregator** - Aggregates user messages as part of the conversation context.
+5. **LLM** - The LLM powers the AI player's interactions.
+6. **Transport Output** - Sends audio back to the browser using the Daily WebRTC transport.
+7. **Assistant Context Aggregator** - Aggregates assistant messages as part of the conversation context.
+
+### Phone Game Architecture
+
+The phone game implements a three-way conversation using Pipecat's parallel pipeline architecture. This design addresses the fundamental challenge of LLMs - they're built for turn-based interactions, while this game requires real-time, multi-participant conversation management.
+
+<img src="images/word-wrangler-twilio-architecture.png" height="900">
+
+#### Conversation Participants
+
+**Audio Flow Requirements:**
+
+- **User:** Must hear both the Host and Player outputs; must be heard by both Host and Player
+- **Host:** Must hear the User and Player inputs; its output must be heard by User but NOT by Player
+- **Player:** Must hear only the User inputs; its output must be heard by both User and Host
+
+#### Technical Implementation
+
+The parallel pipeline pattern allows us to create two isolated processing branches, with controlled audio flow between them:
+
+1. **Transport Input** - Receives audio from the phone call (Twilio)
+2. **Audio Branch Separation:**
+   - **Left Branch (Host Pipeline):** `ConsumerProcessor → Host LLM → Game State Tracker → TTS → Bot Stop Detector`
+   - **Right Branch (Player Pipeline):** `StartFrame Gate → Player LLM → ProducerProcessor`
+
+**Host LLM Configuration:**
+
+The Host uses Gemini Live API, configured with specific response patterns to handle different input types:
+
+```
+- Correct guess: "Correct! That's [N] points. Your next word is [new word]"
+- Incorrect guess: "NO" (filtered out by TTS filter)
+- User descriptions: "IGNORE" (filtered out by TTS filter)
+- Skip requests: "The new word is [new word]"
+- Repeat requests: "Your word is [current word]"
+```
+
+**Audio Flow Management:**
+
+By default, all input audio flows to both branches, so both LLMs hear the user. To implement the complex routing:
+
+1. **Producer/Consumer Pattern:** Captures the Player's output audio and feeds it to the Host
+
+   - `ProducerProcessor` filters TTSAudioRawFrames from the Player
+   - Transforms them from 24kHz to 16kHz (required by Gemini Live)
+   - Passes them to the `ConsumerProcessor` at the top of the Host branch
+
+2. **Text Filtering:** The `HostResponseTextFilter` intercepts the "NO" and "IGNORE" responses
+
+   - Prevents TTS vocalization of these responses
+   - Ensures that only meaningful Host responses are spoken
+
+3. **Host-Player Synchronization:**
+
+   - `BotStoppedSpeakingNotifier` detects when the Host finishes speaking
+   - `GameStateTracker` parses the streamed text to detect new words and track score
+   - `NewWordNotifier` triggers the `ResettablePlayerLLM` to disconnect and reconnect when a new word is presented
+   - This reset ensures the Player has no context of previous words or guesses
+
+4. **StartFrameGate:** The gate holds the Player's StartFrame until the Host has completed its introduction
+   - Ensures the Player doesn't start interacting until the game has been properly set up
+
+All processed audio is collected at the end of the Parallel Pipeline and sent via the transport output back to Twilio.
+
+#### Game State Management
+
+The implementation tracks:
+
+- Current words being guessed
+- Running score (points for correct guesses)
+- Game duration with automatic timeout
+
+This architecture enables complex interaction patterns that would be difficult to achieve with traditional turn-based conversation models, allowing each AI participant to function effectively in their specific game role.
+
+## Run Locally
+
+### Web Game
+
+#### Run the Server
+
+1. Switch to the server directory:
+
+   ```bash
+   cd server
+   ```
+
+2. Set up and activate your virtual environment:
+
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+3. Install dependencies:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Create an .env file and add your API keys:
+
+   ```bash
+   cp env.example .env
+   ```
+
+5. Add environment variables for:
+
+   ```
+   DAILY_API_KEY=
+   DAILY_SAMPLE_ROOM_URL=
+   GOOGLE_API_KEY=
+   ```
+
+6. Run the server:
+
+   ```bash
+   LOCAL_RUN=1 python server.py
+   ```
+
+#### Run the Client
+
+1. In a new terminal window, navigate to client:
+
+   ```bash
+   cd client
+   ```
+
+2. Install dependencies:
+
+   ```bash
+   npm install
+   ```
+
+3. Create an .env.local file:
+
+   ```bash
+   cp env.example .env.local
+   ```
+
+4. In .env.local:
+
+   - `NEXT_PUBLIC_API_BASE_URL=http://localhost:7860` is used for local development. For deployments, either remove this env var or replace with `/api`.
+   - `AGENT_NAME` should be set to the name of your deployed Pipecat agent (e.g., "word-wrangler").
+   - `PIPECAT_CLOUD_API_KEY` is used only for deployments to Pipecat Cloud.
+
+5. Run the app:
+
+   ```bash
+   npm run dev
+   ```
+
+6. Open http://localhost:3000 in your browser
+
+### Phone Game
+
+There are two versions of the phone game:
+
+1. **Local Development** (`bot_phone_local.py`):
+
+   - For testing locally before deployment
+
+2. **Deployment** (`bot_phone_twilio.py`):
+   - Ready for deployment to Pipecat Cloud
+
+#### Running Locally
+
+1. Set up and activate your virtual environment:
+
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+2. Install dependencies:
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Create an .env file in the server directory with your API keys:
+
+   ```bash
+   cd server
+   cp env.example .env
+   ```
+
+4. Configure Daily information in your .env:
+
+   ```
+   DAILY_API_KEY=your_daily_api_key
+   DAILY_SAMPLE_ROOM_URL=your_daily_room_url
+   GOOGLE_API_KEY=your_google_api_key
+   GOOGLE_TEST_CREDENTIALS_FILE=path_to_credentials_file
+   ```
+
+5. Run the local bot:
+
+   ```bash
+   LOCAL_RUN=1 python bot_phone_local.py
+   ```
+
+## Deployment
+
+### Web Game
+
+#### Deploy your Server
+
+You can deploy your server code using Pipecat Cloud. For a full walkthrough, start with the [Pipecat Cloud Quickstart](https://docs.pipecat.daily.co/quickstart).
+
+Here are the steps you'll need to complete:
+
+- Build, tag, and push your Docker image to a registry.
+- Create Pipecat Cloud secrets using the CLI or dashboard. For this agent, you only need a `GOOGLE_API_KEY`. Your `DAILY_API_KEY` is automatically applied.
+- Deploy your agent image. You can use a pcc-deploy.toml file to make deploying easier. For example:
+
+```toml
+agent_name = "word-wrangler"
+image = "your-dockerhub-name/word-wrangler:0.1"
+secret_set = "word-wrangler-secrets"
+enable_krisp = true
+
+[scaling]
+  min_instances = 1
+  max_instances = 5
+```
+
+Then, you can deploy with the CLI using `pcc deploy`.
+
+- Finally, confirm that your agent is deployed. You'll get feedback in the terminal.
+
+#### Deploy your Client
+
+This project uses TypeScript, React, and Next.js, making it a perfect fit for [Vercel](https://vercel.com/).
+
+- In your client directory, install Vercel's CLI tool: `npm install -g vercel`
+- Verify it's installed using `vercel --version`
+- Log in your Vercel account using `vercel login`
+- Deploy your client to Vercel using `vercel`
+
+### Phone Game
+
+#### Deploy your Server
+
+Again, we'll use Pipecat Cloud. Follow the steps from above. The only difference will be the secrets required; in addition to a GOOGLE_API_KEY, you'll need `GOOGLE_APPLICATION_CREDENTIALS` in the format of a .json file with your [Google Cloud service account](https://console.cloud.google.com/iam-admin/serviceaccounts) information.
+
+You'll need to modify the Dockerfile so that the credentials.json and word_list.py are accessible. This Dockerfile will work:
+
+```Dockerfile
+FROM dailyco/pipecat-base:latest
+
+COPY ./requirements.txt requirements.txt
+
+RUN pip install --no-cache-dir --upgrade -r requirements.txt
+
+COPY ./word_list.py word_list.py
+COPY ./credentials.json credentials.json
+COPY ./bot_phone_twilio.py bot.py
+```
+
+Note: Your `credentials.json` file should have your Google service account credentials.
+
+#### Buy and Configure a Twilio Number
+
+Check out the [Twilio Websocket Telephony guide](https://docs.pipecat.daily.co/pipecat-in-production/telephony/twilio-mediastreams) for a step-by-step walkthrough on how to purchase a phone number, configure your TwiML, and make or receive calls.
+
+## Tech stack
+
+Both games are built using:
+
+- [Pipecat](https://www.pipecat.ai/) framework for real-time voice conversation
+- Google's Gemini Live API
+- Real-time communication (Web via Daily, Phone via Twilio)
+
+The phone game features:
+
+- Parallel processing of host and player interactions
+- State tracking for game progress and scoring
+- Dynamic word selection from multiple categories
+- Automated game timing and scoring
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/env.example
+================================================
+NEXT_PUBLIC_API_BASE_URL=http://localhost:7860
+PIPECAT_CLOUD_API_KEY=""
+AGENT_NAME=word-wrangler
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/eslint.config.mjs
+================================================
+import { dirname } from "path";
+import { fileURLToPath } from "url";
+import { FlatCompat } from "@eslint/eslintrc";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const compat = new FlatCompat({
+  baseDirectory: __dirname,
+});
+
+const eslintConfig = [
+  ...compat.extends("next/core-web-vitals", "next/typescript"),
+];
+
+export default eslintConfig;
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/next.config.ts
+================================================
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  /* config options here */
+  reactStrictMode: true,
+};
+
+export default nextConfig;
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/package.json
+================================================
+{
+  "name": "client",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@pipecat-ai/client-js": "^1.2.0",
+    "@pipecat-ai/client-react": "^1.0.1",
+    "@pipecat-ai/daily-transport": "^1.2.0",
+    "@tabler/icons-react": "^3.31.0",
+    "@tailwindcss/postcss": "^4.1.3",
+    "jotai": "^2.12.5",
+    "js-confetti": "^0.12.0",
+    "next": "15.2.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "15.2.4",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^4.1.3",
+    "typescript": "^5"
+  }
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/postcss.config.mjs
+================================================
+const config = {
+  plugins: ["@tailwindcss/postcss"],
+};
+
+export default config;
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/tsconfig.json
+================================================
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "incremental": true,
+    "paths": {
+      "@/components/*": ["./src/components/*"],
+      "@/contexts/*": ["./src/contexts/*"],
+      "@/providers/*": ["./src/providers/*"],
+      "@/styles/*": ["./src/styles/*"],
+      "@/data/*": ["./src/data/*"],
+      "@/types/*": ["./src/types/*"],
+      "@/constants/*": ["./src/constants/*"],
+      "@/utils/*": ["./src/utils/*"],
+      "@/hooks/*": ["./src/hooks/*"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules"]
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/components/Card.tsx
+================================================
+export function Card({
+  children,
+  className,
+}: {
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={`bg-white rounded-3xl relative card-border text-black ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function CardInner({ children }: { children: React.ReactNode }) {
+  return <div className="p-6 lg:p-10 relative z-2">{children}</div>;
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/components/Game/GameContent.tsx
+================================================
+import { GAME_STATES, GAME_TEXT, GameState } from "@/constants/gameConstants";
+import { IconArrowForwardUp, IconClockPause } from "@tabler/icons-react";
+import React from "react";
+import { GameWord } from "./GameWord";
+import { Timer } from "./Timer";
+import styles from "./WordWrangler.module.css";
+
+interface GameContentProps {
+  gameState: GameState;
+  currentWord: string;
+  showAutoDetected: boolean;
+  timeLeft: number;
+  showIncorrect: boolean;
+  score: number;
+  skipsRemaining: number;
+  // onCorrect: () => void;
+  onSkip: () => void;
+}
+
+export const GameContent: React.FC<GameContentProps> = ({
+  gameState,
+  currentWord,
+  showAutoDetected,
+  showIncorrect,
+  timeLeft,
+  score,
+  skipsRemaining,
+  //onCorrect,
+  onSkip,
+}) => {
+  // Idle or Connecting State
+  if (gameState === GAME_STATES.IDLE || gameState === GAME_STATES.CONNECTING) {
+    return (
+      <div className={styles.simpleLoadingPlaceholder}>
+        {GAME_TEXT.startingGame}
+      </div>
+    );
+  }
+
+  // Waiting for Intro State
+  if (gameState === GAME_STATES.WAITING_FOR_INTRO) {
+    return (
+      <div className="animate-pulse flex flex-1 flex-col gap-3 items-center justify-center">
+        <span className="size-18 flex items-center justify-center rounded-full bg-slate-900/50 text-white">
+          <IconClockPause size={42} className="opacity-50" />
+        </span>
+        <span className="text-white text-2xl font-bold">
+          {GAME_TEXT.waitingForIntro}
+        </span>
+      </div>
+    );
+  }
+
+  // Finished State
+  if (gameState === GAME_STATES.FINISHED) {
+    return (
+      <div className={styles.gameReadyArea}>
+        <div className={styles.gameResults}>
+          <h2>{GAME_TEXT.gameOver}</h2>
+          <p>
+            {GAME_TEXT.finalScore}: <strong>{score}</strong>
+          </p>
+        </div>
+        <div className={styles.statusNote}>{GAME_TEXT.clickToStart}</div>
+      </div>
+    );
+  }
+
+  // Active Game State
+  return (
+    <div className={styles.gameArea}>
+      <GameWord
+        word={currentWord}
+        showAutoDetected={showAutoDetected}
+        showIncorrect={showIncorrect}
+      />
+      <div className="flex flex-col lg:flex-row gap-2 w-full">
+        <Timer timeLeft={timeLeft} gameState={gameState} />
+        <button
+          className="button"
+          onClick={onSkip}
+          disabled={skipsRemaining <= 0}
+        >
+          <IconArrowForwardUp size={24} className="opacity-50" />
+          {skipsRemaining > 0
+            ? GAME_TEXT.skipsRemaining(skipsRemaining)
+            : GAME_TEXT.noSkips}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/components/Game/GameWord.tsx
+================================================
+import { GAME_TEXT } from "@/constants/gameConstants";
+import React from "react";
+import styles from "./WordWrangler.module.css";
+
+interface GameWordProps {
+  word: string;
+  showAutoDetected: boolean;
+  showIncorrect: boolean;
+}
+
+export const GameWord: React.FC<GameWordProps> = ({
+  word,
+  showAutoDetected,
+  showIncorrect,
+}) => {
+  return (
+    <div
+      className={`${styles.currentWord} ${
+        showAutoDetected ? styles.correctWordDetected : ""
+      } ${showIncorrect ? styles.incorrectWordDetected : ""}`}
+    >
+      <span className={styles.helpText}>{GAME_TEXT.describeWord}</span>
+      <span className={styles.word}>{word}</span>
+
+      {showAutoDetected && <CorrectOverlay />}
+      {showIncorrect && <IncorrectOverlay />}
+    </div>
+  );
+};
+
+const CorrectOverlay: React.FC = () => (
+  <div className={styles.autoDetectedOverlay}>
+    <div className={styles.checkmarkContainer}>
+      <svg
+        className={styles.checkmarkSvg}
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 52 52"
+      >
+        <circle
+          className={styles.checkmarkCircle}
+          cx="26"
+          cy="26"
+          r="25"
+          fill="none"
+        />
+        <path
+          className={styles.checkmarkCheck}
+          fill="none"
+          d="M14.1 27.2l7.1 7.2 16.7-16.8"
+        />
+      </svg>
+    </div>
+  </div>
+);
+
+const IncorrectOverlay: React.FC = () => (
+  <div className={styles.incorrectOverlay}>
+    <div className={styles.xmarkContainer}>
+      <svg
+        className={styles.xmarkSvg}
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 52 52"
+      >
+        <circle
+          className={styles.xmarkCircle}
+          cx="26"
+          cy="26"
+          r="25"
+          fill="none"
+        />
+        <path
+          className={styles.xmarkX}
+          fill="none"
+          d="M16 16 L36 36 M36 16 L16 36"
+        />
+      </svg>
+    </div>
+  </div>
+);
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/components/Game/Timer.tsx
+================================================
+import { GAME_CONFIG, GAME_STATES } from "@/constants/gameConstants";
+import { formatTime } from "@/utils/formatTime";
+import { IconStopwatch } from "@tabler/icons-react";
+import styles from "./WordWrangler.module.css";
+
+interface TimerProps {
+  timeLeft: number;
+  gameState: string;
+}
+
+export function Timer({ timeLeft, gameState }: TimerProps) {
+  const lowTimer =
+    gameState === GAME_STATES.ACTIVE &&
+    timeLeft <= GAME_CONFIG.LOW_TIME_WARNING;
+
+  return (
+    <div className={`${styles.timer} ${lowTimer ? styles.lowTime : ""}`}>
+      <div className={styles.timerBadge}>
+        <IconStopwatch size={24} />
+        <span>{formatTime(timeLeft)}</span>
+      </div>
+      <div className={styles.timerBar}>
+        <div
+          className={styles.timerBarFill}
+          style={{ width: `${(timeLeft / GAME_CONFIG.GAME_DURATION) * 100}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/components/Game/WordWrangler.module.css
+================================================
+.gameContainer {
+  position: relative;
+  z-index: 1;
+  padding: 4px;
+  width: 100%;
+  border-radius: 28px;
+  margin-top: 50px;
+  min-height: 300px;
+  box-shadow: 0px 66px 26px rgba(0, 0, 0, 0.01),
+    0px 37px 22px rgba(0, 0, 0, 0.05), 0px 16px 16px rgba(0, 0, 0, 0.09),
+    0px 4px 9px rgba(0, 0, 0, 0.1);
+}
+
+@media (min-width: 1024px) {
+  .gameContainer {
+    width: auto;
+    flex: none;
+    min-width: 626px;
+    height: 260px;
+    margin-top: 0;
+  }
+}
+
+.gameContainer:before {
+  content: "";
+  position: absolute;
+  inset: -4px -4px -8px -4px;
+  border-radius: 28px;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 1) 0%,
+    rgba(0, 0, 0, 0.15) 100%
+  );
+  z-index: -1;
+}
+
+.gameContainer:after {
+  content: "";
+  box-sizing: border-box;
+  position: absolute;
+  inset: 0;
+  border-radius: var(--border-radius-card);
+  border: var(--border-width-card) solid transparent;
+  background-image: linear-gradient(#001146, #0655cc),
+    linear-gradient(
+      180deg,
+      var(--theme-gradient-start) 0%,
+      var(--theme-gradient-end) 100%
+    );
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+}
+
+.gameContent {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+  border-radius: 20px;
+  width: 100%;
+  height: 100%;
+  min-height: 292px;
+  display: flex;
+  overflow: hidden;
+  border: 6px solid rgba(0, 0, 0, 0.25);
+}
+
+.gameContent:after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    70% 40% at 50% 40%,
+    #2da6ee 0%,
+    rgba(45, 166, 238, 0) 100%
+  );
+  opacity: 0.76;
+  z-index: -1;
+}
+
+.gameArea {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  padding: 12px;
+  position: relative;
+  z-index: 2;
+}
+
+.timer {
+  height: var(--button-height);
+  border-radius: 9999px;
+  width: 100%;
+  flex-direction: row;
+  gap: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(0, 0, 0, 0.2);
+  padding: 12px;
+
+  @media (min-width: 1024px) {
+    flex: 1;
+  }
+
+  .timerBadge {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    background-color: black;
+    border-radius: 9999px;
+    color: white;
+    height: 100%;
+    padding: 0 12px;
+    font-weight: 800;
+  }
+
+  .timerBar {
+    height: 100%;
+    width: 100%;
+    border-radius: 9999px;
+    overflow: hidden;
+    background-color: var(--color-emerald-100);
+  }
+
+  .timerBarFill {
+    height: 100%;
+    width: 100%;
+    background-color: var(--color-emerald-400);
+    transition: width 0.3s ease;
+  }
+
+  &.lowTime {
+    color: #e74c3c;
+    animation: pulse 1s infinite;
+
+    .timerBar {
+      background-color: var(--color-orange-100);
+    }
+
+    .timerBarFill {
+      background-color: var(--color-orange-400);
+    }
+  }
+}
+
+.scoreDisplay {
+  font-size: 1.25rem;
+  font-weight: 500;
+  color: #0071e3;
+}
+
+.currentWord {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  width: 100%;
+  margin-top: 50px;
+  .helpText {
+    font-size: 1rem;
+    font-weight: 700;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  .word {
+    font-size: 2rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    line-height: 2;
+    color: #ffffff;
+    text-shadow: 0px 4px 0px rgba(0, 0, 0, 0.45);
+  }
+
+  @media (min-width: 1024px) {
+    margin-top: 0;
+    .word {
+      font-size: 3rem;
+      text-shadow: 0px 6px 0px rgba(0, 0, 0, 0.45);
+    }
+  }
+}
+
+.gameButton {
+  padding: 0.85rem 0;
+  font-size: 1.1rem;
+  font-weight: 500;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+/* Primary button (Skip) */
+.skipButton {
+  flex: 2; /* Takes more space */
+  background-color: #e74c3c;
+  color: white;
+}
+
+.skipButton:hover {
+  background-color: #c0392b;
+  transform: translateY(-2px);
+}
+
+/* Secondary button (Correct) - more subdued */
+.correctButton {
+  flex: 1; /* Takes less space */
+  background-color: #f5f5f7; /* Light gray background */
+  color: #333; /* Dark text */
+  border: 1px solid #ddd; /* Subtle border */
+}
+
+.correctButton:hover {
+  background-color: #e8e8ed;
+  transform: translateY(-1px);
+}
+
+.gameReadyArea {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.gameResults {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  width: 100%;
+  text-align: center;
+}
+
+.gameResults h2 {
+  margin: 0 0 0.5rem 0;
+  color: #333;
+  font-size: 1.3rem;
+}
+
+.statusNote {
+  margin: 0.5rem 0;
+  padding: 0.6rem 1rem;
+  background-color: #f8f9fa;
+  border-left: 3px solid #0071e3;
+  font-size: 0.95rem;
+  color: #333;
+  width: 100%;
+  text-align: center;
+  border-radius: 4px;
+}
+
+.compactInstructions {
+  margin: 0.75rem 0;
+  width: 100%;
+  max-width: 400px;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+
+.compactInstructions h3 {
+  margin: 0 0 0.5rem 0;
+  color: #333;
+  font-size: 1.1rem;
+  text-align: center;
+}
+
+.compactInstructions ul {
+  margin: 0;
+  padding-left: 1.5rem;
+  line-height: 1.4;
+}
+
+.compactInstructions li {
+  margin-bottom: 0.4rem;
+  font-size: 0.9rem;
+}
+
+.loadingDots {
+  display: inline-block;
+  animation: dotPulse 1.5s infinite linear;
+}
+
+@keyframes dotPulse {
+  0% {
+    opacity: 0.2;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.2;
+  }
+}
+
+@keyframes pulse {
+  0% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.8;
+  }
+}
+
+/* Animation styles */
+.correctWordDetected {
+  animation: correctPulse 1.5s ease-in-out;
+  position: relative;
+}
+
+.autoDetectedOverlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: rgba(46, 204, 113, 0.6);
+  border-radius: 8px;
+  animation: fadeIn 0.3s ease-in-out;
+  z-index: 10;
+}
+
+.checkmarkContainer {
+  width: 80px;
+  height: 80px;
+  animation: scaleUp 0.4s ease-out;
+}
+
+.checkmarkSvg {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  display: block;
+  stroke-width: 4;
+  stroke: #fff;
+  stroke-miterlimit: 10;
+  box-shadow: 0 0 0 rgba(46, 204, 113, 0.7);
+  animation: fillCheck 0.3s ease-in-out 0.3s forwards,
+    scale 0.2s ease-in-out 0.7s both;
+}
+
+.checkmarkCircle {
+  stroke-dasharray: 166;
+  stroke-dashoffset: 166;
+  stroke-width: 4;
+  stroke-miterlimit: 10;
+  stroke: #fff;
+  fill: transparent;
+  animation: strokeCheck 0.5s cubic-bezier(0.65, 0, 0.45, 1) forwards;
+}
+
+.checkmarkCheck {
+  transform-origin: 50% 50%;
+  stroke-dasharray: 48;
+  stroke-dashoffset: 48;
+  animation: strokeCheck 0.25s cubic-bezier(0.65, 0, 0.45, 1) 0.6s forwards;
+}
+
+@keyframes strokeCheck {
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes fillCheck {
+  100% {
+    box-shadow: inset 0 0 0 50px transparent;
+  }
+}
+
+@keyframes correctPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 15px rgba(46, 204, 113, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(46, 204, 113, 0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes scaleUp {
+  from {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.incorrectWordDetected {
+  animation: incorrectPulse 1.5s ease-in-out,
+    shake 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+  position: relative;
+}
+
+.incorrectOverlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: rgba(255, 59, 48, 0.6); /* Red with transparency */
+  border-radius: 8px;
+  animation: fadeIn 0.3s ease-in-out;
+  z-index: 10;
+}
+
+.xmarkContainer {
+  width: 80px;
+  height: 80px;
+  animation: scaleUp 0.4s ease-out;
+}
+
+.xmarkSvg {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  display: block;
+  stroke-width: 4;
+  stroke: #fff;
+  stroke-miterlimit: 10;
+  box-shadow: 0 0 0 rgba(255, 59, 48, 0.7);
+  animation: fillX 0.3s ease-in-out 0.3s forwards,
+    scale 0.2s ease-in-out 0.7s both;
+}
+
+.xmarkCircle {
+  stroke-dasharray: 166;
+  stroke-dashoffset: 166;
+  stroke-width: 4;
+  stroke-miterlimit: 10;
+  stroke: #fff;
+  fill: transparent;
+  animation: strokeX 0.5s cubic-bezier(0.65, 0, 0.45, 1) forwards;
+}
+
+.xmarkX {
+  transform-origin: 50% 50%;
+  stroke-dasharray: 48;
+  stroke-dashoffset: 48;
+  animation: strokeX 0.25s cubic-bezier(0.65, 0, 0.45, 1) 0.6s forwards;
+}
+
+@keyframes strokeX {
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes fillX {
+  100% {
+    box-shadow: inset 0 0 0 50px transparent;
+  }
+}
+
+@keyframes incorrectPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 15px rgba(255, 59, 48, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 59, 48, 0);
+  }
+}
+
+@keyframes scale {
+  0%,
+  100% {
+    transform: none;
+  }
+  50% {
+    transform: scale3d(1.1, 1.1, 1);
+  }
+}
+
+@keyframes shake {
+  10%,
+  90% {
+    transform: translate3d(-1px, 0, 0);
+  }
+  20%,
+  80% {
+    transform: translate3d(2px, 0, 0);
+  }
+  30%,
+  50%,
+  70% {
+    transform: translate3d(-3px, 0, 0);
+  }
+  40%,
+  60% {
+    transform: translate3d(3px, 0, 0);
+  }
+}
+
+/* Game loading UI styles */
+.gameLoadingContainer {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 250px; /* Fixed height to prevent layout shifts */
+  width: 100%;
+}
+
+.gameLoadingContent {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5rem;
+  text-align: center;
+}
+
+.gameLoadingIcon {
+  position: relative;
+  width: 60px;
+  height: 60px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.pulseDot {
+  width: 16px;
+  height: 16px;
+  background-color: #0071e3;
+  border-radius: 50%;
+  position: relative;
+}
+
+.pulseDot:before {
+  content: "";
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background-color: #0071e3;
+  opacity: 0.7;
+  animation: pulse-wave 1.5s linear infinite;
+}
+
+.gameLoadingTitle {
+  font-size: 1.5rem;
+  font-weight: 500;
+  color: #0071e3;
+  margin: 0;
+}
+
+@keyframes pulse-wave {
+  0% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(2.5);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/components/Game/WordWrangler.tsx
+================================================
+import { GAME_STATES, GAME_TEXT } from "@/constants/gameConstants";
+import { useConnectionState } from "@/hooks/useConnectionState";
+import { useGameState } from "@/hooks/useGameState";
+import { useGameTimer } from "@/hooks/useGameTimer";
+import { useVisualFeedback } from "@/hooks/useVisualFeedback";
+import { useWordDetection } from "@/hooks/useWordDetection";
+import { RTVIEvent } from "@pipecat-ai/client-js";
+import { useRTVIClientEvent } from "@pipecat-ai/client-react";
+import { IconCircleDashedCheck, IconDoorExit } from "@tabler/icons-react";
+import { useCallback, useEffect, useRef } from "react";
+import Logo from "../../assets/logo.png";
+import { GameContent } from "./GameContent";
+import { ScoreRow } from "./ScoreRow";
+
+import JSConfetti from "js-confetti";
+
+import Image from "next/image";
+import styles from "./WordWrangler.module.css";
+
+export const WordWrangler: React.FC<{
+  onGameEnded: (score: number, bestScore: number) => void;
+}> = ({ onGameEnded }) => {
+  const botIntroCompletedRef = useRef(false);
+  const currentScoreRef = useRef(0);
+  const gameState = useGameState();
+  const visualFeedback = useVisualFeedback();
+  const { isConnected, client } = useConnectionState();
+
+  // Update the ref whenever score changes
+  useEffect(() => {
+    currentScoreRef.current = gameState.score;
+  }, [gameState.score]);
+
+  // End the game
+  const endGame = useCallback(async () => {
+    const scoreAtCallTime = currentScoreRef.current;
+
+    // Prevent multiple calls to endGame
+    if (gameState.gameState === GAME_STATES.FINISHED) {
+      console.log("endGame prevented - game already finished");
+      return;
+    }
+
+    // Capture the current score before any state changes
+    const finalScore = scoreAtCallTime;
+    const currentBestScore = gameState.bestScore;
+
+    // Update game state
+    gameState.finishGame();
+    visualFeedback.resetVisuals();
+
+    // Update best score if needed
+    if (currentBestScore < finalScore) {
+      gameState.setBestScore(finalScore);
+    }
+
+    // Disconnect the bot
+    if (client && isConnected) {
+      try {
+        await client.disconnectBot();
+        await client.disconnect();
+      } catch (error) {
+        console.error("Error disconnecting bot:", error);
+      }
+    }
+
+    // Call the callback with the captured scores
+    onGameEnded(finalScore, Math.max(finalScore, currentBestScore));
+  }, [gameState, visualFeedback, client, isConnected, onGameEnded]);
+
+  const gameTimer = useGameTimer(endGame);
+
+  const wordDetection = useWordDetection({
+    gameState: gameState.gameState,
+    currentWord: gameState.currentWord,
+    onCorrectGuess: handleCorrectGuess,
+    onIncorrectGuess: handleIncorrectGuess,
+  });
+
+  // Initialize on component mount
+  useEffect(() => {
+    gameState.initializeGame();
+  }, []);
+
+  // Handle connection state changes
+  useEffect(() => {
+    if (isConnected) {
+      if (!botIntroCompletedRef.current) {
+        // Connection is active, but bot hasn't completed intro
+        gameState.setGameState(GAME_STATES.WAITING_FOR_INTRO);
+      }
+    } else {
+      // Connection lost or never established
+      if (gameState.gameState === GAME_STATES.ACTIVE) {
+        // If game was active, it's now finished
+        endGame();
+      } else if (gameState.gameState !== GAME_STATES.FINISHED) {
+        // Reset to idle state if not already finished
+        gameState.setGameState(GAME_STATES.IDLE);
+      }
+
+      // Reset intro state when connection is lost
+      botIntroCompletedRef.current = false;
+    }
+  }, [isConnected, gameState.gameState, endGame]);
+
+  // Listen for the bot to stop speaking to detect intro completion
+  useRTVIClientEvent(RTVIEvent.BotStoppedSpeaking, () => {
+    if (
+      gameState.gameState === GAME_STATES.WAITING_FOR_INTRO &&
+      !botIntroCompletedRef.current
+    ) {
+      // First time the bot stops speaking, consider intro done and start the game
+      botIntroCompletedRef.current = true;
+      startGame();
+    }
+  });
+
+  // Handle correct guess with animation
+  function handleCorrectGuess() {
+    visualFeedback.showCorrect(() => {
+      gameState.incrementScore();
+      gameState.moveToNextWord();
+      wordDetection.resetLastProcessedMessage();
+    });
+    const jsConfetti = new JSConfetti();
+    jsConfetti.addConfetti();
+  }
+
+  // Handle incorrect guess with animation
+  function handleIncorrectGuess() {
+    visualFeedback.showIncorrectAnimation();
+  }
+
+  // Start the game
+  function startGame() {
+    // Initialize game state
+    gameState.initializeGame();
+    wordDetection.resetLastProcessedMessage();
+
+    // Start the timer - now it internally manages countdown and calls endGame when done
+    gameTimer.startTimer();
+  }
+
+  // Handle manual marking as correct
+  function handleManualCorrect() {
+    if (gameState.gameState !== GAME_STATES.ACTIVE) return;
+
+    gameState.incrementScore();
+
+    const jsConfetti = new JSConfetti();
+    jsConfetti.addConfetti();
+
+    gameState.moveToNextWord();
+    wordDetection.resetLastProcessedMessage();
+  }
+
+  // Handle skipping a word
+  function handleSkip() {
+    if (gameState.gameState !== GAME_STATES.ACTIVE) return;
+
+    // Try to use a skip and proceed if successful
+    if (gameState.useSkip()) {
+      gameState.moveToNextWord();
+      wordDetection.resetLastProcessedMessage();
+    }
+  }
+
+  // Clean up on unmount
+  useEffect(() => {
+    return () => {
+      gameTimer.stopTimer();
+      visualFeedback.cleanup();
+    };
+  }, []);
+
+  return (
+    <div className="min-h-[100dvh] flex flex-col">
+      <div className="flex-1 flex flex-col items-center justify-center h-screen">
+        <div className="flex flex-1 flex-col lg:flex-row gap-6 lg:gap-12 items-center justify-center w-full lg:w-auto">
+          <div className={styles.gameContainer}>
+            <Image
+              src={Logo}
+              alt="Word Wrangler"
+              className="logo size-[140px] absolute top-[-50px] lg:top-[-60px] left-[50%] -translate-x-1/2 lg:left-auto lg:-translate-x-0 lg:right-[-50px] z-10"
+              priority
+            />
+            <div className={styles.gameContent}>
+              <GameContent
+                gameState={gameState.gameState}
+                timeLeft={gameTimer.timeLeft}
+                currentWord={gameState.currentWord}
+                showAutoDetected={visualFeedback.showAutoDetected}
+                showIncorrect={visualFeedback.showIncorrect}
+                score={gameState.score}
+                skipsRemaining={gameState.skipsRemaining}
+                onSkip={handleSkip}
+              />
+            </div>
+          </div>
+          <ScoreRow score={gameState.score} bestScore={gameState.bestScore} />
+        </div>
+        <footer className="flex gap-2 py-4 lg:flex-row lg:gap-4 lg:py-6 w-full items-center justify-center">
+          <button
+            className="button outline w-full lg:w-auto"
+            onClick={handleManualCorrect}
+            disabled={gameState.gameState !== GAME_STATES.ACTIVE}
+          >
+            <IconCircleDashedCheck size={24} />
+            {GAME_TEXT.correct}
+          </button>
+          <button
+            className="button outline w-full lg:w-auto"
+            onClick={endGame}
+            disabled={
+              gameState.gameState == GAME_STATES.CONNECTING ||
+              gameState.gameState == GAME_STATES.WAITING_FOR_INTRO
+            }
+          >
+            <IconDoorExit size={24} />
+            End Game
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+};
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/components/Game/ScoreRow/index.tsx
+================================================
+import { IconLaurelWreathFilled, IconStarFilled } from "@tabler/icons-react";
+import styles from "./ScoreRow.module.css";
+interface ScoreRowProps {
+  score: number;
+  bestScore: number;
+}
+
+export function ScoreRow({ score, bestScore = 0 }: ScoreRowProps) {
+  return (
+    <div className="flex flex-col w-full lg:w-auto justify-between gap-3 lg:gap-5">
+      <div className="flex flex-1 w-full lg:w-auto flex-row items-center gap-3 lg:gap-5 text-white bg-black/20 rounded-2xl lg:rounded-3xl px-4 py-3 lg:px-6 lg:py-4">
+        <IconStarFilled
+          size={42}
+          className="text-amber-300 size-8 lg:size-10"
+        />
+        <div className="flex flex-col gap-1">
+          <span className="text-xs lg:text-sm uppercase font-extrabold tracking-wider">
+            Current score
+          </span>
+          <span className="text-xl lg:text-2xl font-extrabold leading-none">
+            {score}
+          </span>
+        </div>
+      </div>
+      <div className={styles.divider} />
+      <div className="flex flex-row items-center gap-5 text-white rounded-3xl px-6">
+        <IconLaurelWreathFilled
+          size={42}
+          className="text-amber-300 size-8 lg:size-10"
+        />
+        <div className="flex flex-col gap-1">
+          <span className="text-xs lg:text-sm uppercase font-extrabold tracking-wider">
+            Best score
+          </span>
+          <span className="text-xl lg:text-2xl font-extrabold leading-none">
+            {bestScore}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default ScoreRow;
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/components/Game/ScoreRow/ScoreRow.module.css
+================================================
+.divider {
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.15) 30%,
+    rgba(255, 255, 255, 0.15) 70%,
+    transparent 100%
+  );
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/components/StartButton/index.tsx
+================================================
+import { BUTTON_TEXT } from "@/constants/gameConstants";
+import { useConnectionState } from "@/hooks/useConnectionState";
+import { IconArrowRight } from "@tabler/icons-react";
+
+interface StartGameButtonProps {
+  onGameStarted?: () => void;
+  onGameEnded?: () => void;
+  isGameEnded?: boolean;
+}
+
+export function StartGameButton({
+  onGameStarted,
+  onGameEnded,
+  isGameEnded,
+}: StartGameButtonProps) {
+  const { isConnecting, isDisconnecting, toggleConnection } =
+    useConnectionState(onGameStarted, onGameEnded);
+
+  // Show spinner during connection process
+  const showSpinner = isConnecting;
+  const btnText = isGameEnded ? BUTTON_TEXT.RESTART : BUTTON_TEXT.START;
+
+  return (
+    <div className="flex justify-center">
+      <button
+        className="styled-button"
+        onClick={toggleConnection}
+        disabled={isConnecting || isDisconnecting}
+      >
+        <>
+          <span className="styled-button-text">
+            {isConnecting ? BUTTON_TEXT.CONNECTING : btnText}
+          </span>
+          <span className="styled-button-icon">
+            {showSpinner ? (
+              <span className="spinner"></span>
+            ) : (
+              <IconArrowRight size={16} strokeWidth={3} />
+            )}
+          </span>
+        </>
+      </button>
+    </div>
+  );
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/constants/gameConstants.ts
+================================================
+// Game configuration
+export const GAME_CONFIG = {
+  MAX_SKIPS: 3,
+  GAME_DURATION: 60, // seconds
+  WORD_POOL_SIZE: 30,
+  ANIMATION_DURATION: 1000, // ms
+  TIMER_INTERVAL: 1000, // ms
+  LOW_TIME_WARNING: 10, // seconds
+};
+
+// Game states
+export const GAME_STATES = {
+  IDLE: "idle",
+  CONNECTING: "connecting",
+  WAITING_FOR_INTRO: "waitingForIntro",
+  ACTIVE: "active",
+  FINISHED: "finished",
+} as const;
+
+export type GameState = (typeof GAME_STATES)[keyof typeof GAME_STATES];
+
+// Text used in the game
+export const GAME_TEXT = {
+  time: "Time",
+  score: "Score",
+  gameOver: "Game Over!",
+  finalScore: "Final Score",
+  correct: "Mark Correct",
+  skip: "Skip →",
+  noSkips: "No Skips Left",
+  skipsRemaining: (num: number) => `Skip (${num} left)`,
+  startingGame: `How many words can you describe in ${GAME_CONFIG.GAME_DURATION} seconds?`,
+  waitingForIntro: "Getting ready...",
+  clickToStart: "Press Start Game to begin",
+  describeWord: "Describe the following word:",
+  introTitle: "How many words can you describe within 60 seconds?",
+  introGuide1: "Earn points each time the AI correctly guesses the word",
+  introGuide2: "Do not say the word, or you will lose points",
+  introGuide3: "You can skip the word if you don't know it",
+  aiPersonality: "AI Personality",
+  finalScoreMessage: "Your best score:",
+};
+
+// Pattern for detecting guesses in transcripts
+export const TRANSCRIPT_PATTERNS = {
+  // Match both "Is it "word"?" and "Is it a/an word?" patterns
+  GUESS_PATTERN:
+    /is it [""]?([^""?]+)[""]?(?:\?)?|is it (?:a|an) ([^?]+)(?:\?)?/i,
+};
+
+// Connection states
+export const CONNECTION_STATES = {
+  ACTIVE: ["connected", "ready"],
+  CONNECTING: ["connecting", "initializing", "initialized", "authenticating"],
+  DISCONNECTING: ["disconnecting"],
+};
+
+// Button text
+export const BUTTON_TEXT = {
+  START: "Start Game",
+  END: "End Game",
+  CONNECTING: "Connecting...",
+  STARTING: "Starting...",
+  RESTART: "Play Again",
+};
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/contexts/Configuration.tsx
+================================================
+import React, { createContext, useContext, useState, ReactNode } from 'react';
+import { PersonalityType, DEFAULT_PERSONALITY } from '@/types/personality';
+
+interface ConfigurationContextProps {
+  personality: PersonalityType;
+  setPersonality: (personality: PersonalityType) => void;
+}
+
+const ConfigurationContext = createContext<
+  ConfigurationContextProps | undefined
+>(undefined);
+
+interface ConfigurationProviderProps {
+  children: ReactNode;
+}
+
+export function ConfigurationProvider({
+  children,
+}: ConfigurationProviderProps) {
+  const [personality, setPersonality] =
+    useState<PersonalityType>(DEFAULT_PERSONALITY);
+
+  const value = {
+    personality,
+    setPersonality,
+  };
+
+  return (
+    <ConfigurationContext.Provider value={value}>
+      {children}
+    </ConfigurationContext.Provider>
+  );
+}
+
+export function useConfigurationSettings() {
+  const context = useContext(ConfigurationContext);
+  if (context === undefined) {
+    throw new Error(
+      'useConfigurationSettings must be used within a ConfigurationProvider'
+    );
+  }
+  return context;
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/data/wordWranglerWords.ts
+================================================
+// 100 Easy Words - Common, everyday objects and concepts
+export const EASY_CATCH_PHRASE_WORDS = [
+  // Common Objects
+  'Chair',
+  'Table',
+  'Door',
+  'Window',
+  'Book',
+  'Pencil',
+  'Phone',
+  'Computer',
+  'Ball',
+  'Car',
+  'Shoe',
+  'Hat',
+  'Cup',
+  'Plate',
+  'Fork',
+  'Spoon',
+  'Knife',
+  'Key',
+  'Clock',
+  'Watch',
+
+  // Food & Drink
+  'Pizza',
+  'Hamburger',
+  'Ice cream',
+  'Chocolate',
+  'Apple',
+  'Banana',
+  'Orange',
+  'Milk',
+  'Water',
+  'Cake',
+  'Cookie',
+  'Bread',
+  'Egg',
+  'Cheese',
+  'Chicken',
+
+  // Animals
+  'Dog',
+  'Cat',
+  'Fish',
+  'Bird',
+  'Horse',
+  'Cow',
+  'Pig',
+  'Duck',
+  'Lion',
+  'Tiger',
+  'Bear',
+  'Elephant',
+  'Monkey',
+  'Rabbit',
+  'Frog',
+
+  // Colors & Simple Concepts
+  'Red',
+  'Blue',
+  'Green',
+  'Yellow',
+  'Black',
+  'White',
+  'Big',
+  'Small',
+  'Hot',
+  'Cold',
+  'Happy',
+  'Sad',
+  'Fast',
+  'Slow',
+  'Old',
+  'Young',
+  'Up',
+  'Down',
+  'Left',
+  'Right',
+
+  // Simple Activities
+  'Run',
+  'Walk',
+  'Jump',
+  'Swim',
+  'Sleep',
+  'Eat',
+  'Drink',
+  'Laugh',
+  'Cry',
+  'Smile',
+  'Play',
+  'Work',
+  'Read',
+  'Write',
+  'Draw',
+  'Sing',
+  'Dance',
+  'Talk',
+  'Listen',
+  'Cook',
+];
+
+// 300 Medium Words - More specific items, common concepts, popular culture
+export const MEDIUM_CATCH_PHRASE_WORDS = [
+  // Household Items & Technology
+  'Refrigerator',
+  'Television',
+  'Microwave',
+  'Bookshelf',
+  'Couch',
+  'Dishwasher',
+  'Ceiling fan',
+  'Toaster',
+  'Vacuum cleaner',
+  'Blender',
+  'Printer',
+  'Headphones',
+  'Smartphone',
+  'Laptop',
+  'Tablet',
+  'Camera',
+  'Remote control',
+  'Charger',
+  'Keyboard',
+  'Mouse',
+  'Lightbulb',
+  'Shower curtain',
+  'Doorknob',
+  'Power outlet',
+  'Coffee maker',
+
+  // Food & Cuisine
+  'Spaghetti',
+  'Burrito',
+  'Sushi',
+  'Pancake',
+  'Waffle',
+  'Cereal',
+  'Sandwich',
+  'Salad',
+  'French fries',
+  'Hot dog',
+  'Cupcake',
+  'Donut',
+  'Milkshake',
+  'Smoothie',
+  'Oatmeal',
+  'Peanut butter',
+  'Jelly',
+  'Bacon',
+  'Scrambled eggs',
+  'Toast',
+  'Steak',
+  'Mashed potatoes',
+  'Broccoli',
+  'Carrot',
+  'Onion',
+
+  // Animals & Nature
+  'Giraffe',
+  'Penguin',
+  'Kangaroo',
+  'Dolphin',
+  'Octopus',
+  'Butterfly',
+  'Spider',
+  'Eagle',
+  'Turtle',
+  'Squirrel',
+  'Rainbow',
+  'Waterfall',
+  'Mountain',
+  'Beach',
+  'Forest',
+  'Hurricane',
+  'Snowflake',
+  'Thunderstorm',
+  'Volcano',
+  'Desert',
+  'Sunrise',
+  'Sunset',
+  'Moon',
+  'Stars',
+  'Planet',
+
+  // Sports & Activities
+  'Basketball',
+  'Football',
+  'Soccer',
+  'Baseball',
+  'Tennis',
+  'Golf',
+  'Swimming',
+  'Skiing',
+  'Snowboarding',
+  'Hiking',
+  'Camping',
+  'Fishing',
+  'Gardening',
+  'Painting',
+  'Photography',
+  'Cycling',
+  'Jogging',
+  'Yoga',
+  'Dancing',
+  'Cooking',
+  'Driving',
+  'Flying',
+  'Sailing',
+  'Surfing',
+  'Rock climbing',
+
+  // Clothing & Accessories
+  'Sunglasses',
+  'Umbrella',
+  'Necklace',
+  'Bracelet',
+  'Ring',
+  'Earrings',
+  'Backpack',
+  'Purse',
+  'Wallet',
+  'Watch',
+  'Sneakers',
+  'Sandals',
+  'Boots',
+  'High heels',
+  'Flip flops',
+  'Scarf',
+  'Gloves',
+  'Belt',
+  'Tie',
+  'Jacket',
+  'Sweater',
+  'Sweatshirt',
+  'Jeans',
+  'Shorts',
+  'Dress',
+
+  // Places
+  'Restaurant',
+  'Grocery store',
+  'Shopping mall',
+  'Movie theater',
+  'Park',
+  'School',
+  'Library',
+  'Museum',
+  'Zoo',
+  'Airport',
+  'Hospital',
+  'Hotel',
+  'Bank',
+  'Post office',
+  'Gym',
+  'Beach',
+  'Swimming pool',
+  'Church',
+  'Stadium',
+  'Concert hall',
+  'Farm',
+  'City',
+  'Village',
+  'Country',
+  'Island',
+
+  // Jobs & Professions
+  'Teacher',
+  'Doctor',
+  'Nurse',
+  'Police officer',
+  'Firefighter',
+  'Chef',
+  'Waiter',
+  'Pilot',
+  'Engineer',
+  'Scientist',
+  'Actor',
+  'Singer',
+  'Artist',
+  'Writer',
+  'Photographer',
+  'Farmer',
+  'Mechanic',
+  'Electrician',
+  'Plumber',
+  'Carpenter',
+  'Lawyer',
+  'Accountant',
+  'Businessman',
+  'Salesperson',
+  'Architect',
+
+  // Transportation
+  'Bicycle',
+  'Motorcycle',
+  'Bus',
+  'Train',
+  'Airplane',
+  'Helicopter',
+  'Boat',
+  'Ship',
+  'Submarine',
+  'Rocket',
+  'Taxi',
+  'Ambulance',
+  'Fire truck',
+  'Police car',
+  'School bus',
+  'Skateboard',
+  'Scooter',
+  'Rollerblades',
+  'Wagon',
+  'Sled',
+  'Escalator',
+  'Elevator',
+  'Tractor',
+  'Bulldozer',
+  'Crane',
+
+  // Entertainment & Hobbies
+  'Movie',
+  'Music',
+  'Book',
+  'Game',
+  'Puzzle',
+  'Toy',
+  'Doll',
+  'Action figure',
+  'Video game',
+  'Board game',
+  'Knitting',
+  'Sewing',
+  'Woodworking',
+  'Baking',
+  'Grilling',
+  'Hunting',
+  'Archery',
+  'Bowling',
+  'Karaoke',
+  'Dancing',
+  'Collecting',
+  'Reading',
+  'Writing',
+  'Drawing',
+  'Painting',
+
+  // Body Parts & Health
+  'Heart',
+  'Brain',
+  'Stomach',
+  'Lungs',
+  'Liver',
+  'Kidneys',
+  'Skin',
+  'Hair',
+  'Nails',
+  'Teeth',
+  'Eyes',
+  'Ears',
+  'Nose',
+  'Mouth',
+  'Throat',
+  'Shoulder',
+  'Elbow',
+  'Wrist',
+  'Hip',
+  'Knee',
+  'Ankle',
+  'Exercise',
+  'Medicine',
+  'Doctor',
+  'Hospital',
+
+  // Common Concepts
+  'Birthday',
+  'Wedding',
+  'Funeral',
+  'Holiday',
+  'Vacation',
+  'Friendship',
+  'Love',
+  'Family',
+  'Education',
+  'Career',
+  'Money',
+  'Time',
+  'Weather',
+  'Season',
+  'History',
+  'Future',
+  'Success',
+  'Failure',
+  'Challenge',
+  'Opportunity',
+  'Competition',
+  'Cooperation',
+  'Leadership',
+  'Creativity',
+  'Innovation',
+];
+
+// 100 Hard Words - Abstract concepts, specific terminology, complex ideas
+export const HARD_CATCH_PHRASE_WORDS = [
+  // Academic & Scientific Terms
+  'Photosynthesis',
+  'Mitochondria',
+  'Quantum physics',
+  'Relativity',
+  'Biodiversity',
+  'Logarithm',
+  'Algorithm',
+  'Neural network',
+  'Nanotechnology',
+  'Thermodynamics',
+  'Paleontology',
+  'Archaeology',
+  'Linguistics',
+  'Metaphysics',
+  'Epistemology',
+  'Cryptocurrency',
+  'Blockchain',
+  'Artificial intelligence',
+  'Machine learning',
+  'Virtual reality',
+
+  // Abstract Concepts
+  'Nostalgia',
+  'Ambivalence',
+  'Empathy',
+  'Serendipity',
+  'Irony',
+  'Existentialism',
+  'Utilitarianism',
+  'Nihilism',
+  'Altruism',
+  'Pragmatism',
+  'Transcendence',
+  'Symbolism',
+  'Paradox',
+  'Dichotomy',
+  'Synchronicity',
+  'Meritocracy',
+  'Bureaucracy',
+  'Democracy',
+  'Capitalism',
+  'Socialism',
+
+  // Specialized Terminology
+  'Amortization',
+  'Cryptocurrency',
+  'Jurisprudence',
+  'Cartography',
+  'Meteorology',
+  'Gentrification',
+  'Immunology',
+  'Horticulture',
+  'Gerontology',
+  'Acoustics',
+  'Encryption',
+  'Astrophysics',
+  'Ornithology',
+  'Entomology',
+  'Viticulture',
+  'Numismatics',
+  'Philately',
+  'Calligraphy',
+  'Lexicography',
+  'Etymology',
+
+  // Cultural & Historical References
+  'Renaissance',
+  'Industrial Revolution',
+  'Cold War',
+  'Enlightenment',
+  'Reformation',
+  'Colonialism',
+  'Globalization',
+  'Diaspora',
+  'Apartheid',
+  'Imperialism',
+  'Monarchy',
+  'Republic',
+  'Federation',
+  'Aristocracy',
+  'Oligarchy',
+  'Surrealism',
+  'Impressionism',
+  'Baroque',
+  'Neoclassicism',
+  'Romanticism',
+
+  // Complex Activities & Processes
+  'Meditation',
+  'Negotiation',
+  'Diplomacy',
+  'Arbitration',
+  'Litigation',
+  'Legislation',
+  'Deliberation',
+  'Investigation',
+  'Implementation',
+  'Extrapolation',
+  'Procurement',
+  'Outsourcing',
+  'Diversification',
+  'Consolidation',
+  'Optimization',
+  'Orchestration',
+  'Choreography',
+  'Composition',
+  'Improvisation',
+  'Interpretation',
+];
+
+// Combined lists for random selection
+export const ALL_CATCH_PHRASE_WORDS = [
+  ...EASY_CATCH_PHRASE_WORDS,
+  ...MEDIUM_CATCH_PHRASE_WORDS,
+  ...HARD_CATCH_PHRASE_WORDS,
+];
+
+// Get a batch of random words (useful for starting a game with multiple words)
+export const getRandomCatchPhraseWords = (count: number = 30): string[] => {
+  const wordList = [...ALL_CATCH_PHRASE_WORDS];
+
+  // Shuffle the array using Fisher-Yates algorithm
+  for (let i = wordList.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [wordList[i], wordList[j]] = [wordList[j], wordList[i]];
+  }
+
+  return wordList.slice(0, count);
+};
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/hooks/useConnectionState.ts
+================================================
+import { useEffect, useCallback } from 'react';
+import {
+  usePipecatClient,
+  usePipecatClientTransportState,
+} from '@pipecat-ai/client-react';
+import { CONNECTION_STATES } from '@/constants/gameConstants';
+import { useConfigurationSettings } from '@/contexts/Configuration';
+
+// Get the API base URL from environment variables
+// Default to "/api" if not specified
+// "/api" is the default for Next.js API routes and used
+// for the Pipecat Cloud deployed agent
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '/api';
+
+console.log('Using API base URL:', API_BASE_URL);
+
+export function useConnectionState(
+  onConnected?: () => void,
+  onDisconnected?: () => void
+) {
+  const client = usePipecatClient();
+  const transportState = usePipecatClientTransportState();
+  const config = useConfigurationSettings();
+
+  const isConnected = CONNECTION_STATES.ACTIVE.includes(transportState);
+  const isConnecting = CONNECTION_STATES.CONNECTING.includes(transportState);
+  const isDisconnecting =
+    CONNECTION_STATES.DISCONNECTING.includes(transportState);
+
+  // Handle connection changes
+  useEffect(() => {
+    if (isConnected && onConnected) {
+      onConnected();
+    }
+    if (!isConnected && !isConnecting && onDisconnected) {
+      onDisconnected();
+    }
+  }, [isConnected, isConnecting, onConnected, onDisconnected]);
+
+  // Toggle connection state
+  const toggleConnection = useCallback(async () => {
+    if (!client) return;
+
+    try {
+      if (isConnected) {
+        await client.disconnect();
+      } else {
+        await client.startBotAndConnect({
+          endpoint: `${API_BASE_URL}/connect`,
+          requestData: {
+            personality: config.personality,
+          },
+        });
+      }
+    } catch (error) {
+      console.error('Connection error:', error);
+    }
+  }, [client, config, isConnected]);
+
+  return {
+    isConnected,
+    isConnecting,
+    isDisconnecting,
+    toggleConnection,
+    transportState,
+    client, // Expose the client for direct access when needed
+  };
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/hooks/useGameState.ts
+================================================
+import { GAME_CONFIG, GAME_STATES, GameState } from "@/constants/gameConstants";
+import { getRandomCatchPhraseWords } from "@/data/wordWranglerWords";
+import { useCallback, useState } from "react";
+
+export function useGameState() {
+  // Game state
+  const [gameState, setGameState] = useState<GameState>(GAME_STATES.IDLE);
+  const [timeLeft, setTimeLeft] = useState(GAME_CONFIG.GAME_DURATION);
+  const [score, setScore] = useState(0);
+  const [words, setWords] = useState<string[]>([]);
+  const [currentWordIndex, setCurrentWordIndex] = useState(0);
+  const [skipsRemaining, setSkipsRemaining] = useState(GAME_CONFIG.MAX_SKIPS);
+  const [bestScore, _setBestScore] = useState(0);
+
+  // Initialize or reset game state
+  const initializeGame = useCallback(() => {
+    const freshWords = getRandomCatchPhraseWords(GAME_CONFIG.WORD_POOL_SIZE);
+    setWords(freshWords);
+    setGameState(GAME_STATES.ACTIVE);
+    setTimeLeft(GAME_CONFIG.GAME_DURATION);
+    setScore(0);
+    setCurrentWordIndex(0);
+    setSkipsRemaining(GAME_CONFIG.MAX_SKIPS);
+
+    // Get best score from local storage
+    const storedScore = localStorage.getItem("bestScore");
+    if (storedScore) {
+      _setBestScore(Number(storedScore) || 0);
+    }
+    return freshWords;
+  }, []);
+
+  // End game
+  const finishGame = useCallback(() => {
+    setGameState(GAME_STATES.FINISHED);
+  }, []);
+
+  // Handle scoring
+  const incrementScore = useCallback(() => {
+    setScore((prev) => prev + 1);
+  }, []);
+
+  // Handle best score
+  const setBestScore = useCallback((newBestScore: number) => {
+    _setBestScore(newBestScore);
+    localStorage.setItem("bestScore", newBestScore.toString());
+  }, []);
+
+  // Handle word navigation
+  const moveToNextWord = useCallback(() => {
+    setCurrentWordIndex((prev) => {
+      if (prev >= words.length - 1) {
+        // If we're at the end of the word list, get new words
+        setWords(getRandomCatchPhraseWords(GAME_CONFIG.WORD_POOL_SIZE));
+        return 0;
+      }
+      return prev + 1;
+    });
+  }, [words]);
+
+  // Handle skipping
+  const useSkip = useCallback(() => {
+    if (skipsRemaining <= 0) return false;
+    setSkipsRemaining((prev) => prev - 1);
+    return true;
+  }, [skipsRemaining]);
+
+  // Update timer
+  const decrementTimer = useCallback(() => {
+    return setTimeLeft((prev) => {
+      if (prev <= 1) {
+        return 0;
+      }
+      return prev - 1;
+    });
+  }, []);
+
+  return {
+    // State
+    gameState,
+    setGameState,
+    timeLeft,
+    score,
+    bestScore,
+    words,
+    currentWord: words[currentWordIndex] || "",
+    skipsRemaining,
+
+    // Actions
+    initializeGame,
+    finishGame,
+    incrementScore,
+    setBestScore,
+    moveToNextWord,
+    useSkip,
+    decrementTimer,
+  };
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/hooks/useGameTimer.ts
+================================================
+import { GAME_CONFIG } from "@/constants/gameConstants";
+import { clearTimer } from "@/utils/timerUtils";
+import { useCallback, useEffect, useRef, useState } from "react";
+
+export function useGameTimer(onTimeUp: () => void) {
+  const [timeLeft, setTimeLeft] = useState(GAME_CONFIG.GAME_DURATION);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const hasCalledTimeUpRef = useRef(false);
+
+  // Start the game timer with initial duration
+  const startTimer = useCallback(() => {
+    // Reset time left and timeUp flag
+    setTimeLeft(GAME_CONFIG.GAME_DURATION);
+    hasCalledTimeUpRef.current = false;
+
+    // Clear any existing timer
+    timerRef.current = clearTimer(timerRef.current);
+
+    // Start a new timer
+    timerRef.current = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1 && !hasCalledTimeUpRef.current) {
+          // Time's up - clear the interval and call the callback
+          timerRef.current = clearTimer(timerRef.current);
+          hasCalledTimeUpRef.current = true;
+          onTimeUp();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, GAME_CONFIG.TIMER_INTERVAL);
+  }, [onTimeUp]);
+
+  // Stop the timer
+  const stopTimer = useCallback(() => {
+    timerRef.current = clearTimer(timerRef.current);
+    hasCalledTimeUpRef.current = false;
+  }, []);
+
+  // Reset the timer to initial value without starting it
+  const resetTimer = useCallback(() => {
+    setTimeLeft(GAME_CONFIG.GAME_DURATION);
+    hasCalledTimeUpRef.current = false;
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      timerRef.current = clearTimer(timerRef.current);
+    };
+  }, []);
+
+  return {
+    timeLeft,
+    startTimer,
+    stopTimer,
+    resetTimer,
+  };
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/hooks/useVisualFeedback.ts
+================================================
+import { useState, useRef, useCallback } from 'react';
+import { clearTimer } from '@/utils/timerUtils';
+import { GAME_CONFIG } from '@/constants/gameConstants';
+
+export function useVisualFeedback() {
+  // Visual feedback state
+  const [showAutoDetected, setShowAutoDetected] = useState(false);
+  const [showIncorrect, setShowIncorrect] = useState(false);
+  const autoDetectTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Reset all visual states
+  const resetVisuals = useCallback(() => {
+    setShowAutoDetected(false);
+    setShowIncorrect(false);
+    autoDetectTimerRef.current = clearTimer(autoDetectTimerRef.current);
+  }, []);
+
+  // Show correct animation
+  const showCorrect = useCallback((onComplete?: () => void) => {
+    // Clear any existing animation
+    autoDetectTimerRef.current = clearTimer(autoDetectTimerRef.current);
+
+    // Show correct animation
+    setShowAutoDetected(true);
+    setShowIncorrect(false);
+
+    // Set timeout to hide animation
+    autoDetectTimerRef.current = setTimeout(() => {
+      setShowAutoDetected(false);
+      if (onComplete) onComplete();
+    }, GAME_CONFIG.ANIMATION_DURATION);
+  }, []);
+
+  // Show incorrect animation
+  const showIncorrectAnimation = useCallback(() => {
+    // Clear any existing animation
+    autoDetectTimerRef.current = clearTimer(autoDetectTimerRef.current);
+
+    // Show incorrect animation
+    setShowIncorrect(true);
+    setShowAutoDetected(false);
+
+    // Set timeout to hide animation
+    autoDetectTimerRef.current = setTimeout(() => {
+      setShowIncorrect(false);
+    }, GAME_CONFIG.ANIMATION_DURATION);
+  }, []);
+
+  // Clean up function
+  const cleanup = useCallback(() => {
+    autoDetectTimerRef.current = clearTimer(autoDetectTimerRef.current);
+  }, []);
+
+  return {
+    showAutoDetected,
+    showIncorrect,
+    resetVisuals,
+    showCorrect,
+    showIncorrectAnimation,
+    cleanup,
+  };
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/hooks/useWordDetection.ts
+================================================
+import { useRef } from 'react';
+import { useRTVIClientEvent } from '@pipecat-ai/client-react';
+import { RTVIEvent } from '@pipecat-ai/client-js';
+import { detectWordGuess } from '@/utils/wordDetection';
+import { GAME_STATES, GameState } from '@/constants/gameConstants';
+
+interface UseWordDetectionProps {
+  gameState: GameState;
+  currentWord: string;
+  onCorrectGuess: () => void;
+  onIncorrectGuess: () => void;
+}
+
+export function useWordDetection({
+  gameState,
+  currentWord,
+  onCorrectGuess,
+  onIncorrectGuess,
+}: UseWordDetectionProps) {
+  const lastProcessedMessageRef = useRef('');
+
+  // Reset the last processed message
+  const resetLastProcessedMessage = () => {
+    lastProcessedMessageRef.current = '';
+  };
+
+  // Listen for bot transcripts to detect correct answers
+  useRTVIClientEvent(RTVIEvent.BotTranscript, (data) => {
+    if (gameState !== GAME_STATES.ACTIVE) {
+      return;
+    }
+
+    if (!currentWord) {
+      return;
+    }
+
+    if (!data.text) {
+      return;
+    }
+
+    // Skip if this is a repeat of the same transcript
+    if (data.text === lastProcessedMessageRef.current) {
+      return;
+    }
+
+    lastProcessedMessageRef.current = data.text;
+
+    // Use the utility function to detect word guesses
+    const result = detectWordGuess(data.text, currentWord);
+
+    if (result.isCorrect) {
+      onCorrectGuess();
+    } else if (result.isExplicitGuess) {
+      onIncorrectGuess();
+    } else {
+    }
+  });
+
+  return {
+    resetLastProcessedMessage,
+  };
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/pages/_app.tsx
+================================================
+import { ConfigurationProvider } from '@/contexts/Configuration';
+import { PipecatProvider } from '@/providers/PipecatProvider';
+import { PipecatClientAudio } from '@pipecat-ai/client-react';
+import type { AppProps } from 'next/app';
+import { Nunito } from 'next/font/google';
+import Head from 'next/head';
+import '../styles/globals.css';
+
+const nunito = Nunito({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-sans',
+});
+
+export default function App({ Component, pageProps }: AppProps) {
+  return (
+    <>
+      <Head>
+        <title>Daily | Word Wrangler</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+      </Head>
+      <main className={`${nunito.variable}`}>
+        <ConfigurationProvider>
+          <PipecatProvider>
+            <PipecatClientAudio />
+            <Component {...pageProps} />
+          </PipecatProvider>
+        </ConfigurationProvider>
+      </main>
+    </>
+  );
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/pages/_document.tsx
+================================================
+import { Head, Html, Main, NextScript } from "next/document";
+
+export default function Document() {
+  return (
+    <Html lang="en">
+      <Head>
+        <meta
+          name="description"
+          content="Describe words without saying them and an AI will guess them!"
+        />
+        <link rel="icon" href="/favicon.ico" />
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+        <meta charSet="UTF-8" />
+
+        {/* Open Graph / Social Media Meta Tags */}
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content="https://word-wrangler.vercel.app/" />
+        <meta
+          property="og:title"
+          content="Word Wrangler - AI Word Guessing Game"
+        />
+        <meta
+          property="og:description"
+          content="Describe words without saying them and an AI will guess them!"
+        />
+        <meta property="og:image" content="/og-image.png" />
+
+        {/* Twitter Card Meta Tags */}
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:url" content="https://word-wrangler.vercel.app/" />
+        <meta
+          name="twitter:title"
+          content="Word Wrangler - AI Word Guessing Game"
+        />
+        <meta
+          name="twitter:description"
+          content="Describe words without saying them and an AI will guess them!"
+        />
+        <meta name="twitter:image" content="/og-image.png" />
+      </Head>
+      <body>
+        <Main />
+        <NextScript />
+      </body>
+    </Html>
+  );
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/pages/index.tsx
+================================================
+import { Card, CardInner } from "@/components/Card";
+import { WordWrangler } from "@/components/Game/WordWrangler";
+import { StartGameButton } from "@/components/StartButton";
+import { GAME_TEXT } from "@/constants/gameConstants";
+import { useConfigurationSettings } from "@/contexts/Configuration";
+import { PERSONALITY_PRESETS, PersonalityType } from "@/types/personality";
+import {
+  IconArrowForwardUp,
+  IconCheck,
+  IconCode,
+  IconX,
+} from "@tabler/icons-react";
+import JSConfetti from "js-confetti";
+import Image from "next/image";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import Logo from "../assets/logo.png";
+import Star from "../assets/star.png";
+
+export default function Home() {
+  const [hasStarted, setHasStarted] = useState(false);
+  const [gameEnded, setGameEnded] = useState(false);
+  const [score, setScore] = useState(0);
+  const [bestScore, setBestScore] = useState(0);
+  const config = useConfigurationSettings();
+
+  useEffect(() => {
+    if (gameEnded) {
+      const confetti = new JSConfetti();
+      confetti.addConfetti({
+        emojis: ["⭐", "⚡️", "👑", "✨", "💫", "🏆", "💯"],
+      });
+    }
+  }, [gameEnded]);
+
+  if (gameEnded) {
+    return (
+      <div className="flex flex-col justify-between lg:justify-center items-center min-h-[100dvh] py-4">
+        <div className="flex flex-1 w-full">
+          <Card className="w-full lg:max-w-2xl mx-auto mt-[50px] lg:mt-[120px] self-center text-center pt-[62px]">
+            <div className="flex items-center justify-center w-[162px] h-[162px] rounded-full absolute z-20 -top-[81px] left-1/2 -translate-x-1/2 animate-bounce-in">
+              <Image src={Star} alt="Star" priority />
+            </div>
+            <CardInner>
+              <h2 className="text-xl font-extrabold">{GAME_TEXT.finalScore}</h2>
+              <p className="text-4xl font-extrabold text-emerald-700 bg-emerald-50 rounded-full px-4 py-4 my-4">
+                {score}
+              </p>
+              <p className="font-medium text-slate-500">
+                {GAME_TEXT.finalScoreMessage}{" "}
+                <span className="text-slate-700 font-extrabold">
+                  {bestScore}
+                </span>
+              </p>
+              <div className="h-[1px] bg-slate-200 my-6" />
+              <div className="flex items-center justify-center">
+                <Link
+                  href="https://github.com/daily-co/word-wrangler-gemini-live"
+                  className="button ghost w-full lg:w-auto"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <IconCode size={24} />
+                  View project source code
+                </Link>
+              </div>
+            </CardInner>
+          </Card>
+        </div>
+        <footer className="flex flex-col justify-center w-full py-4 lg:py-12">
+          <StartGameButton
+            isGameEnded={true}
+            onGameStarted={() => {
+              setGameEnded(false);
+              setScore(0);
+              setHasStarted(true);
+            }}
+          />
+        </footer>
+      </div>
+    );
+  }
+
+  if (!hasStarted) {
+    return (
+      <div className="flex flex-col justify-between items-center min-h-[100dvh] py-4 overflow-hidden">
+        <div className="flex flex-1">
+          <Card className="lg:min-w-2xl mx-auto mt-[50px] lg:mt-[120px] self-center">
+            <Image
+              src={Logo}
+              alt="Word Wrangler"
+              className="logo size-[150px] lg:size-[278px] absolute top-[-75px] lg:top-[-139px] left-[50%] -translate-x-1/2 z-10 animate-bounce-in"
+              priority
+            />
+
+            <CardInner>
+              <div className="flex flex-col gap-5 lg:gap-8 text-center mt-[50px] lg:mt-[100px]">
+                <h2 className="text-xl font-extrabold">
+                  {GAME_TEXT.introTitle}
+                </h2>
+                <div className="flex flex-col gap-3 lg:gap-4">
+                  <div className="flex flex-row gap-3 relative">
+                    <div className="absolute -top-3 -left-3 border-3 border-white lg:static size-10 lg:size-12 bg-emerald-100 text-emerald-500 rounded-full flex items-center justify-center font-semibold">
+                      <IconCheck size={24} />
+                    </div>
+                    <div className="flex-1 flex h-[53px] lg:h-auto bg-slate-100 rounded-full text-slate-500 leading-5 px-12 items-center justify-center font-semibold text-pretty text-sm lg:text-base">
+                      {GAME_TEXT.introGuide1}
+                    </div>
+                  </div>
+                  <div className="flex flex-row gap-3 relative">
+                    <div className="absolute -top-3 -left-3 border-3 border-white lg:static size-10 lg:size-12 bg-red-100 text-red-500 rounded-full flex items-center justify-center font-semibold">
+                      <IconX size={24} />
+                    </div>
+                    <div className="flex-1 flex h-[53px] lg:h-auto bg-slate-100 rounded-full text-slate-500 leading-5 px-12 items-center justify-center font-semibold text-pretty text-sm lg:text-base">
+                      {GAME_TEXT.introGuide2}
+                    </div>
+                  </div>
+                  <div className="flex flex-row gap-3 relative">
+                    <div className="absolute -top-3 -left-3 border-3 border-white lg:static size-10 lg:size-12 bg-slate-100 text-slate-400 rounded-full flex items-center justify-center font-semibold">
+                      <IconArrowForwardUp size={24} />
+                    </div>
+                    <div className="flex-1 flex h-[53px] lg:h-auto bg-slate-100 rounded-full text-slate-500 leading-5 px-12 items-center justify-center font-semibold text-pretty text-sm lg:text-base">
+                      {GAME_TEXT.introGuide3}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="flex-1 bg-slate-100 h-[1px] my-4 lg:my-6" />
+              <div>
+                <label className="font-bold flex flex-col gap-2 flex-1">
+                  {GAME_TEXT.aiPersonality}
+                  <select
+                    className="rounded-xl h-11 font-normal"
+                    value={config.personality}
+                    onChange={(e) =>
+                      config.setPersonality(e.target.value as PersonalityType)
+                    }
+                  >
+                    {Object.entries(PERSONALITY_PRESETS).map(
+                      ([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      )
+                    )}
+                  </select>
+                </label>
+              </div>
+            </CardInner>
+          </Card>
+        </div>
+        <footer className="flex flex-col justify-center w-full py-4 lg:py-12">
+          <StartGameButton onGameStarted={() => setHasStarted(true)} />
+        </footer>
+      </div>
+    );
+  }
+
+  return (
+    <WordWrangler
+      onGameEnded={(score, bestScore = 0) => {
+        setScore(score);
+        setBestScore(bestScore);
+        setGameEnded(true);
+      }}
+    />
+  );
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/pages/api/connect.ts
+================================================
+import type { NextApiRequest, NextApiResponse } from 'next';
+
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  try {
+    const { personality } = req.body;
+
+    // Validate required parameters
+    if (!personality) {
+      return res
+        .status(400)
+        .json({ error: 'Missing required configuration parameters' });
+    }
+
+    const response = await fetch(
+      `https://api.pipecat.daily.co/v1/public/${process.env.AGENT_NAME}/start`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.PIPECAT_CLOUD_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          createDailyRoom: true,
+          body: {
+            personality,
+          },
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    console.log('Response from API:', JSON.stringify(data, null, 2));
+
+    // Transform the response to match what Pipecat client expects
+    return res.status(200).json({
+      room_url: data.dailyRoom,
+      token: data.dailyToken,
+    });
+  } catch (error) {
+    console.error('Error starting agent:', error);
+    return res.status(500).json({ error: 'Failed to start agent' });
+  }
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/providers/PipecatProvider.tsx
+================================================
+'use client';
+
+import { PipecatClient } from '@pipecat-ai/client-js';
+import { DailyTransport } from '@pipecat-ai/daily-transport';
+import { PipecatClientProvider } from '@pipecat-ai/client-react';
+import { PropsWithChildren, useEffect, useState, useRef } from 'react';
+
+export function PipecatProvider({ children }: PropsWithChildren) {
+  const [client, setClient] = useState<PipecatClient | null>(null);
+  const clientCreated = useRef(false);
+
+  useEffect(() => {
+    // Only create the client once
+    if (clientCreated.current) return;
+
+    const pcClient = new PipecatClient({
+      transport: new DailyTransport(),
+      enableMic: true,
+      enableCam: false,
+    });
+
+    setClient(pcClient);
+    clientCreated.current = true;
+
+    // Cleanup when component unmounts
+    return () => {
+      if (pcClient) {
+        pcClient.disconnect().catch((err) => {
+          console.error('Error disconnecting client:', err);
+        });
+      }
+      clientCreated.current = false;
+    };
+  }, []);
+
+  if (!client) {
+    return null;
+  }
+
+  return (
+    <PipecatClientProvider client={client}>{children}</PipecatClientProvider>
+  );
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/styles/globals.css
+================================================
+@import "tailwindcss";
+
+@theme {
+  --border-radius-card: 24px;
+  --border-width-card: 4px;
+  --theme-gradient-start: #fdd256;
+  --theme-gradient-end: #a62249;
+  --button-height-sm: 52px;
+  --button-height: 58px;
+  --animate-bounce-in: zoom-bounce 0.75s ease-out forwards;
+}
+
+html,
+body {
+  max-width: 100vw;
+  overflow-x: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
+    Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+}
+
+body {
+  height: 100dvh;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: linear-gradient(180deg, #0059b7 0%, #7dceff 100%);
+}
+
+main {
+  font-family: var(--font-sans);
+  padding: 0 12px;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+button:not(:disabled):hover {
+  opacity: 0.9;
+}
+
+button:not(:disabled):active {
+  transform: translateY(1px);
+}
+
+.card-border {
+  position: relative;
+  z-index: 1;
+}
+
+.card-border:before {
+  content: "";
+  position: absolute;
+  inset: -4px -4px -8px -4px;
+  border-radius: 28px;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 1) 0%,
+    rgba(0, 0, 0, 0.15) 100%
+  );
+  z-index: -1;
+}
+
+.card-border:after {
+  content: "";
+  box-sizing: border-box;
+  position: absolute;
+  inset: 0;
+  background: #ffffff;
+  border-radius: var(--border-radius-card);
+  border: var(--border-width-card) solid transparent;
+  background-image: linear-gradient(#ffffff, #ffffff),
+    linear-gradient(
+      180deg,
+      var(--theme-gradient-start) 0%,
+      var(--theme-gradient-end) 100%
+    );
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+}
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding: 0 36px 0 12px;
+  background-image: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBjbGlwLXBhdGg9InVybCgjY2xpcDBfNV80MSkiPjxwYXRoIGQ9Ik04IDlMMTIgNUwxNiA5IiBzdHJva2U9IiNCQkQ1RTEiIHN0cm9rZS13aWR0aD0iMiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+PHBhdGggZD0iTTE2IDE1TDEyIDE5TDggMTUiIHN0cm9rZT0iI0JCRDU4MSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz48L2c+PGRlZnM+PGNsaXBQYXRoIGlkPSJjbGlwMF81XzQxIj48cmVjdCB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIGZpbGw9IndoaXRlIi8+PC9jbGlwUGF0aD48L2RlZnM+PC9zdmc+");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 24px;
+  border: 1px solid var(--color-slate-200);
+  color: var(--color-slate-600);
+}
+
+select::-ms-expand {
+  display: none;
+}
+
+.styled-button {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  gap: 12px;
+  border-radius: 16px;
+  position: relative;
+  color: #ffffff;
+  text-align: center;
+  height: 56px;
+  padding: 0 32px;
+  background: linear-gradient(
+      to bottom,
+      transparent 0%,
+      transparent 88%,
+      rgba(255, 255, 255, 0.2) 88%,
+      rgba(255, 255, 255, 0.2) 100%
+    ),
+    linear-gradient(180deg, #10abe3 0%, #0046b5 98.08%);
+  border-width: 2px 2px 5px 2px;
+  border-style: solid;
+  border-color: #000000;
+  overflow: hidden;
+  box-shadow: 0px 4px 0px 4px rgba(0, 0, 0, 0.12);
+}
+
+.styled-button:before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 12px;
+  border: 4px solid transparent;
+  background-image: linear-gradient(
+    180deg,
+    var(--theme-gradient-start) 0%,
+    var(--theme-gradient-end) 100%
+  );
+  background-origin: border-box;
+  background-clip: border-box;
+  -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  z-index: 1;
+}
+
+.styled-button:after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: 12px;
+  border: 2px solid #0d1e4c;
+  z-index: 2;
+}
+
+.styled-button-text {
+  color: white;
+  font-size: 14px;
+  font-weight: 800;
+  text-shadow: 2px 2px 0 rgba(0, 0, 0, 0.35);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  z-index: 2;
+  position: relative;
+}
+
+.styled-button:active {
+  transform: translateY(6px);
+  box-shadow: 0 0 0 #000000, inset 0 -2px 12px rgba(0, 0, 0, 0.2),
+    inset 0 2px 12px rgba(255, 255, 255, 0.4);
+}
+
+.styled-button-icon {
+  position: relative;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  flex-grow: 0;
+  padding: 0px;
+  width: 30px;
+  height: 30px;
+  background: rgba(42, 88, 173, 0.25);
+  border-radius: 999px;
+  z-index: 1;
+}
+.styled-button-icon:after {
+  pointer-events: none;
+  content: "";
+  position: absolute;
+  inset: 0px;
+  background: rgba(3, 85, 188, 0.5);
+  border-radius: 999px;
+  border: 2px solid #0a82d1;
+  z-index: -1;
+}
+
+@media (min-width: 1024px) {
+  .styled-button {
+    height: 60px;
+  }
+  .styled-button-text {
+    font-size: 16px;
+  }
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top: 2px solid #ffffff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.button {
+  appearance: none;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  background-color: rgba(0, 0, 0, 0.15);
+  color: #ffffff;
+  font-weight: 800;
+  padding: 0 12px;
+  height: var(--button-height-sm);
+  border-radius: 999px;
+  font-size: 16px;
+
+  &.outline {
+    border: 2px solid rgba(255, 255, 255, 0.35);
+    background-color: transparent;
+    outline: none;
+    transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+  }
+  &.outline:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.5);
+  }
+
+  &.ghost {
+    background-color: var(--color-slate-100);
+    color: var(--color-slate-600);
+    height: var(--button-height-sm);
+  }
+
+  &.ghost:hover {
+    background-color: var(--color-slate-200);
+  }
+}
+
+@media (min-width: 1024px) {
+  .button {
+    padding: 0 24px;
+    gap: 12px;
+    height: var(--button-height);
+  }
+}
+
+/* Animations */
+
+@keyframes zoom-bounce {
+  0% {
+    transform: scale(0.25);
+    animation-timing-function: cubic-bezier(0.8, 0, 1, 1);
+  }
+  50% {
+    transform: scale(1.1);
+    animation-timing-function: cubic-bezier(0, 0, 0.2, 1);
+  }
+  75% {
+    transform: scale(0.95);
+    animation-timing-function: cubic-bezier(0.8, 0, 1, 1);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/styles/HomeStyles.ts
+================================================
+export const styles = {
+  main: {
+    display: "flex",
+    flexDirection: "column" as const,
+    justifyContent: "flex-start",
+    alignItems: "center",
+    minHeight: "100vh",
+    padding: "2rem 0",
+  },
+  container: {
+    width: "100%",
+    maxWidth: "800px",
+    padding: "0 1rem",
+  },
+  title: {
+    fontSize: "2rem",
+    textAlign: "center" as const,
+    marginBottom: "2rem",
+    color: "#333",
+  },
+  gameContainer: {
+    marginBottom: "2rem",
+  },
+  controlsContainer: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "1rem",
+    marginBottom: "2rem",
+  },
+  settings: {
+    backgroundColor: "white",
+    padding: "1rem",
+    borderRadius: "8px",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+  },
+  label: {
+    display: "flex",
+    flexDirection: "column" as const,
+    gap: "0.5rem",
+    fontSize: "0.9rem",
+    color: "#555",
+  },
+  select: {
+    padding: "0.5rem",
+    border: "1px solid #ddd",
+    borderRadius: "4px",
+    fontSize: "1rem",
+  },
+  instructions: {
+    backgroundColor: "white",
+    padding: "1.5rem",
+    borderRadius: "8px",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.1)",
+  },
+  instructionsTitle: {
+    fontSize: "1.4rem",
+    marginBottom: "1rem",
+    color: "#333",
+  },
+  instructionsList: {
+    paddingLeft: "1.5rem",
+    lineHeight: 1.6,
+  },
+};
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/types/personality.ts
+================================================
+export type PersonalityType =
+  | 'friendly'
+  | 'professional'
+  | 'enthusiastic'
+  | 'thoughtful'
+  | 'witty';
+
+// This object can be useful for displaying user-friendly labels or descriptions
+export const PERSONALITY_PRESETS: Record<PersonalityType, string> = {
+  friendly: 'Friendly',
+  professional: 'Professional',
+  enthusiastic: 'Enthusiastic',
+  thoughtful: 'Thoughtful',
+  witty: 'Witty',
+};
+
+// Default personality to use
+export const DEFAULT_PERSONALITY: PersonalityType = 'witty';
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/utils/formatTime.ts
+================================================
+/**
+ * Formats seconds into MM:SS format
+ */
+export function formatTime(seconds: number): string {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/utils/timerUtils.ts
+================================================
+/**
+ * Safely clears any type of timer
+ * @param timer The timer to clear
+ * @returns null to reassign to the timer reference
+ */
+export function clearTimer(timer: NodeJS.Timeout | null): null {
+  if (timer) {
+    clearTimeout(timer);
+  }
+  return null;
+}
+
+/**
+ * Creates a countdown timer that calls the callback every second
+ * @returns A function to stop the timer
+ */
+export function createCountdownTimer(
+  durationSeconds: number,
+  onTick: (secondsLeft: number) => void,
+  onComplete: () => void
+): () => void {
+  let secondsLeft = durationSeconds;
+
+  const timer = setInterval(() => {
+    secondsLeft--;
+    onTick(secondsLeft);
+
+    if (secondsLeft <= 0) {
+      clearInterval(timer);
+      onComplete();
+    }
+  }, 1000);
+
+  return () => {
+    clearInterval(timer);
+  };
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/client/src/utils/wordDetection.ts
+================================================
+import { TRANSCRIPT_PATTERNS } from '@/constants/gameConstants';
+
+/**
+ * Checks if a transcript contains a correct guess for the target word
+ */
+export function detectWordGuess(transcript: string, targetWord: string) {
+  const currentWordLower = targetWord.toLowerCase().trim();
+
+  // Primary detection: Look for explicit guesses
+  const guessPattern = TRANSCRIPT_PATTERNS.GUESS_PATTERN;
+  const guessMatch = transcript.match(guessPattern);
+
+  if (guessMatch) {
+    // Extract the guessed word from whichever group matched (group 1 or 2)
+    let guessedWord = (guessMatch[1] || guessMatch[2] || '')
+      .toLowerCase()
+      .trim();
+
+    // Remove articles ("a", "an", "the") from the beginning of the guessed word
+    guessedWord = guessedWord.replace(/^(a|an|the)\s+/i, '');
+
+    return {
+      isCorrect: guessedWord === currentWordLower,
+      isExplicitGuess: true,
+      guessedWord,
+    };
+  }
+
+  // Secondary detection: Check if word appears in transcript
+  const containsWord = transcript.toLowerCase().includes(currentWordLower);
+
+  return {
+    isCorrect: containsWord,
+    isExplicitGuess: false,
+    guessedWord: containsWord ? targetWord : null,
+  };
+}
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/server/bot.py
+================================================
+#
+# Copyright (c) 2025, Daily
+#
+# SPDX-License-Identifier: BSD 2-Clause License
+#
+
+import argparse
+import asyncio
+import os
+import sys
+from typing import Any, Dict
+
+import aiohttp
+from dotenv import load_dotenv
+from loguru import logger
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.runner import PipelineRunner
+from pipecat.pipeline.task import PipelineParams, PipelineTask
+from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.processors.filters.stt_mute_filter import STTMuteConfig, STTMuteFilter, STTMuteStrategy
+from pipecat.processors.frameworks.rtvi import (
+    RTVIConfig,
+    RTVIObserver,
+    RTVIProcessor,
+)
+from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveLLMService
+from pipecat.transports.services.daily import DailyParams, DailyTransport
+from pipecatcloud.agent import DailySessionArguments
+
+load_dotenv(override=True)
+
+# Check if we're in local development mode
+LOCAL_RUN = os.getenv("LOCAL_RUN")
+
+logger.add(sys.stderr, level="DEBUG")
+
+# Define conversation modes with their respective prompt templates
+game_prompt = """You are the AI host and player for a game of Word Wrangler.
+
+GAME RULES:
+1. The user will be given a word or phrase that they must describe to you
+2. The user CANNOT say any part of the word/phrase directly
+3. You must try to guess the word/phrase based on the user's description
+4. Once you guess correctly, the user will move on to their next word
+5. The user is trying to get through as many words as possible in 60 seconds
+6. The external application will handle timing and keeping score
+
+YOUR ROLE:
+1. Start with this exact brief introduction: "Welcome to Word Wrangler! I'll try to guess the words you describe. Remember, don't say any part of the word itself. Ready? Let's go!"
+2. Listen carefully to the user's descriptions
+3. Make intelligent guesses based on what they say
+4. When you think you know the answer, state it clearly: "Is it [your guess]?"
+5. If you're struggling, ask for more specific clues
+6. Keep the game moving quickly - make guesses promptly
+7. Be enthusiastic and encouraging
+
+IMPORTANT:
+- Keep all responses brief - the game is timed!
+- Make multiple guesses if needed
+- Use your common knowledge to make educated guesses
+- If the user indicates you got it right, just say "Got it!" and prepare for the next word
+- If you've made several wrong guesses, simply ask for "Another clue please?"
+
+Start with the exact introduction specified above, then wait for the user to begin describing their first word."""
+
+# Define personality presets
+PERSONALITY_PRESETS = {
+    "friendly": "You have a warm, approachable personality. You use conversational language, occasional humor, and express enthusiasm for the topic. Make the user feel comfortable and engaged.",
+    "professional": "You have a formal, precise personality. You communicate clearly and directly with a focus on accuracy and relevance. Your tone is respectful and business-like.",
+    "enthusiastic": "You have an energetic, passionate personality. You express excitement about the topic and use dynamic language. You're encouraging and positive throughout the conversation.",
+    "thoughtful": "You have a reflective, philosophical personality. You speak carefully, considering multiple angles of each point. You ask thought-provoking questions and acknowledge nuance.",
+    "witty": "You have a clever, humorous personality. While remaining informative, you inject appropriate wit and playful language. Your goal is to be engaging and entertaining while still being helpful.",
+}
+
+
+async def main(transport: DailyTransport, config: Dict[str, Any]):
+    # Use the provided session logger if available, otherwise use the default logger
+    logger.debug("Configuration: {}", config)
+
+    # Extract configuration parameters with defaults
+    personality = config.get("personality", "witty")
+
+    personality_prompt = PERSONALITY_PRESETS.get(personality, PERSONALITY_PRESETS["friendly"])
+
+    system_instruction = f"""{game_prompt}
+
+{personality_prompt}
+
+Important guidelines:
+1. Your responses will be converted to speech, so keep them concise and conversational.
+2. Don't use special characters or formatting that wouldn't be natural in speech.
+3. Encourage the user to elaborate when appropriate."""
+
+    intro_message = """Start with this exact brief introduction: "Welcome to Word Wrangler! I'll try to guess the words you describe. Remember, don't say any part of the word itself. Ready? Let's go!"""
+
+    # Create the STT mute filter if we have strategies to apply
+    stt_mute_filter = STTMuteFilter(
+        config=STTMuteConfig(strategies={STTMuteStrategy.MUTE_UNTIL_FIRST_BOT_COMPLETE})
+    )
+
+    llm = GeminiMultimodalLiveLLMService(
+        api_key=os.getenv("GOOGLE_API_KEY"),
+        transcribe_user_audio=True,
+        system_instruction=system_instruction,
+    )
+
+    # Set up the initial context for the conversation
+    messages = [
+        {
+            "role": "user",
+            "content": intro_message,
+        },
+    ]
+
+    # This sets up the LLM context by providing messages and tools
+    context = OpenAILLMContext(messages)
+    context_aggregator = llm.create_context_aggregator(context)
+
+    # RTVI events for Pipecat client UI
+    rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
+
+    pipeline = Pipeline(
+        [
+            transport.input(),
+            rtvi,
+            stt_mute_filter,
+            context_aggregator.user(),
+            llm,
+            transport.output(),
+            context_aggregator.assistant(),
+        ]
+    )
+
+    task = PipelineTask(
+        pipeline,
+        params=PipelineParams(
+            enable_metrics=True,
+            enable_usage_metrics=True,
+        ),
+        observers=[RTVIObserver(rtvi)],
+    )
+
+    @rtvi.event_handler("on_client_ready")
+    async def on_client_ready(rtvi):
+        logger.debug("Client ready event received")
+        await rtvi.set_bot_ready()
+        # Kick off the conversation
+        await task.queue_frames([context_aggregator.user().get_context_frame()])
+
+    @transport.event_handler("on_first_participant_joined")
+    async def on_first_participant_joined(transport, participant):
+        logger.info("First participant joined: {}", participant["id"])
+        # Capture the participant's transcription
+        await transport.capture_participant_transcription(participant["id"])
+
+    @transport.event_handler("on_participant_left")
+    async def on_participant_left(transport, participant, reason):
+        logger.info("Participant left: {}", participant)
+        await task.cancel()
+
+    runner = PipelineRunner(handle_sigint=False, force_gc=True)
+
+    await runner.run(task)
+
+
+async def bot(args: DailySessionArguments):
+    """Main bot entry point compatible with the FastAPI route handler.
+
+    Args:
+        room_url: The Daily room URL
+        token: The Daily room token
+        body: The configuration object from the request body
+        session_id: The session ID for logging
+    """
+    from pipecat.audio.filters.krisp_filter import KrispFilter
+
+    logger.info(f"Bot process initialized {args.room_url} {args.token}")
+
+    transport = DailyTransport(
+        args.room_url,
+        args.token,
+        "Word Wrangler Bot",
+        DailyParams(
+            audio_in_enabled=True,
+            audio_in_filter=None if LOCAL_RUN else KrispFilter(),
+            audio_out_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(),
+        ),
+    )
+
+    try:
+        await main(transport, args.body)
+        logger.info("Bot process completed")
+    except Exception as e:
+        logger.exception(f"Error in bot process: {str(e)}")
+        raise
+
+
+# Local development
+async def local_daily(args: DailySessionArguments):
+    """Daily transport for local development."""
+    # from runner import configure
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            transport = DailyTransport(
+                room_url=args.room_url,
+                token=args.token,
+                bot_name="Bot",
+                params=DailyParams(
+                    audio_in_enabled=True,
+                    audio_out_enabled=True,
+                    vad_analyzer=SileroVADAnalyzer(),
+                ),
+            )
+
+            test_config = {
+                "personality": args.personality,
+            }
+
+            await main(transport, test_config)
+    except Exception as e:
+        logger.exception(f"Error in local development mode: {e}")
+
+
+# Local development entry point
+if LOCAL_RUN and __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Run the Word Wrangler bot in local development mode"
+    )
+    parser.add_argument(
+        "-u", "--room-url", type=str, default=os.getenv("DAILY_SAMPLE_ROOM_URL", "")
+    )
+    parser.add_argument(
+        "-t", "--token", type=str, default=os.getenv("DAILY_SAMPLE_ROOM_TOKEN", None)
+    )
+    parser.add_argument(
+        "-p",
+        "--personality",
+        default="witty",
+        choices=["friendly", "professional", "enthusiastic", "thoughtful", "witty"],
+        help="Personality preset for the bot (friendly, professional, enthusiastic, thoughtful, witty)",
+    )
+    args = parser.parse_args()
+    try:
+        asyncio.run(local_daily(args))
+    except Exception as e:
+        logger.exception(f"Failed to run in local mode: {e}")
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/server/bot_phone_local.py
+================================================
+#
+# Copyright (c) 2025, Daily
+#
+# SPDX-License-Identifier: BSD 2-Clause License
+#
+
+"""Word Wrangler: A voice-based word guessing game.
+
+To run this demo:
+1. Set up environment variables:
+   - GOOGLE_API_KEY: API key for Google services
+   - GOOGLE_TEST_CREDENTIALS_FILE: Path to Google credentials JSON file
+
+2. Install requirements:
+   pip install -r requirements.txt
+
+3. Run in local development mode:
+   LOCAL_RUN=1 python word_wrangler.py
+"""
+
+import asyncio
+import os
+import re
+import sys
+from typing import Any, Mapping, Optional
+
+import aiohttp
+from dotenv import load_dotenv
+from loguru import logger
+from pipecat.audio.utils import create_default_resampler
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.frames.frames import (
+    BotStoppedSpeakingFrame,
+    CancelFrame,
+    EndFrame,
+    Frame,
+    InputAudioRawFrame,
+    LLMFullResponseEndFrame,
+    LLMTextFrame,
+    StartFrame,
+    TTSAudioRawFrame,
+    TTSSpeakFrame,
+)
+from pipecat.pipeline.parallel_pipeline import ParallelPipeline
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.runner import PipelineRunner
+from pipecat.pipeline.task import PipelineParams, PipelineTask
+from pipecat.processors.aggregators.openai_llm_context import (
+    OpenAILLMContext,
+)
+from pipecat.processors.consumer_processor import ConsumerProcessor
+from pipecat.processors.filters.stt_mute_filter import STTMuteConfig, STTMuteFilter, STTMuteStrategy
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.processors.producer_processor import ProducerProcessor
+from pipecat.services.gemini_multimodal_live.gemini import (
+    GeminiMultimodalLiveLLMService,
+    GeminiMultimodalModalities,
+    InputParams,
+)
+from pipecat.services.google.tts import GoogleTTSService
+from pipecat.sync.base_notifier import BaseNotifier
+from pipecat.sync.event_notifier import EventNotifier
+from pipecat.transports.services.daily import DailyParams, DailyTransport
+from pipecat.utils.text.base_text_filter import BaseTextFilter
+from pipecatcloud.agent import DailySessionArguments
+from word_list import generate_game_words
+
+load_dotenv(override=True)
+
+# Check if we're in local development mode
+LOCAL_RUN = os.getenv("LOCAL_RUN")
+if LOCAL_RUN:
+    import webbrowser
+
+    try:
+        from runner import configure
+    except ImportError:
+        logger.error("Could not import local_runner module. Local development mode may not work.")
+
+
+logger.add(sys.stderr, level="DEBUG")
+
+GAME_DURATION_SECONDS = 120
+NUM_WORDS_PER_GAME = 20
+HOST_VOICE_ID = "en-US-Chirp3-HD-Charon"
+PLAYER_VOICE_ID = "Kore"
+
+# Define conversation modes with their respective prompt templates
+game_player_prompt = """You are a player for a game of Word Wrangler.
+
+GAME RULES:
+1. The user will be given a word or phrase that they must describe to you
+2. The user CANNOT say any part of the word/phrase directly
+3. You must try to guess the word/phrase based on the user's description
+4. Once you guess correctly, the user will move on to their next word
+5. The user is trying to get through as many words as possible in 60 seconds
+6. The external application will handle timing and keeping score
+
+YOUR ROLE:
+1. Listen carefully to the user's descriptions
+2. Make intelligent guesses based on what they say
+3. When you think you know the answer, state it clearly: "Is it [your guess]?"
+4. If you're struggling, ask for more specific clues
+5. Keep the game moving quickly - make guesses promptly
+6. Be enthusiastic and encouraging
+
+IMPORTANT:
+- Keep all responses brief - the game is timed!
+- Make multiple guesses if needed
+- Use your common knowledge to make educated guesses
+- If the user indicates you got it right, just say "Got it!" and prepare for the next word
+- If you've made several wrong guesses, simply ask for "Another clue please?"
+
+Start by guessing once you hear the user describe the word or phrase."""
+
+game_host_prompt = """You are the AI host for a game of Word Wrangler. There are two players in the game: the human describer and the AI guesser.
+
+GAME RULES:
+1. You, the host, will give the human describer a word or phrase that they must describe
+2. The describer CANNOT say any part of the word/phrase directly
+3. The AI guesser will try to guess the word/phrase based on the describer's description
+4. Once the guesser guesses correctly, move on to the next word
+5. The describer is trying to get through as many words as possible in 60 seconds
+6. The describer can say "skip" or "pass" to get a new word if they find a word too difficult
+7. The describer can ask you to repeat the current word if they didn't hear it clearly
+8. You'll keep track of the score (1 point for each correct guess)
+9. The external application will handle timing
+
+YOUR ROLE:
+1. Start with this exact brief introduction: "Welcome to Word Wrangler! I'll give you words to describe, and the A.I. player will try to guess them. Remember, don't say any part of the word itself. Here's your first word: [word]."
+2. Provide words to the describer. Choose 1 or 2 word phrases that cover a variety of topics, including animals, objects, places, and actions.
+3. IMPORTANT: You will hear DIFFERENT types of input:
+   a. DESCRIPTIONS from the human (which you should IGNORE)
+   b. AFFIRMATIONS from the human (like "correct", "that's right", "you got it") which you should IGNORE
+   c. GUESSES from the AI player (which will be in the form of "Is it [word]?" or similar question format)
+   d. SKIP REQUESTS from the human (if they say "skip", "pass", or "next word please")
+   e. REPEAT REQUESTS from the human (if they say "repeat", "what was that?", "say again", etc.)
+
+4. HOW TO RESPOND:
+   - If you hear a DESCRIPTION or AFFIRMATION from the human, respond with exactly "IGNORE" (no other text)
+   - If you hear a GUESS (in question form) and it's INCORRECT, respond with exactly "NO" (no other text)
+   - If you hear a GUESS (in question form) and it's CORRECT, respond with "Correct! That's [N] points. Your next word is [new word]" where N is the current score
+   - If you hear a SKIP REQUEST, respond with "The new word is [new word]" (don't change the score)
+   - If you hear a REPEAT REQUEST, respond with "Your word is [current word]" (don't change the score)
+
+5. SCORING:
+   - Start with a score of 0
+   - Add 1 point for each correct guess by the AI player
+   - Do NOT add points for skipped words
+   - Announce the current score after every correct guess
+
+RESPONSE EXAMPLES:
+- Human says: "This is something you use to write" → You respond: "IGNORE"
+- Human says: "That's right!" or "You got it!" → You respond: "IGNORE"
+- Human says: "Wait, what was my word again?" → You respond: "Your word is [current word]"
+- Human says: "Can you repeat that?" → You respond: "Your word is [current word]"
+- AI says: "Is it a pen?" → If correct and it's the first point, you respond: "Correct! That's 1 point. Your next word is [new word]"
+- AI says: "Is it a pencil?" → If correct and it's the third point, you respond: "Correct! That's 3 points. Your next word is [new word]"
+- AI says: "Is it a marker?" → If incorrect, you respond: "NO"
+- Human says: "Skip this one" or "Pass" → You respond: "The new word is [new word]"
+
+IMPORTANT GUIDELINES:
+- Choose words that range from easy to moderately difficult
+- Keep all responses brief - the game is timed!
+- Your "NO" and "IGNORE" responses won't be verbalized, but will be visible in the chat
+- Always keep track of the CURRENT word so you can repeat it when asked
+- Always keep track of the CURRENT SCORE and announce it after every correct guess
+- Make sure your word choices are appropriate for all audiences
+- If the human asks to skip, always provide a new word immediately without changing the score
+- If the human asks you to repeat the word, say ONLY "Your word is [current word]" - don't add additional text
+- CRUCIAL: Never interpret the human saying "correct", "that's right", "good job", or similar affirmations as a correct guess. These are just the human giving feedback to the AI player.
+
+Start with the exact introduction specified above and give the first word."""
+
+
+class HostResponseTextFilter(BaseTextFilter):
+    """Custom text filter for Word Wrangler game.
+
+    This filter removes "NO" and "IGNORE" responses from the host so they don't get verbalized,
+    allowing for silent incorrect guess handling and ignoring descriptions.
+    """
+
+    def __init__(self):
+        self._interrupted = False
+
+    def update_settings(self, settings: Mapping[str, Any]):
+        # No settings to update for this filter
+        pass
+
+    async def filter(self, text: str) -> str:
+        # Remove case and whitespace for comparison
+        clean_text = text.strip().upper()
+
+        # If the text is exactly "NO" or "IGNORE", return empty string
+        if clean_text == "NO" or clean_text == "IGNORE":
+            return ""
+
+        return text
+
+    async def handle_interruption(self):
+        self._interrupted = True
+
+    async def reset_interruption(self):
+        self._interrupted = False
+
+
+class BotStoppedSpeakingNotifier(FrameProcessor):
+    """A processor that notifies whenever a BotStoppedSpeakingFrame is detected."""
+
+    def __init__(self, notifier: BaseNotifier):
+        super().__init__()
+        self._notifier = notifier
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        # Check if this is a BotStoppedSpeakingFrame
+        if isinstance(frame, BotStoppedSpeakingFrame):
+            logger.debug(f"{self}: Host bot stopped speaking, notifying listeners")
+            await self._notifier.notify()
+
+        # Always push the frame through
+        await self.push_frame(frame, direction)
+
+
+class StartFrameGate(FrameProcessor):
+    """A gate that blocks only StartFrame until notified by a notifier.
+
+    Once opened, all frames pass through normally.
+    """
+
+    def __init__(self, notifier: BaseNotifier):
+        super().__init__()
+        self._notifier = notifier
+        self._blocked_start_frame: Optional[Frame] = None
+        self._gate_opened = False
+        self._gate_task: Optional[asyncio.Task] = None
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if self._gate_opened:
+            # Once the gate is open, let everything through
+            await self.push_frame(frame, direction)
+        elif isinstance(frame, StartFrame):
+            # Store the StartFrame and wait for notification
+            logger.debug(f"{self}: Blocking StartFrame until host bot stops speaking")
+            self._blocked_start_frame = frame
+
+            # Start the gate task if not already running
+            if not self._gate_task:
+                self._gate_task = self.create_task(self._wait_for_notification())
+
+    async def _wait_for_notification(self):
+        try:
+            # Wait for the notifier
+            await self._notifier.wait()
+
+            # Gate is now open - only run this code once
+            if not self._gate_opened:
+                self._gate_opened = True
+                logger.debug(f"{self}: Gate opened, passing through blocked StartFrame")
+
+                # Push the blocked StartFrame if we have one
+                if self._blocked_start_frame:
+                    await self.push_frame(self._blocked_start_frame)
+                    self._blocked_start_frame = None
+        except asyncio.CancelledError:
+            logger.debug(f"{self}: Gate task was cancelled")
+            raise
+        except Exception as e:
+            logger.exception(f"{self}: Error in gate task: {e}")
+            raise
+
+
+class GameStateTracker(FrameProcessor):
+    """Tracks game state including new words and score by monitoring host responses."""
+
+    def __init__(self, new_word_notifier: BaseNotifier):
+        super().__init__()
+        self._new_word_notifier = new_word_notifier
+        self._text_buffer = ""
+        self._current_score = 0
+
+        # Words/phrases that indicate a new word being provided
+        self._key_phrases = ["your word is", "new word is", "next word is"]
+
+        # Pattern to extract score from responses
+        self._score_pattern = re.compile(r"that's (\d+) point", re.IGNORECASE)
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        # Collect text from LLMTextFrames
+        if isinstance(frame, LLMTextFrame):
+            text = frame.text
+
+            # Skip responses that are "NO" or "IGNORE"
+            if text.strip() in ["NO", "IGNORE"]:
+                logger.debug(f"Skipping NO/IGNORE response")
+                await self.push_frame(frame, direction)
+                return
+
+            # Add the new text to our buffer
+            self._text_buffer += text
+
+        # Process complete responses when we get an end frame
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            if self._text_buffer:
+                buffer_lower = self._text_buffer.lower()
+
+                # 1. Check for new word announcements
+                new_word_detected = False
+                for phrase in self._key_phrases:
+                    if phrase in buffer_lower:
+                        await self._new_word_notifier.notify()
+                        new_word_detected = True
+                        break
+
+                if not new_word_detected:
+                    logger.debug(f"No new word phrases detected")
+
+                # 2. Check for score updates
+                score_match = self._score_pattern.search(buffer_lower)
+                if score_match:
+                    try:
+                        score = int(score_match.group(1))
+                        # Only update if the new score is higher
+                        if score > self._current_score:
+                            logger.debug(f"Score updated from {self._current_score} to {score}")
+                            self._current_score = score
+                        else:
+                            logger.debug(
+                                f"Ignoring score {score} <= current score {self._current_score}"
+                            )
+                    except ValueError as e:
+                        logger.warning(f"Error parsing score: {e}")
+                else:
+                    logger.debug(f"No score pattern match in: '{buffer_lower}'")
+
+                # Reset the buffer after processing the complete response
+                self._text_buffer = ""
+
+        # Always push the frame through
+        await self.push_frame(frame, direction)
+
+    @property
+    def current_score(self) -> int:
+        """Get the current score."""
+        return self._current_score
+
+
+class GameTimer:
+    """Manages the game timer and triggers end-game events."""
+
+    def __init__(
+        self,
+        task: PipelineTask,
+        game_state_tracker: GameStateTracker,
+        game_duration_seconds: int = 120,
+    ):
+        self._task = task
+        self._game_state_tracker = game_state_tracker
+        self._game_duration = game_duration_seconds
+        self._timer_task = None
+        self._start_time = None
+
+    def start(self):
+        """Start the game timer."""
+        if self._timer_task is None:
+            self._start_time = asyncio.get_event_loop().time()
+            self._timer_task = asyncio.create_task(self._run_timer())
+            logger.info(f"Game timer started: {self._game_duration} seconds")
+
+    def stop(self):
+        """Stop the game timer."""
+        if self._timer_task:
+            self._timer_task.cancel()
+            self._timer_task = None
+            logger.info("Game timer stopped")
+
+    def get_remaining_time(self) -> int:
+        """Get the remaining time in seconds."""
+        if self._start_time is None:
+            return self._game_duration
+
+        elapsed = asyncio.get_event_loop().time() - self._start_time
+        remaining = max(0, self._game_duration - int(elapsed))
+        return remaining
+
+    async def _run_timer(self):
+        """Run the timer and end the game when time is up."""
+        try:
+            # Wait for the game duration
+            await asyncio.sleep(self._game_duration)
+
+            # Game time is up, get the final score
+            final_score = self._game_state_tracker.current_score
+
+            # Create end game message
+            end_message = f"Time's up! Thank you for playing Word Wrangler. Your final score is {final_score} point"
+            if final_score != 1:
+                end_message += "s"
+            end_message += ". Great job!"
+
+            # Send end game message as TTSSpeakFrame
+            logger.info(f"Game over! Final score: {final_score}")
+            await self._task.queue_frames([TTSSpeakFrame(text=end_message)])
+
+            # End the game
+            await self._task.queue_frames([EndFrame()])
+
+        except asyncio.CancelledError:
+            logger.debug("Game timer task cancelled")
+        except Exception as e:
+            logger.exception(f"Error in game timer: {e}")
+
+
+class ResettablePlayerLLM(GeminiMultimodalLiveLLMService):
+    """A specialized LLM service that can reset its context when notified about a new word.
+
+    This LLM intelligently waits for the host to finish speaking before reconnecting.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        system_instruction: str,
+        new_word_notifier: BaseNotifier,
+        host_stopped_speaking_notifier: BaseNotifier,
+        voice_id: str = PLAYER_VOICE_ID,
+        **kwargs,
+    ):
+        super().__init__(
+            api_key=api_key, voice_id=voice_id, system_instruction=system_instruction, **kwargs
+        )
+        self._new_word_notifier = new_word_notifier
+        self._host_stopped_speaking_notifier = host_stopped_speaking_notifier
+        self._base_system_instruction = system_instruction
+        self._reset_task: Optional[asyncio.Task] = None
+        self._pending_reset: bool = False
+
+    async def start(self, frame: StartFrame):
+        await super().start(frame)
+
+        # Start the notifier listener task
+        if not self._reset_task or self._reset_task.done():
+            self._reset_task = self.create_task(self._listen_for_notifications())
+
+    async def stop(self, frame: EndFrame):
+        # Cancel the reset task if it exists
+        if self._reset_task and not self._reset_task.done():
+            await self.cancel_task(self._reset_task)
+            self._reset_task = None
+
+        await super().stop(frame)
+
+    async def cancel(self, frame: CancelFrame):
+        # Cancel the reset task if it exists
+        if self._reset_task and not self._reset_task.done():
+            await self.cancel_task(self._reset_task)
+            self._reset_task = None
+
+        await super().cancel(frame)
+
+    async def _listen_for_notifications(self):
+        """Listen for new word and host stopped speaking notifications."""
+        try:
+            # Create tasks for both notifiers
+            new_word_task = self.create_task(self._listen_for_new_word())
+            host_stopped_task = self.create_task(self._listen_for_host_stopped())
+
+            # Wait for both tasks to complete (which should never happen)
+            await asyncio.gather(new_word_task, host_stopped_task)
+
+        except asyncio.CancelledError:
+            logger.debug(f"{self}: Notification listener tasks cancelled")
+            raise
+        except Exception as e:
+            logger.exception(f"{self}: Error in notification listeners: {e}")
+            raise
+
+    async def _listen_for_new_word(self):
+        """Listen for new word notifications and flag a reset is needed."""
+        while True:
+            # Wait for a new word notification
+            await self._new_word_notifier.wait()
+            logger.info(
+                f"{self}: Received new word notification, disconnecting and waiting for host to finish"
+            )
+
+            # Disconnect immediately to stop processing
+            await self._disconnect()
+
+            # Reset the system instruction
+            self._system_instruction = self._base_system_instruction
+
+            # Flag that we need to reconnect when the host stops speaking
+            self._pending_reset = True
+
+    async def _listen_for_host_stopped(self):
+        """Listen for host stopped speaking and reconnect if a reset is pending."""
+        while True:
+            # Wait for host stopped speaking notification
+            await self._host_stopped_speaking_notifier.wait()
+
+            # If we have a pending reset, reconnect now
+            if self._pending_reset:
+                logger.info(f"{self}: Host finished speaking, completing the LLM reset")
+
+                # Reconnect
+                await self._connect()
+
+                # Reset the flag
+                self._pending_reset = False
+
+                logger.info(f"{self}: LLM reset complete")
+
+
+async def tts_audio_raw_frame_filter(frame: Frame):
+    """Filter to check if the frame is a TTSAudioRawFrame."""
+    return isinstance(frame, TTSAudioRawFrame)
+
+
+# Create a resampler instance once
+resampler = create_default_resampler()
+
+
+async def tts_to_input_audio_transformer(frame: Frame):
+    """Transform TTS audio frames to InputAudioRawFrame with resampling.
+
+    Converts 24kHz TTS output to 16kHz input audio required by the player LLM.
+
+    Args:
+        frame (Frame): The frame to transform (expected to be TTSAudioRawFrame)
+
+    Returns:
+        InputAudioRawFrame: The transformed and resampled input audio frame
+    """
+    if isinstance(frame, TTSAudioRawFrame):
+        # Resample the audio from 24kHz to 16kHz
+        resampled_audio = await resampler.resample(
+            frame.audio,
+            frame.sample_rate,  # Source rate (24kHz)
+            16000,  # Target rate (16kHz)
+        )
+
+        # Create a new InputAudioRawFrame with the resampled audio
+        input_frame = InputAudioRawFrame(
+            audio=resampled_audio,
+            sample_rate=16000,  # New sample rate
+            num_channels=frame.num_channels,
+        )
+        return input_frame
+
+
+async def main(room_url: str, token: str):
+    # Use the provided session logger if available, otherwise use the default logger
+    logger.debug("Starting bot in room: {}", room_url)
+
+    game_words = generate_game_words(NUM_WORDS_PER_GAME)
+    words_string = ", ".join(f'"{word}"' for word in game_words)
+    logger.debug(f"Game words: {words_string}")
+
+    transport = DailyTransport(
+        room_url,
+        token,
+        "Word Wrangler Bot",
+        DailyParams(
+            audio_in_enabled=True,
+            audio_out_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(),
+        ),
+    )
+
+    player_instruction = f"""{game_player_prompt}
+
+Important guidelines:
+1. Your responses will be converted to speech, so keep them concise and conversational.
+2. Don't use special characters or formatting that wouldn't be natural in speech.
+3. Encourage the user to elaborate when appropriate."""
+
+    host_instruction = f"""{game_host_prompt}
+
+GAME WORDS:
+Use ONLY these words for the game (in any order): {words_string}
+
+Important guidelines:
+1. Your responses will be converted to speech, so keep them concise and conversational.
+2. Don't use special characters or formatting that wouldn't be natural in speech.
+3. ONLY use words from the provided list above when giving words to the player."""
+
+    intro_message = """Start with this exact brief introduction: "Welcome to Word Wrangler! I'll give you words to describe, and the A.I. player will try to guess them. Remember, don't say any part of the word itself. Here's your first word: [word]." """
+
+    # Create the STT mute filter if we have strategies to apply
+    stt_mute_filter = STTMuteFilter(
+        config=STTMuteConfig(strategies={STTMuteStrategy.MUTE_UNTIL_FIRST_BOT_COMPLETE})
+    )
+
+    host_llm = GeminiMultimodalLiveLLMService(
+        api_key=os.getenv("GOOGLE_API_KEY"),
+        system_instruction=host_instruction,
+        params=InputParams(modalities=GeminiMultimodalModalities.TEXT),
+    )
+
+    host_tts = GoogleTTSService(
+        voice_id=HOST_VOICE_ID,
+        credentials_path=os.getenv("GOOGLE_TEST_CREDENTIALS_FILE"),
+        text_filters=[HostResponseTextFilter()],
+    )
+
+    producer = ProducerProcessor(
+        filter=tts_audio_raw_frame_filter,
+        transformer=tts_to_input_audio_transformer,
+        passthrough=True,
+    )
+    consumer = ConsumerProcessor(producer=producer)
+
+    # Create the notifiers
+    bot_speaking_notifier = EventNotifier()
+    new_word_notifier = EventNotifier()
+
+    # Create BotStoppedSpeakingNotifier to detect when host bot stops speaking
+    bot_stopped_speaking_detector = BotStoppedSpeakingNotifier(bot_speaking_notifier)
+
+    # Create StartFrameGate to block Player LLM until host has stopped speaking
+    start_frame_gate = StartFrameGate(bot_speaking_notifier)
+
+    # Create GameStateTracker to handle new words and score tracking
+    game_state_tracker = GameStateTracker(new_word_notifier)
+
+    # Create a resettable player LLM that coordinates between notifiers
+    player_llm = ResettablePlayerLLM(
+        api_key=os.getenv("GOOGLE_API_KEY"),
+        system_instruction=player_instruction,
+        new_word_notifier=new_word_notifier,
+        host_stopped_speaking_notifier=bot_speaking_notifier,
+        voice_id=PLAYER_VOICE_ID,
+    )
+
+    # Set up the initial context for the conversation
+    messages = [
+        {
+            "role": "user",
+            "content": intro_message,
+        },
+    ]
+
+    # This sets up the LLM context by providing messages and tools
+    context = OpenAILLMContext(messages)
+    context_aggregator = host_llm.create_context_aggregator(context)
+
+    pipeline = Pipeline(
+        [
+            transport.input(),  # Receive audio/video from Daily call
+            stt_mute_filter,  # Filter out speech during the bot's initial turn
+            ParallelPipeline(
+                # Host branch: manages the game and provides words
+                [
+                    consumer,  # Receives audio from the player branch
+                    host_llm,  # AI host that provides words and tracks score
+                    game_state_tracker,  # Tracks words and score from host responses
+                    host_tts,  # Converts host text to speech
+                    bot_stopped_speaking_detector,  # Notifies when host stops speaking
+                ],
+                # Player branch: guesses words based on human descriptions
+                [
+                    start_frame_gate,  # Gates the player until host finishes intro
+                    player_llm,  # AI player that makes guesses
+                    producer,  # Collects audio frames to be passed to the consumer
+                ],
+            ),
+            transport.output(),  # Send audio/video back to Daily call
+        ]
+    )
+
+    task = PipelineTask(
+        pipeline,
+        params=PipelineParams(
+            enable_metrics=True,
+            enable_usage_metrics=True,
+        ),
+    )
+
+    # Create the game timer
+    game_timer = GameTimer(task, game_state_tracker, game_duration_seconds=GAME_DURATION_SECONDS)
+
+    @transport.event_handler("on_first_participant_joined")
+    async def on_first_participant_joined(transport, participant):
+        logger.info("First participant joined: {}", participant["id"])
+        # Kick off the conversation
+        await task.queue_frames([context_aggregator.user().get_context_frame()])
+        # Start the game timer
+        game_timer.start()
+
+    @transport.event_handler("on_participant_left")
+    async def on_participant_left(transport, participant, reason):
+        logger.info("Participant left: {}", participant)
+        # Stop the timer
+        game_timer.stop()
+        # Cancel the pipeline task
+        await task.cancel()
+
+    runner = PipelineRunner(handle_sigint=False, force_gc=True)
+
+    await runner.run(task)
+
+
+async def bot(args: DailySessionArguments):
+    """Main bot entry point compatible with the FastAPI route handler.
+
+    Args:
+        room_url: The Daily room URL
+        token: The Daily room token
+        body: The configuration object from the request body
+        session_id: The session ID for logging
+    """
+    logger.info(f"Bot process initialized {args.room_url} {args.token}")
+
+    try:
+        await main(args.room_url, args.token)
+        logger.info("Bot process completed")
+    except Exception as e:
+        logger.exception(f"Error in bot process: {str(e)}")
+        raise
+
+
+# Local development functions
+async def local_main():
+    """Function for local development testing."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            (room_url, token) = await configure(session)
+            logger.warning("_")
+            logger.warning("_")
+            logger.warning(f"Talk to your voice agent here: {room_url}")
+            logger.warning("_")
+            logger.warning("_")
+            webbrowser.open(room_url)
+            await main(room_url, token)
+    except Exception as e:
+        logger.exception(f"Error in local development mode: {e}")
+
+
+# Local development entry point
+if LOCAL_RUN and __name__ == "__main__":
+    try:
+        asyncio.run(local_main())
+    except Exception as e:
+        logger.exception(f"Failed to run in local mode: {e}")
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/server/bot_phone_twilio.py
+================================================
+#
+# Copyright (c) 2025, Daily
+#
+# SPDX-License-Identifier: BSD 2-Clause License
+#
+
+"""Word Wrangler: A voice-based word guessing game.
+
+This demo version is intended to be deployed to
+Pipecat Cloud. For more information, visit:
+- Deployment Quickstart: https://docs.pipecat.daily.co/quickstart
+- Build for Twilio: https://docs.pipecat.daily.co/pipecat-in-production/telephony/twilio-mediastreams
+"""
+
+import asyncio
+import json
+import os
+import re
+import sys
+from typing import Any, Mapping, Optional
+
+from dotenv import load_dotenv
+from fastapi import WebSocket
+from loguru import logger
+from pipecat.audio.filters.krisp_filter import KrispFilter
+from pipecat.audio.resamplers.soxr_resampler import SOXRAudioResampler
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.frames.frames import (
+    BotStoppedSpeakingFrame,
+    CancelFrame,
+    EndFrame,
+    Frame,
+    InputAudioRawFrame,
+    LLMFullResponseEndFrame,
+    LLMTextFrame,
+    StartFrame,
+    TTSAudioRawFrame,
+    TTSSpeakFrame,
+)
+from pipecat.pipeline.parallel_pipeline import ParallelPipeline
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.runner import PipelineRunner
+from pipecat.pipeline.task import PipelineParams, PipelineTask
+from pipecat.processors.aggregators.openai_llm_context import (
+    OpenAILLMContext,
+)
+from pipecat.processors.consumer_processor import ConsumerProcessor
+from pipecat.processors.filters.stt_mute_filter import STTMuteConfig, STTMuteFilter, STTMuteStrategy
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.processors.producer_processor import ProducerProcessor
+from pipecat.serializers.twilio import TwilioFrameSerializer
+from pipecat.services.gemini_multimodal_live.gemini import (
+    GeminiMultimodalLiveLLMService,
+    GeminiMultimodalModalities,
+    InputParams,
+)
+from pipecat.services.google.tts import GoogleTTSService
+from pipecat.sync.base_notifier import BaseNotifier
+from pipecat.sync.event_notifier import EventNotifier
+from pipecat.transports.network.fastapi_websocket import (
+    FastAPIWebsocketParams,
+    FastAPIWebsocketTransport,
+)
+from pipecat.utils.text.base_text_filter import BaseTextFilter
+from pipecatcloud import WebSocketSessionArguments
+from word_list import generate_game_words
+
+load_dotenv(override=True)
+
+
+logger.add(sys.stderr, level="DEBUG")
+
+GAME_DURATION_SECONDS = 120
+NUM_WORDS_PER_GAME = 20
+HOST_VOICE_ID = "en-US-Chirp3-HD-Charon"
+PLAYER_VOICE_ID = "Kore"
+
+# Define conversation modes with their respective prompt templates
+game_player_prompt = """You are a player for a game of Word Wrangler.
+
+GAME RULES:
+1. The user will be given a word or phrase that they must describe to you
+2. The user CANNOT say any part of the word/phrase directly
+3. You must try to guess the word/phrase based on the user's description
+4. Once you guess correctly, the user will move on to their next word
+5. The user is trying to get through as many words as possible in 60 seconds
+6. The external application will handle timing and keeping score
+
+YOUR ROLE:
+1. Listen carefully to the user's descriptions
+2. Make intelligent guesses based on what they say
+3. When you think you know the answer, state it clearly: "Is it [your guess]?"
+4. If you're struggling, ask for more specific clues
+5. Keep the game moving quickly - make guesses promptly
+6. Be enthusiastic and encouraging
+
+IMPORTANT:
+- Keep all responses brief - the game is timed!
+- Make multiple guesses if needed
+- Use your common knowledge to make educated guesses
+- If the user indicates you got it right, just say "Got it!" and prepare for the next word
+- If you've made several wrong guesses, simply ask for "Another clue please?"
+
+Start by guessing once you hear the user describe the word or phrase."""
+
+game_host_prompt = """You are the AI host for a game of Word Wrangler. There are two players in the game: the human describer and the AI guesser.
+
+GAME RULES:
+1. You, the host, will give the human describer a word or phrase that they must describe
+2. The describer CANNOT say any part of the word/phrase directly
+3. The AI guesser will try to guess the word/phrase based on the describer's description
+4. Once the guesser guesses correctly, move on to the next word
+5. The describer is trying to get through as many words as possible in 60 seconds
+6. The describer can say "skip" or "pass" to get a new word if they find a word too difficult
+7. The describer can ask you to repeat the current word if they didn't hear it clearly
+8. You'll keep track of the score (1 point for each correct guess)
+9. The external application will handle timing
+
+YOUR ROLE:
+1. Start with this exact brief introduction: "Welcome to Word Wrangler! I'll give you words to describe, and the A.I. player will try to guess them. Remember, don't say any part of the word itself. Here's your first word: [word]."
+2. Provide words to the describer. Choose 1 or 2 word phrases that cover a variety of topics, including animals, objects, places, and actions.
+3. IMPORTANT: You will hear DIFFERENT types of input:
+   a. DESCRIPTIONS from the human (which you should IGNORE)
+   b. AFFIRMATIONS from the human (like "correct", "that's right", "you got it") which you should IGNORE
+   c. GUESSES from the AI player (which will be in the form of "Is it [word]?" or similar question format)
+   d. SKIP REQUESTS from the human (if they say "skip", "pass", or "next word please")
+   e. REPEAT REQUESTS from the human (if they say "repeat", "what was that?", "say again", etc.)
+
+4. HOW TO RESPOND:
+   - If you hear a DESCRIPTION or AFFIRMATION from the human, respond with exactly "IGNORE" (no other text)
+   - If you hear a GUESS (in question form) and it's INCORRECT, respond with exactly "NO" (no other text)
+   - If you hear a GUESS (in question form) and it's CORRECT, respond with "Correct! That's [N] points. Your next word is [new word]" where N is the current score
+   - If you hear a SKIP REQUEST, respond with "The new word is [new word]" (don't change the score)
+   - If you hear a REPEAT REQUEST, respond with "Your word is [current word]" (don't change the score)
+
+5. SCORING:
+   - Start with a score of 0
+   - Add 1 point for each correct guess by the AI player
+   - Do NOT add points for skipped words
+   - Announce the current score after every correct guess
+
+RESPONSE EXAMPLES:
+- Human says: "This is something you use to write" → You respond: "IGNORE"
+- Human says: "That's right!" or "You got it!" → You respond: "IGNORE"
+- Human says: "Wait, what was my word again?" → You respond: "Your word is [current word]"
+- Human says: "Can you repeat that?" → You respond: "Your word is [current word]"
+- AI says: "Is it a pen?" → If correct and it's the first point, you respond: "Correct! That's 1 point. Your next word is [new word]"
+- AI says: "Is it a pencil?" → If correct and it's the third point, you respond: "Correct! That's 3 points. Your next word is [new word]"
+- AI says: "Is it a marker?" → If incorrect, you respond: "NO"
+- Human says: "Skip this one" or "Pass" → You respond: "The new word is [new word]"
+
+IMPORTANT GUIDELINES:
+- Choose words that range from easy to moderately difficult
+- Keep all responses brief - the game is timed!
+- Your "NO" and "IGNORE" responses won't be verbalized, but will be visible in the chat
+- Always keep track of the CURRENT word so you can repeat it when asked
+- Always keep track of the CURRENT SCORE and announce it after every correct guess
+- Make sure your word choices are appropriate for all audiences
+- If the human asks to skip, always provide a new word immediately without changing the score
+- If the human asks you to repeat the word, say ONLY "Your word is [current word]" - don't add additional text
+- CRUCIAL: Never interpret the human saying "correct", "that's right", "good job", or similar affirmations as a correct guess. These are just the human giving feedback to the AI player.
+
+Start with the exact introduction specified above and give the first word."""
+
+
+class HostResponseTextFilter(BaseTextFilter):
+    """Custom text filter for Word Wrangler game.
+
+    This filter removes "NO" and "IGNORE" responses from the host so they don't get verbalized,
+    allowing for silent incorrect guess handling and ignoring descriptions.
+    """
+
+    def __init__(self):
+        self._interrupted = False
+
+    def update_settings(self, settings: Mapping[str, Any]):
+        # No settings to update for this filter
+        pass
+
+    async def filter(self, text: str) -> str:
+        # Remove case and whitespace for comparison
+        clean_text = text.strip().upper()
+
+        # If the text is exactly "NO" or "IGNORE", return empty string
+        if clean_text == "NO" or clean_text == "IGNORE":
+            return ""
+
+        return text
+
+    async def handle_interruption(self):
+        self._interrupted = True
+
+    async def reset_interruption(self):
+        self._interrupted = False
+
+
+class BotStoppedSpeakingNotifier(FrameProcessor):
+    """A processor that notifies whenever a BotStoppedSpeakingFrame is detected."""
+
+    def __init__(self, notifier: BaseNotifier):
+        super().__init__()
+        self._notifier = notifier
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        # Check if this is a BotStoppedSpeakingFrame
+        if isinstance(frame, BotStoppedSpeakingFrame):
+            logger.debug(f"{self}: Host bot stopped speaking, notifying listeners")
+            await self._notifier.notify()
+
+        # Always push the frame through
+        await self.push_frame(frame, direction)
+
+
+class StartFrameGate(FrameProcessor):
+    """A gate that blocks only StartFrame until notified by a notifier.
+
+    Once opened, all frames pass through normally.
+    """
+
+    def __init__(self, notifier: BaseNotifier):
+        super().__init__()
+        self._notifier = notifier
+        self._blocked_start_frame: Optional[Frame] = None
+        self._gate_opened = False
+        self._gate_task: Optional[asyncio.Task] = None
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        if self._gate_opened:
+            # Once the gate is open, let everything through
+            await self.push_frame(frame, direction)
+        elif isinstance(frame, StartFrame):
+            # Store the StartFrame and wait for notification
+            logger.debug(f"{self}: Blocking StartFrame until host bot stops speaking")
+            self._blocked_start_frame = frame
+
+            # Start the gate task if not already running
+            if not self._gate_task:
+                self._gate_task = self.create_task(self._wait_for_notification())
+
+    async def _wait_for_notification(self):
+        try:
+            # Wait for the notifier
+            await self._notifier.wait()
+
+            # Gate is now open - only run this code once
+            if not self._gate_opened:
+                self._gate_opened = True
+                logger.debug(f"{self}: Gate opened, passing through blocked StartFrame")
+
+                # Push the blocked StartFrame if we have one
+                if self._blocked_start_frame:
+                    await self.push_frame(self._blocked_start_frame)
+                    self._blocked_start_frame = None
+        except asyncio.CancelledError:
+            logger.debug(f"{self}: Gate task was cancelled")
+            raise
+        except Exception as e:
+            logger.exception(f"{self}: Error in gate task: {e}")
+            raise
+
+
+class GameStateTracker(FrameProcessor):
+    """Tracks game state including new words and score by monitoring host responses.
+
+    This processor aggregates streamed text from the host LLM to detect:
+    1. New word announcements (triggering player LLM resets)
+    2. Score updates (to track the current score)
+    """
+
+    def __init__(self, new_word_notifier: BaseNotifier):
+        super().__init__()
+        self._new_word_notifier = new_word_notifier
+        self._text_buffer = ""
+        self._current_score = 0
+
+        # Words/phrases that indicate a new word being provided
+        self._key_phrases = ["your word is", "new word is", "next word is"]
+
+        # Pattern to extract score from responses
+        self._score_pattern = re.compile(r"that's (\d+) point", re.IGNORECASE)
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+
+        # Collect text from LLMTextFrames
+        if isinstance(frame, LLMTextFrame):
+            text = frame.text
+
+            # Skip responses that are "NO" or "IGNORE"
+            if text.strip() in ["NO", "IGNORE"]:
+                logger.debug(f"Skipping NO/IGNORE response")
+                await self.push_frame(frame, direction)
+                return
+
+            # Add the new text to our buffer
+            self._text_buffer += text
+
+        # Process complete responses when we get an end frame
+        elif isinstance(frame, LLMFullResponseEndFrame):
+            if self._text_buffer:
+                buffer_lower = self._text_buffer.lower()
+
+                # 1. Check for new word announcements
+                new_word_detected = False
+                for phrase in self._key_phrases:
+                    if phrase in buffer_lower:
+                        await self._new_word_notifier.notify()
+                        new_word_detected = True
+                        break
+
+                if not new_word_detected:
+                    logger.debug(f"No new word phrases detected")
+
+                # 2. Check for score updates
+                score_match = self._score_pattern.search(buffer_lower)
+                if score_match:
+                    try:
+                        score = int(score_match.group(1))
+                        # Only update if the new score is higher
+                        if score > self._current_score:
+                            logger.debug(f"Score updated from {self._current_score} to {score}")
+                            self._current_score = score
+                        else:
+                            logger.debug(
+                                f"Ignoring score {score} <= current score {self._current_score}"
+                            )
+                    except ValueError as e:
+                        logger.warning(f"Error parsing score: {e}")
+                else:
+                    logger.debug(f"No score pattern match in: '{buffer_lower}'")
+
+                # Reset the buffer after processing the complete response
+                self._text_buffer = ""
+
+        # Always push the frame through
+        await self.push_frame(frame, direction)
+
+    @property
+    def current_score(self) -> int:
+        """Get the current score."""
+        return self._current_score
+
+
+class GameTimer:
+    """Manages the game timer and triggers end-game events."""
+
+    def __init__(
+        self,
+        task: PipelineTask,
+        game_state_tracker: GameStateTracker,
+        game_duration_seconds: int = 120,
+    ):
+        self._task = task
+        self._game_state_tracker = game_state_tracker
+        self._game_duration = game_duration_seconds
+        self._timer_task = None
+        self._start_time = None
+
+    def start(self):
+        """Start the game timer."""
+        if self._timer_task is None:
+            self._start_time = asyncio.get_event_loop().time()
+            self._timer_task = asyncio.create_task(self._run_timer())
+            logger.info(f"Game timer started: {self._game_duration} seconds")
+
+    def stop(self):
+        """Stop the game timer."""
+        if self._timer_task:
+            self._timer_task.cancel()
+            self._timer_task = None
+            logger.info("Game timer stopped")
+
+    def get_remaining_time(self) -> int:
+        """Get the remaining time in seconds."""
+        if self._start_time is None:
+            return self._game_duration
+
+        elapsed = asyncio.get_event_loop().time() - self._start_time
+        remaining = max(0, self._game_duration - int(elapsed))
+        return remaining
+
+    async def _run_timer(self):
+        """Run the timer and end the game when time is up."""
+        try:
+            # Wait for the game duration
+            await asyncio.sleep(self._game_duration)
+
+            # Game time is up, get the final score
+            final_score = self._game_state_tracker.current_score
+
+            # Create end game message
+            end_message = f"Time's up! Thank you for playing Word Wrangler. Your final score is {final_score} point"
+            if final_score != 1:
+                end_message += "s"
+            end_message += ". Great job!"
+
+            # Send end game message as TTSSpeakFrame
+            logger.info(f"Game over! Final score: {final_score}")
+            await self._task.queue_frames([TTSSpeakFrame(text=end_message)])
+
+            # End the game
+            await self._task.queue_frames([EndFrame()])
+
+        except asyncio.CancelledError:
+            logger.debug("Game timer task cancelled")
+        except Exception as e:
+            logger.exception(f"Error in game timer: {e}")
+
+
+class ResettablePlayerLLM(GeminiMultimodalLiveLLMService):
+    """A specialized LLM service that can reset its context when notified about a new word.
+
+    This LLM intelligently waits for the host to finish speaking before reconnecting.
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        system_instruction: str,
+        new_word_notifier: BaseNotifier,
+        host_stopped_speaking_notifier: BaseNotifier,
+        voice_id: str = PLAYER_VOICE_ID,
+        **kwargs,
+    ):
+        super().__init__(
+            api_key=api_key, voice_id=voice_id, system_instruction=system_instruction, **kwargs
+        )
+        self._new_word_notifier = new_word_notifier
+        self._host_stopped_speaking_notifier = host_stopped_speaking_notifier
+        self._base_system_instruction = system_instruction
+        self._reset_task: Optional[asyncio.Task] = None
+        self._pending_reset: bool = False
+
+    async def start(self, frame: StartFrame):
+        await super().start(frame)
+
+        # Start the notifier listener task
+        if not self._reset_task or self._reset_task.done():
+            self._reset_task = self.create_task(self._listen_for_notifications())
+
+    async def stop(self, frame: EndFrame):
+        # Cancel the reset task if it exists
+        if self._reset_task and not self._reset_task.done():
+            await self.cancel_task(self._reset_task)
+            self._reset_task = None
+
+        await super().stop(frame)
+
+    async def cancel(self, frame: CancelFrame):
+        # Cancel the reset task if it exists
+        if self._reset_task and not self._reset_task.done():
+            await self.cancel_task(self._reset_task)
+            self._reset_task = None
+
+        await super().cancel(frame)
+
+    async def _listen_for_notifications(self):
+        """Listen for new word and host stopped speaking notifications."""
+        try:
+            # Create tasks for both notifiers
+            new_word_task = self.create_task(self._listen_for_new_word())
+            host_stopped_task = self.create_task(self._listen_for_host_stopped())
+
+            # Wait for both tasks to complete (which should never happen)
+            await asyncio.gather(new_word_task, host_stopped_task)
+
+        except asyncio.CancelledError:
+            logger.debug(f"{self}: Notification listener tasks cancelled")
+            raise
+        except Exception as e:
+            logger.exception(f"{self}: Error in notification listeners: {e}")
+            raise
+
+    async def _listen_for_new_word(self):
+        """Listen for new word notifications and flag a reset is needed."""
+        while True:
+            # Wait for a new word notification
+            await self._new_word_notifier.wait()
+            logger.info(
+                f"{self}: Received new word notification, disconnecting and waiting for host to finish"
+            )
+
+            # Disconnect immediately to stop processing
+            await self._disconnect()
+
+            # Reset the system instruction
+            self._system_instruction = self._base_system_instruction
+
+            # Flag that we need to reconnect when the host stops speaking
+            self._pending_reset = True
+
+    async def _listen_for_host_stopped(self):
+        """Listen for host stopped speaking and reconnect if a reset is pending."""
+        while True:
+            # Wait for host stopped speaking notification
+            await self._host_stopped_speaking_notifier.wait()
+
+            # If we have a pending reset, reconnect now
+            if self._pending_reset:
+                logger.info(f"{self}: Host finished speaking, completing the LLM reset")
+
+                # Reconnect
+                await self._connect()
+
+                # Reset the flag
+                self._pending_reset = False
+
+                logger.info(f"{self}: LLM reset complete")
+
+
+async def tts_audio_raw_frame_filter(frame: Frame):
+    """Filter to check if the frame is a TTSAudioRawFrame."""
+    return isinstance(frame, TTSAudioRawFrame)
+
+
+# Create a resampler instance once
+resampler = SOXRAudioResampler()
+
+
+async def tts_to_input_audio_transformer(frame: Frame):
+    """Transform TTS audio frames to InputAudioRawFrame with resampling.
+
+    Converts 24kHz TTS output to 16kHz input audio required by the player LLM.
+
+    Args:
+        frame (Frame): The frame to transform (expected to be TTSAudioRawFrame)
+
+    Returns:
+        InputAudioRawFrame: The transformed and resampled input audio frame
+    """
+    if isinstance(frame, TTSAudioRawFrame):
+        # Resample the audio from 24kHz to 16kHz
+        resampled_audio = await resampler.resample(
+            frame.audio,
+            frame.sample_rate,  # Source rate (24kHz)
+            16000,  # Target rate (16kHz)
+        )
+
+        # Create a new InputAudioRawFrame with the resampled audio
+        input_frame = InputAudioRawFrame(
+            audio=resampled_audio,
+            sample_rate=16000,  # New sample rate
+            num_channels=frame.num_channels,
+        )
+        return input_frame
+
+
+async def main(ws: WebSocket):
+    logger.debug("Starting WebSocket bot")
+
+    game_words = generate_game_words(NUM_WORDS_PER_GAME)
+    words_string = ", ".join(f'"{word}"' for word in game_words)
+    logger.debug(f"Game words: {words_string}")
+
+    # Read initial WebSocket messages
+    start_data = ws.iter_text()
+    await start_data.__anext__()
+
+    # Second message contains the call details
+    call_data = json.loads(await start_data.__anext__())
+
+    # Extract both StreamSid and CallSid
+    stream_sid = call_data["start"]["streamSid"]
+    call_sid = call_data["start"]["callSid"]
+
+    logger.info(f"Connected to Twilio call: CallSid={call_sid}, StreamSid={stream_sid}")
+
+    # Create serializer with both IDs and auto_hang_up enabled
+    serializer = TwilioFrameSerializer(
+        stream_sid=stream_sid,
+        call_sid=call_sid,
+        account_sid=os.getenv("TWILIO_ACCOUNT_SID"),
+        auth_token=os.getenv("TWILIO_AUTH_TOKEN"),
+    )
+
+    transport = FastAPIWebsocketTransport(
+        websocket=ws,
+        params=FastAPIWebsocketParams(
+            audio_in_enabled=True,
+            audio_in_filter=KrispFilter(),
+            audio_out_enabled=True,
+            add_wav_header=False,
+            vad_analyzer=SileroVADAnalyzer(),
+            serializer=serializer,
+        ),
+    )
+
+    player_instruction = f"""{game_player_prompt}
+
+Important guidelines:
+1. Your responses will be converted to speech, so keep them concise and conversational.
+2. Don't use special characters or formatting that wouldn't be natural in speech.
+3. Encourage the user to elaborate when appropriate."""
+
+    host_instruction = f"""{game_host_prompt}
+
+GAME WORDS:
+Use ONLY these words for the game (in any order): {words_string}
+
+Important guidelines:
+1. Your responses will be converted to speech, so keep them concise and conversational.
+2. Don't use special characters or formatting that wouldn't be natural in speech.
+3. ONLY use words from the provided list above when giving words to the player."""
+
+    intro_message = """Start with this exact brief introduction: "Welcome to Word Wrangler! I'll give you words to describe, and the A.I. player will try to guess them. Remember, don't say any part of the word itself. Here's your first word: [word]." """
+
+    # Create the STT mute filter if we have strategies to apply
+    stt_mute_filter = STTMuteFilter(
+        config=STTMuteConfig(strategies={STTMuteStrategy.MUTE_UNTIL_FIRST_BOT_COMPLETE})
+    )
+
+    host_llm = GeminiMultimodalLiveLLMService(
+        api_key=os.getenv("GOOGLE_API_KEY"),
+        system_instruction=host_instruction,
+        params=InputParams(modalities=GeminiMultimodalModalities.TEXT),
+    )
+
+    host_tts = GoogleTTSService(
+        voice_id=HOST_VOICE_ID,
+        credentials_path=os.getenv("GOOGLE_TEST_CREDENTIALS_FILE"),
+        text_filters=[HostResponseTextFilter()],
+    )
+
+    producer = ProducerProcessor(
+        filter=tts_audio_raw_frame_filter,
+        transformer=tts_to_input_audio_transformer,
+        passthrough=True,
+    )
+    consumer = ConsumerProcessor(producer=producer)
+
+    # Create the notifiers
+    bot_speaking_notifier = EventNotifier()
+    new_word_notifier = EventNotifier()
+
+    # Create BotStoppedSpeakingNotifier to detect when host bot stops speaking
+    bot_stopped_speaking_detector = BotStoppedSpeakingNotifier(bot_speaking_notifier)
+
+    # Create StartFrameGate to block Player LLM until host has stopped speaking
+    start_frame_gate = StartFrameGate(bot_speaking_notifier)
+
+    # Create GameStateTracker to handle new words and score tracking
+    game_state_tracker = GameStateTracker(new_word_notifier)
+
+    # Create a resettable player LLM that coordinates between notifiers
+    player_llm = ResettablePlayerLLM(
+        api_key=os.getenv("GOOGLE_API_KEY"),
+        system_instruction=player_instruction,
+        new_word_notifier=new_word_notifier,
+        host_stopped_speaking_notifier=bot_speaking_notifier,
+        voice_id=PLAYER_VOICE_ID,
+    )
+
+    # Set up the initial context for the conversation
+    messages = [
+        {
+            "role": "user",
+            "content": intro_message,
+        },
+    ]
+
+    # This sets up the LLM context by providing messages and tools
+    context = OpenAILLMContext(messages)
+    context_aggregator = host_llm.create_context_aggregator(context)
+
+    pipeline = Pipeline(
+        [
+            transport.input(),  # Receive audio/video from Daily call
+            stt_mute_filter,  # Filter out speech during the bot's initial turn
+            ParallelPipeline(
+                # Host branch: manages the game and provides words
+                [
+                    consumer,  # Receives audio from the player branch
+                    host_llm,  # AI host that provides words and tracks score
+                    game_state_tracker,  # Tracks words and score from host responses
+                    host_tts,  # Converts host text to speech
+                    bot_stopped_speaking_detector,  # Notifies when host stops speaking
+                ],
+                # Player branch: guesses words based on human descriptions
+                [
+                    start_frame_gate,  # Gates the player until host finishes intro
+                    player_llm,  # AI player that makes guesses
+                    producer,  # Collects audio frames to be passed to the consumer
+                ],
+            ),
+            transport.output(),  # Send audio/video back to Daily call
+        ]
+    )
+
+    task = PipelineTask(
+        pipeline,
+        params=PipelineParams(
+            audio_out_sample_rate=8000,
+            enable_metrics=True,
+            enable_usage_metrics=True,
+        ),
+    )
+
+    # Create the game timer
+    game_timer = GameTimer(task, game_state_tracker, game_duration_seconds=GAME_DURATION_SECONDS)
+
+    @transport.event_handler("on_client_connected")
+    async def on_client_connected(transport, client):
+        logger.info(f"Client connected: {client}")
+        # Kick off the conversation
+        await task.queue_frames([context_aggregator.user().get_context_frame()])
+        # Start the game timer
+        game_timer.start()
+
+    @transport.event_handler("on_client_disconnected")
+    async def on_client_disconnected(transport, client):
+        logger.info(f"Client disconnected: {client}")
+        # Stop the timer
+        game_timer.stop()
+        # Cancel the pipeline task
+        await task.cancel()
+
+    runner = PipelineRunner(handle_sigint=False, force_gc=True)
+
+    await runner.run(task)
+
+
+async def bot(args: WebSocketSessionArguments):
+    """Main bot entry point for WebSocket connections.
+
+    Args:
+        ws: The WebSocket connection
+        session_logger: The session-specific logger
+    """
+    logger.info("WebSocket bot process initialized")
+
+    try:
+        await main(args.websocket)
+        logger.info("WebSocket bot process completed")
+    except Exception as e:
+        logger.exception(f"Error in WebSocket bot process: {str(e)}")
+        raise
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/server/Dockerfile
+================================================
+FROM dailyco/pipecat-base:latest
+
+COPY ./requirements.txt requirements.txt
+
+RUN pip install --no-cache-dir --upgrade -r requirements.txt
+
+COPY ./bot.py bot.py
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/server/env.example
+================================================
+DAILY_API_KEY=
+DAILY_API_URL=https://api.daily.co/v1/
+DAILY_SAMPLE_ROOM_URL=
+GOOGLE_API_KEY=
+GOOGLE_TEST_CREDENTIALS_FILE=
+
+
+================================================
+FILE: word-wrangler-gemini-live/server/requirements.txt
+================================================
+pipecatcloud
+pipecat-ai[daily,google,silero]
+fastapi
+uvicorn
+python-dotenv
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/server/runner.py
+================================================
+#
+# Copyright (c) 2024–2025, Daily
+#
+# SPDX-License-Identifier: BSD 2-Clause License
+#
+
+import argparse
+import os
+
+import aiohttp
+from pipecat.transports.services.helpers.daily_rest import DailyRESTHelper
+
+
+async def configure(aiohttp_session: aiohttp.ClientSession):
+    """Configure the Daily room and Daily REST helper."""
+    parser = argparse.ArgumentParser(description="Daily AI SDK Bot Sample")
+    parser.add_argument(
+        "-u", "--url", type=str, required=False, help="URL of the Daily room to join"
+    )
+    parser.add_argument(
+        "-k",
+        "--apikey",
+        type=str,
+        required=False,
+        help="Daily API Key (needed to create an owner token for the room)",
+    )
+
+    args, unknown = parser.parse_known_args()
+
+    url = args.url or os.getenv("DAILY_SAMPLE_ROOM_URL")
+    key = args.apikey or os.getenv("DAILY_API_KEY")
+
+    if not url:
+        raise Exception(
+            "No Daily room specified. use the -u/--url option from the command line, or set DAILY_SAMPLE_ROOM_URL in your environment to specify a Daily room URL."
+        )
+
+    if not key:
+        raise Exception(
+            "No Daily API key specified. use the -k/--apikey option from the command line, or set DAILY_API_KEY in your environment to specify a Daily API key, available from https://dashboard.daily.co/developers."
+        )
+
+    daily_rest_helper = DailyRESTHelper(
+        daily_api_key=key,
+        daily_api_url=os.getenv("DAILY_API_URL", "https://api.daily.co/v1"),
+        aiohttp_session=aiohttp_session,
+    )
+
+    # Create a meeting token for the given room with an expiration 1 hour in
+    # the future.
+    expiry_time: float = 60 * 60
+
+    token = await daily_rest_helper.get_token(url, expiry_time)
+
+    return (url, token)
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/server/server.py
+================================================
+#
+# Copyright (c) 2024–2025, Daily
+#
+# SPDX-License-Identifier: BSD 2-Clause License
+#
+
+"""RTVI Bot Server Implementation.
+
+This FastAPI server manages RTVI bot instances and provides endpoints for both
+direct browser access and RTVI client connections. It handles:
+- Creating Daily rooms
+- Managing bot processes
+- Providing connection credentials
+- Monitoring bot status
+
+Requirements:
+- Daily API key (set in .env file)
+- Python 3.10+
+- FastAPI
+- Running bot implementation
+"""
+
+import argparse
+import os
+import subprocess
+from contextlib import asynccontextmanager
+from typing import Any, Dict
+
+import aiohttp
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse
+from pipecat.transports.services.helpers.daily_rest import DailyRESTHelper, DailyRoomParams
+
+# Load environment variables from .env file
+load_dotenv(override=True)
+
+# Maximum number of bot instances allowed per room
+MAX_BOTS_PER_ROOM = 1
+
+# Dictionary to track bot processes: {pid: (process, room_url)}
+bot_procs = {}
+
+# Store Daily API helpers
+daily_helpers = {}
+
+
+def cleanup():
+    """Cleanup function to terminate all bot processes.
+
+    Called during server shutdown.
+    """
+    for entry in bot_procs.values():
+        proc = entry[0]
+        proc.terminate()
+        proc.wait()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI lifespan manager that handles startup and shutdown tasks.
+
+    - Creates aiohttp session
+    - Initializes Daily API helper
+    - Cleans up resources on shutdown
+    """
+    aiohttp_session = aiohttp.ClientSession()
+    daily_helpers["rest"] = DailyRESTHelper(
+        daily_api_key=os.getenv("DAILY_API_KEY", ""),
+        daily_api_url=os.getenv("DAILY_API_URL", "https://api.daily.co/v1"),
+        aiohttp_session=aiohttp_session,
+    )
+    yield
+    await aiohttp_session.close()
+    cleanup()
+
+
+# Initialize FastAPI app with lifespan manager
+app = FastAPI(lifespan=lifespan)
+
+# Configure CORS to allow requests from any origin
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+async def create_room_and_token() -> tuple[str, str]:
+    """Helper function to create a Daily room and generate an access token.
+
+    Returns:
+        tuple[str, str]: A tuple containing (room_url, token)
+
+    Raises:
+        HTTPException: If room creation or token generation fails
+    """
+    room = await daily_helpers["rest"].create_room(DailyRoomParams())
+    if not room.url:
+        raise HTTPException(status_code=500, detail="Failed to create room")
+
+    token = await daily_helpers["rest"].get_token(room.url)
+    if not token:
+        raise HTTPException(status_code=500, detail=f"Failed to get token for room: {room.url}")
+
+    return room.url, token
+
+
+@app.get("/")
+async def start_agent(request: Request):
+    """Endpoint for direct browser access to the bot.
+
+    Creates a room, starts a bot instance, and redirects to the Daily room URL.
+
+    Returns:
+        RedirectResponse: Redirects to the Daily room URL
+
+    Raises:
+        HTTPException: If room creation, token generation, or bot startup fails
+    """
+    print("Creating room")
+    room_url, token = await create_room_and_token()
+    print(f"Room URL: {room_url}")
+
+    # Check if there is already an existing process running in this room
+    num_bots_in_room = sum(
+        1 for proc in bot_procs.values() if proc[1] == room_url and proc[0].poll() is None
+    )
+    if num_bots_in_room >= MAX_BOTS_PER_ROOM:
+        raise HTTPException(status_code=500, detail=f"Max bot limit reached for room: {room_url}")
+
+    # Spawn a new bot process
+    try:
+        proc = subprocess.Popen(
+            [f"python3 bot.py -u {room_url} -t {token}"],
+            shell=True,
+            bufsize=1,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+        bot_procs[proc.pid] = (proc, room_url)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start subprocess: {e}")
+
+    return RedirectResponse(room_url)
+
+
+@app.post("/connect")
+async def rtvi_connect(request: Request) -> Dict[Any, Any]:
+    """RTVI connect endpoint that creates a room and returns connection credentials.
+
+    This endpoint is called by RTVI clients to establish a connection.
+
+    Returns:
+        Dict[Any, Any]: Authentication bundle containing room_url and token
+
+    Raises:
+        HTTPException: If room creation, token generation, or bot startup fails
+    """
+    body = await request.json()
+    print("Creating room for RTVI connection", body)
+    room_url, token = await create_room_and_token()
+    print(f"Room URL: {room_url}")
+
+    # Start the bot process
+    try:
+        proc = subprocess.Popen(
+            [f"python3 -m bot -u {room_url} -t {token} -p {body.get('personality', 'witty')}"],
+            shell=True,
+            bufsize=1,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+        bot_procs[proc.pid] = (proc, room_url)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start subprocess: {e}")
+
+    # Return the authentication bundle in format expected by DailyTransport
+    return {"room_url": room_url, "token": token}
+
+
+@app.get("/status/{pid}")
+def get_status(pid: int):
+    """Get the status of a specific bot process.
+
+    Args:
+        pid (int): Process ID of the bot
+
+    Returns:
+        JSONResponse: Status information for the bot
+
+    Raises:
+        HTTPException: If the specified bot process is not found
+    """
+    # Look up the subprocess
+    proc = bot_procs.get(pid)
+
+    # If the subprocess doesn't exist, return an error
+    if not proc:
+        raise HTTPException(status_code=404, detail=f"Bot with process id: {pid} not found")
+
+    # Check the status of the subprocess
+    status = "running" if proc[0].poll() is None else "finished"
+    return JSONResponse({"bot_id": pid, "status": status})
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    # Parse command line arguments for server configuration
+    default_host = os.getenv("HOST", "0.0.0.0")
+    default_port = int(os.getenv("FAST_API_PORT", "7860"))
+
+    parser = argparse.ArgumentParser(description="Daily Storyteller FastAPI server")
+    parser.add_argument("--host", type=str, default=default_host, help="Host address")
+    parser.add_argument("--port", type=int, default=default_port, help="Port number")
+    parser.add_argument("--reload", action="store_true", help="Reload code on change")
+
+    config = parser.parse_args()
+
+    # Start the FastAPI server
+    uvicorn.run(
+        "server:app",
+        host=config.host,
+        port=config.port,
+        reload=config.reload,
+    )
+
+
+
+================================================
+FILE: word-wrangler-gemini-live/server/word_list.py
+================================================
+import random
+
+# Define categories and words for the Word Wrangler game
+WORD_CATEGORIES = {
+    "animals": [
+        "elephant",
+        "penguin",
+        "giraffe",
+        "dolphin",
+        "kangaroo",
+        "octopus",
+        "panda",
+        "tiger",
+        "koala",
+        "flamingo",
+        "hedgehog",
+        "turtle",
+        "zebra",
+        "eagle",
+        "sloth",
+        "raccoon",
+        "chameleon",
+        "squirrel",
+        "hamster",
+        "cheetah",
+        "platypus",
+        "jellyfish",
+        "parrot",
+        "wolf",
+        "hippo",
+        "porcupine",
+        "ostrich",
+        "peacock",
+        "alligator",
+        "gorilla",
+        "armadillo",
+        "chipmunk",
+        "walrus",
+        "weasel",
+        "skunk",
+        "llama",
+        "badger",
+        "mongoose",
+        "lemur",
+        "otter",
+        "bison",
+        "falcon",
+        "meerkat",
+        "pelican",
+        "cobra",
+        "salamander",
+        "lobster",
+        "seal",
+        "narwhal",
+        "iguana",
+        "piranha",
+        "toucan",
+        "moose",
+        "lynx",
+        "stingray",
+        "starfish",
+        "beaver",
+        "vulture",
+        "antelope",
+        "jaguar",
+        "seahorse",
+    ],
+    "food": [
+        "pizza",
+        "sushi",
+        "burrito",
+        "pancake",
+        "donut",
+        "lasagna",
+        "popcorn",
+        "chocolate",
+        "mango",
+        "pretzel",
+        "taco",
+        "waffle",
+        "cupcake",
+        "avocado",
+        "cookie",
+        "croissant",
+        "omelette",
+        "cheesecake",
+        "dumpling",
+        "hummus",
+        "gelato",
+        "risotto",
+        "ramen",
+        "salsa",
+        "kebab",
+        "brownie",
+        "guacamole",
+        "bagel",
+        "falafel",
+        "biscuit",
+        "churro",
+        "meatball",
+        "tiramisu",
+        "enchilada",
+        "couscous",
+        "gumbo",
+        "jambalaya",
+        "baklava",
+        "popsicle",
+        "cannoli",
+        "tofu",
+        "macaron",
+        "empanada",
+        "pho",
+        "casserole",
+        "porridge",
+        "granola",
+        "fritter",
+        "hazelnut",
+        "kiwi",
+        "pomegranate",
+        "artichoke",
+        "edamame",
+        "zucchini",
+        "cashew",
+        "brisket",
+        "custard",
+        "nutmeg",
+        "ginger",
+    ],
+    "household": [
+        "chair",
+        "pillow",
+        "mirror",
+        "blanket",
+        "lamp",
+        "curtain",
+        "sofa",
+        "refrigerator",
+        "blender",
+        "bookshelf",
+        "dishwasher",
+        "carpet",
+        "microwave",
+        "table",
+        "clock",
+        "vase",
+        "ottoman",
+        "candle",
+        "drawer",
+        "cabinet",
+        "doorknob",
+        "silverware",
+        "bathtub",
+        "plunger",
+        "toaster",
+        "kettle",
+        "spatula",
+        "doormat",
+        "hanger",
+        "blinds",
+        "ladle",
+        "platter",
+        "coaster",
+        "napkin",
+        "sponge",
+        "thermostat",
+        "showerhead",
+        "coatrack",
+        "nightstand",
+        "cushion",
+        "windowsill",
+        "bedsheet",
+        "countertop",
+        "dustpan",
+        "footstool",
+        "flowerpot",
+        "trashcan",
+        "colander",
+        "detergent",
+        "chandelier",
+        "laundry",
+        "vacuum",
+        "teapot",
+        "duster",
+        "lightbulb",
+        "corkscrew",
+        "paperweight",
+        "doorstop",
+        "radiator",
+    ],
+    "activities": [
+        "swimming",
+        "painting",
+        "dancing",
+        "gardening",
+        "skiing",
+        "cooking",
+        "hiking",
+        "reading",
+        "yoga",
+        "fishing",
+        "jogging",
+        "biking",
+        "baking",
+        "singing",
+        "camping",
+        "knitting",
+        "surfing",
+        "photography",
+        "bowling",
+        "archery",
+        "horseback",
+        "meditation",
+        "gymnastics",
+        "volleyball",
+        "tennis",
+        "skating",
+        "kayaking",
+        "climbing",
+        "juggling",
+        "rowing",
+        "snorkeling",
+        "embroidery",
+        "canoeing",
+        "paddleboarding",
+        "pottery",
+        "birdwatching",
+        "karaoke",
+        "sailing",
+        "pilates",
+        "calligraphy",
+        "skateboarding",
+        "crossword",
+        "origami",
+        "beekeeping",
+        "stargazing",
+        "snowboarding",
+        "woodworking",
+        "fencing",
+        "quilting",
+        "foraging",
+        "geocaching",
+        "scrapbooking",
+        "welding",
+        "glassblowing",
+        "whittling",
+        "ziplining",
+    ],
+    "places": [
+        "beach",
+        "library",
+        "mountain",
+        "airport",
+        "stadium",
+        "museum",
+        "hospital",
+        "castle",
+        "garden",
+        "hotel",
+        "island",
+        "desert",
+        "university",
+        "restaurant",
+        "forest",
+        "aquarium",
+        "theater",
+        "canyon",
+        "lighthouse",
+        "waterfall",
+        "vineyard",
+        "cathedral",
+        "rainforest",
+        "farmhouse",
+        "greenhouse",
+        "observatory",
+        "marketplace",
+        "boardwalk",
+        "temple",
+        "courtyard",
+        "plantation",
+        "lagoon",
+        "volcano",
+        "meadow",
+        "oasis",
+        "grotto",
+        "peninsula",
+        "aviary",
+        "chapel",
+        "coliseum",
+        "bazaar",
+        "marina",
+        "orchard",
+        "brewery",
+        "sanctuary",
+        "fortress",
+        "prairie",
+        "reservation",
+        "tavern",
+        "monument",
+        "manor",
+        "pavilion",
+        "boulevard",
+        "campground",
+    ],
+    "objects": [
+        "umbrella",
+        "scissors",
+        "camera",
+        "wallet",
+        "bicycle",
+        "backpack",
+        "telescope",
+        "balloon",
+        "compass",
+        "notebook",
+        "keyboard",
+        "magnet",
+        "headphones",
+        "hammer",
+        "envelope",
+        "binoculars",
+        "tambourine",
+        "boomerang",
+        "megaphone",
+        "suitcase",
+        "pinwheel",
+        "kaleidoscope",
+        "microscope",
+        "hourglass",
+        "harmonica",
+        "trampoline",
+        "bubblegum",
+        "xylophone",
+        "typewriter",
+        "screwdriver",
+        "whistle",
+        "chessboard",
+        "handcuffs",
+        "stethoscope",
+        "stopwatch",
+        "parachute",
+        "blowtorch",
+        "calculator",
+        "thermometer",
+        "mousetrap",
+        "crowbar",
+        "paintbrush",
+        "metronome",
+        "surfboard",
+        "flipchart",
+        "dartboard",
+        "wrench",
+        "flippers",
+        "thimble",
+        "protractor",
+        "snorkel",
+        "doorbell",
+        "flashlight",
+        "pendulum",
+        "abacus",
+    ],
+    "jobs": [
+        "teacher",
+        "doctor",
+        "chef",
+        "firefighter",
+        "pilot",
+        "astronaut",
+        "carpenter",
+        "musician",
+        "detective",
+        "scientist",
+        "farmer",
+        "architect",
+        "journalist",
+        "electrician",
+        "dentist",
+        "veterinarian",
+        "librarian",
+        "photographer",
+        "mechanic",
+        "attorney",
+        "barista",
+        "plumber",
+        "bartender",
+        "surgeon",
+        "therapist",
+        "animator",
+        "programmer",
+        "pharmacist",
+        "translator",
+        "accountant",
+        "florist",
+        "butcher",
+        "lifeguard",
+        "beekeeper",
+        "locksmith",
+        "choreographer",
+        "mortician",
+        "paramedic",
+        "blacksmith",
+        "surveyor",
+        "botanist",
+        "chiropractor",
+        "undertaker",
+        "acrobat",
+        "welder",
+        "hypnotist",
+        "zoologist",
+        "mime",
+        "sommelier",
+        "meteorologist",
+        "stuntman",
+        "diplomat",
+        "entomologist",
+        "puppeteer",
+        "archivist",
+        "cartographer",
+        "paleontologist",
+    ],
+    "transportation": [
+        "helicopter",
+        "submarine",
+        "scooter",
+        "sailboat",
+        "train",
+        "motorcycle",
+        "airplane",
+        "canoe",
+        "tractor",
+        "limousine",
+        "escalator",
+        "skateboard",
+        "ambulance",
+        "ferry",
+        "rocket",
+        "hovercraft",
+        "gondola",
+        "segway",
+        "zeppelin",
+        "bulldozer",
+        "speedboat",
+        "unicycle",
+        "monorail",
+        "snowmobile",
+        "paddleboat",
+        "trolley",
+        "rickshaw",
+        "caboose",
+        "glider",
+        "bobsled",
+        "jetpack",
+        "forklift",
+        "dirigible",
+        "chariot",
+        "sidecar",
+        "tandem",
+        "battleship",
+        "catamaran",
+        "toboggan",
+        "dinghy",
+        "hydrofoil",
+        "sleigh",
+        "hatchback",
+        "kayak",
+        "stagecoach",
+        "tugboat",
+        "airship",
+        "skiff",
+        "carriage",
+        "rowboat",
+        "chairlift",
+        "steamroller",
+    ],
+    "clothing": [
+        "sweater",
+        "sandals",
+        "tuxedo",
+        "poncho",
+        "sneakers",
+        "bikini",
+        "cardigan",
+        "overalls",
+        "kimono",
+        "mittens",
+        "suspenders",
+        "kilt",
+        "leggings",
+        "apron",
+        "bowtie",
+        "earmuffs",
+        "fedora",
+        "wetsuit",
+        "pajamas",
+        "sombrero",
+        "raincoat",
+        "beret",
+        "turtleneck",
+        "parka",
+        "tiara",
+        "toga",
+        "bandana",
+        "corset",
+        "sarong",
+        "tunic",
+        "visor",
+        "ascot",
+        "fez",
+        "moccasins",
+        "blazer",
+        "chaps",
+        "romper",
+        "waders",
+        "clogs",
+        "garter",
+        "camisole",
+        "galoshes",
+        "bolero",
+        "spats",
+        "pantyhose",
+        "onesie",
+        "stiletto",
+        "vest",
+        "windbreaker",
+        "scarf",
+        "bonnet",
+    ],
+    "nature": [
+        "glacier",
+        "sequoia",
+        "geyser",
+        "avalanche",
+        "tornado",
+        "quicksand",
+        "stalactite",
+        "hurricane",
+        "asteroid",
+        "tundra",
+        "galaxy",
+        "nebula",
+        "earthquake",
+        "stalagmite",
+        "constellation",
+        "crystal",
+        "tributary",
+        "abyss",
+        "monsoon",
+        "magma",
+        "erosion",
+        "iceberg",
+        "mudslide",
+        "delta",
+        "aurora",
+        "gravity",
+        "humidity",
+        "sinkhole",
+        "wildfire",
+        "tropics",
+        "tsunami",
+        "eclipse",
+        "metabolism",
+        "mirage",
+        "hemisphere",
+        "spectrum",
+        "fossil",
+        "plateau",
+        "groundwater",
+        "undergrowth",
+        "oxygen",
+        "molecule",
+        "pollination",
+        "algae",
+        "carbon",
+        "nitrogen",
+        "organism",
+        "nucleus",
+        "equator",
+        "solstice",
+        "cocoon",
+        "germination",
+        "metamorphosis",
+        "nocturnal",
+        "symbiosis",
+        "ecosystem",
+        "biodiversity",
+    ],
+    "emotions": [
+        "happiness",
+        "sadness",
+        "anxiety",
+        "surprise",
+        "anger",
+        "curiosity",
+        "embarrassment",
+        "nostalgia",
+        "envy",
+        "gratitude",
+        "remorse",
+        "boredom",
+        "excitement",
+        "loneliness",
+        "pride",
+        "jealousy",
+        "contentment",
+        "disgust",
+        "empathy",
+        "euphoria",
+        "melancholy",
+        "frustration",
+        "anticipation",
+        "amusement",
+        "serenity",
+        "disappointment",
+        "confidence",
+        "resentment",
+        "apathy",
+        "optimism",
+        "pessimism",
+        "bewilderment",
+        "exhilaration",
+        "indifference",
+        "enthusiasm",
+        "desperation",
+        "satisfaction",
+        "regret",
+        "determination",
+        "compassion",
+        "hopelessness",
+        "relief",
+        "infatuation",
+        "tranquility",
+        "impatience",
+        "exasperation",
+        "agitation",
+        "yearning",
+        "sympathy",
+        "admiration",
+        "astonishment",
+        "inspiration",
+        "dread",
+        "hope",
+    ],
+}
+
+
+def generate_game_words(num_words=20):
+    """Generate a random selection of words for the Word Wrangler game.
+
+    1. Create a flat list of all words
+    2. Remove any duplicates
+    3. Randomly select the requested number of words
+
+    Args:
+        num_words: Number of words to select for the game
+
+    Returns:
+        List of randomly selected words
+    """
+    # Create a flat list of all words from all categories
+    all_words = []
+    for category_words in WORD_CATEGORIES.values():
+        all_words.extend(category_words)
+
+    # Remove duplicates by converting to a set and back to a list
+    all_words = list(set(all_words))
+
+    # Randomly select words
+    selected_words = random.sample(all_words, min(num_words, len(all_words)))
+
+    return selected_words
+
+

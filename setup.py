@@ -17,6 +17,11 @@ setup(
         'pydantic>=2.0',
         'numpy>=1.20.0',
         'PyYAML>=6.0',
+        # Gemini Live and Pipecat dependencies
+        'pipecat-ai>=0.0.39',  # Pipecat framework for pipeline architecture
+        'google-generativeai>=0.8.0',  # Google Gemini API client
+        'opencv-python>=4.8.0',  # Image processing for visual analysis
+        'Pillow>=10.0.0',  # Image manipulation
     ],
     author='TODO: Maintainer Name',
     author_email='you@todo.todo',
@@ -32,7 +37,8 @@ setup(
             'test_websocket_bridge = tests.test_websocket_bridge:main',
             'test_full_websocket_system = tests.test_full_websocket_system:main',
             'ros_ai_bridge = ros_ai_bridge.ros_ai_bridge:main',
-            'oai_realtime_agent = agents.main:main',
+            'oai_realtime_agent = agents.oai_realtime.main:main',
+            'gemini_live_agent = agents.gemini_live.main:main',
             'audio_data_to_stamped = audio.audio_data_to_stamped:main',
             'simple_audio_player = audio.simple_audio_player:main',
             'file_audio_publisher = audio.file_audio_publisher:main',

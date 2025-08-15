@@ -59,6 +59,12 @@ install(PROGRAMS
 )
 
 install(PROGRAMS
+  agents/gemini_live/main.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME gemini_live_agent
+)
+
+install(PROGRAMS
   audio/simple_audio_player.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME simple_audio_player

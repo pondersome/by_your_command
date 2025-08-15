@@ -1,0 +1,52 @@
+# Gemini Command Extraction Agent Configuration
+gemini_live_agent:
+  # Agent Identity
+  agent_id: "gemini_command"
+  agent_type: "command"
+  
+  # Bridge Connection (WebSocket-based distributed deployment)
+  bridge_connection:
+    type: "websocket"
+    host: "localhost"
+    port: 8765
+    reconnect_interval: 5.0
+    max_reconnect_attempts: 10
+    heartbeat_interval: 30
+    
+  # Gemini API Configuration
+  api_key: ""  # Set via GEMINI_API_KEY environment variable
+  model: "models/gemini-2.0-flash-live-001"  # Use live model for multimodal
+  voice_id: ""  # No voice output for command extraction
+  
+  # Modalities for command extraction
+  modalities:
+    - "audio"
+    - "text"
+    # No image for command extraction - faster and cheaper
+    
+  # Session Management
+  session_pause_timeout: 10.0
+  session_max_duration: 60.0  # Shorter for command extraction
+  
+  # Context Management
+  max_context_tokens: 500  # Smaller context for command extraction
+  max_context_age: 300  # 5 minutes - commands are immediate
+  
+  # Named prompt selection (from prompts.yaml)
+  prompt_id: "barney_command_extractor_gemini"
+  
+  # Output topics
+  audio_out_topic: ""  # No audio output for command extractor
+  transcript_topic: "command_transcript"
+  
+# ROS AI Bridge Configuration for Command Agent
+ros_ai_bridge_command:
+  ros__parameters:
+    # Topics to bridge
+    subscribed_topics:
+      - topic: "voice_chunks"
+        msg_type: "by_your_command/AudioDataUtterance"
+        
+    published_topics:
+      - topic: "command_transcript"
+        msg_type: "std_msgs/String"

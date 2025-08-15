@@ -1,0 +1,69 @@
+# Gemini Conversation Agent Configuration
+gemini_live_agent:
+  # Agent Identity
+  agent_id: "gemini_conversation"
+  agent_type: "conversation"
+  
+  # Bridge Connection (WebSocket-based distributed deployment)
+  bridge_connection:
+    type: "websocket"
+    host: "localhost"
+    port: 8765
+    reconnect_interval: 5.0
+    max_reconnect_attempts: 10
+    heartbeat_interval: 30
+    
+  # Gemini API Configuration  
+  api_key: ""  # Set via GEMINI_API_KEY environment variable
+  model: "models/gemini-2.0-flash-live-001"  # Use live model for multimodal
+  voice_id: "Kore"  # Gemini voice options
+  
+  # Modalities for conversation
+  modalities:
+    - "audio"
+    - "text"
+    - "image"  # Re-enabled for video support
+    
+  # Video processing
+  video_fps: 1.0  # 1 frame per second default
+  video_dynamic_fps: false  # Future: adjust based on scene complexity
+  
+  # Session Management (similar to OpenAI)
+  session_pause_timeout: 10.0      # Seconds of silence before session cycling
+  session_max_duration: 120.0      # Maximum session duration
+  
+  # Context Management
+  max_context_tokens: 2000         # Maximum context tokens to preserve
+  max_context_age: 3600           # Maximum age of context (seconds)
+  
+  # Named prompt selection (from prompts.yaml)
+  prompt_id: "barney_conversational_gemini"
+  
+  # Output topics
+  audio_out_topic: "audio_out"
+  transcript_topic: "llm_transcript"
+  
+# ROS AI Bridge Configuration (same as OpenAI)
+ros_ai_bridge:
+  ros__parameters:
+    # WebSocket Server Settings
+    websocket_server:
+      enabled: true
+      host: "0.0.0.0"
+      port: 8765
+      max_connections: 10
+      auth_required: false
+      heartbeat_interval: 30
+      
+    # Topics to bridge
+    subscribed_topics:
+      - topic: "voice_chunks"
+        msg_type: "by_your_command/AudioDataUtterance"
+      - topic: "camera/image_raw"
+        msg_type: "sensor_msgs/Image"
+        
+    published_topics:
+      - topic: "audio_out"
+        msg_type: "audio_common_msgs/AudioData"
+      - topic: "llm_transcript"
+        msg_type: "std_msgs/String"

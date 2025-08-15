@@ -1,0 +1,1196 @@
+╭───────────────────────────────────────────────────╮
+│ ✻ Welcome to Claude Code!                         │
+│                                                   │
+│   /help for help, /status for your current setup  │
+│                                                   │
+│   cwd: /home/karim/ros2_ws/src/by_your_command    │
+╰───────────────────────────────────────────────────╯
+● Compact summary (ctrl+r to expand)
+  ⎿  Read agents/gemini_live/gemini_live_agent_simple.py (381 lines)
+  ⎿  Read agents/oai_realtime/websocket_bridge.py (340 lines)
+  ⎿  Read bringup/gemini_live.launch.py (271 lines)
+  ⎿  Read agents/gemini_live/main.py (249 lines)
+  ⎿  Todo list read (6 items)
+
+> /compact 
+  ⎿  Compacted. ctrl+r to see full summary
+
+> I like the plan of resetting to get a simple connection started and building up from there. In the meantime, pipecat was just updated to 0.0.80, so i'd
+   like to update to that version  and proceed from there. I've added two new resources: 
+  @src/by_your_command/specs/research/pipecat-ai-pipecat-full-0080.txt is a full reference for the newly released api
+  @src/by_your_command/specs/research/pipecat-ai-pipecat-examples-glive.txt is their reference example app for using their gemini-live processor. I'd 
+  like a deep dive of how that example sets up and hydrates the pipeline in the web based game. we have our own methods for exchanging data between the 
+  pipeline and our bridge. the User Context Aggregator is also interesting as a way of persisting conversation context across sessions. Unfortunately 
+  there is no video in this example. I'm also not exactly sure of the system block diagram - I don't think we'd need to incorporate the Daily WebRTC 
+  mechanism in our system. Please generate an analysis of this example, including what we can learn from it to apply to our requirements. Store the 
+  analysis in the specs folder.
+  ⎿  Read specs/research/pipecat-ai-pipecat-examples-glive.txt (2000+ lines)
+
+✻ Thinking…
+
+  The user wants me to:
+
+  1. Update Pipecat from 0.0.79 to 0.0.80
+  2. Analyze the new Pipecat 0.0.80 API reference and the Gemini Live example
+  3. Generate a deep dive analysis of how the example sets up and hydrates the pipeline
+  4. Focus on understanding:
+    - How the web-based game pipeline works
+    - The User Context Aggregator for session persistence
+    - What we can learn and apply to our requirements
+    - Note that there's no video in this example
+    - We wouldn't need Daily WebRTC in our system
+
+  Let me first update Pipecat to 0.0.80, then read and analyze the example to create a comprehensive analysis document.
+
+● I'll update Pipecat to 0.0.80 and analyze the Gemini Live example to understand how it implements the pipeline architecture.
+
+● Update Todos
+  ⎿  ☐ Update Pipecat to version 0.0.80                 
+     ☐ Analyze Gemini Live example pipeline architecture
+     ☐ Generate deep dive analysis document
+     ☐ Store analysis in specs folder
+
+✻ Thinking…
+
+  Let me start by updating Pipecat to 0.0.80.
+
+● Update Todos
+  ⎿  ☐ Update Pipecat to version 0.0.80                 
+     ☐ Analyze Gemini Live example pipeline architecture
+     ☐ Generate deep dive analysis document
+     ☐ Store analysis in specs folder
+
+✻ Thinking…
+
+  Let me upgrade Pipecat to 0.0.80
+
+● Bash(cd /home/karim/ros2_ws/src/by_your_command && pip install --upgrade pipecat-ai==0.0.80)
+  ⎿  Defaulting to user installation because normal site-packages is not writeable
+     Collecting pipecat-ai==0.0.80
+       Downloading pipecat_ai-0.0.80-py3-none-any.whl (2.6 MB)
+     … +67 lines (ctrl+r to expand)
+
+✻ Thinking…
+
+  Good! Pipecat has been upgraded to 0.0.80. Now let me mark that task as completed and proceed to analyze the Gemini Live example. Let me read more of 
+  the example file to understand the server-side implementation.
+
+● Update Todos
+  ⎿  ☒ Update Pipecat to version 0.0.80                 
+     ☐ Analyze Gemini Live example pipeline architecture
+     ☐ Generate deep dive analysis document
+     ☐ Store analysis in specs folder
+
+✻ Thinking…
+
+  Now let me read more of the example file to see the server-side implementation, particularly the bot.py file which should contain the pipeline setup.
+
+● Read(specs/research/pipecat-ai-pipecat-examples-glive.txt)
+  ⎿  Read 2000 lines (ctrl+r to expand)
+  ⎿  CLAUDE.md
+
+✻ Thinking…
+
+  Now let me continue reading the server implementation to understand how the pipeline is set up.
+
+● Read(specs/research/pipecat-ai-pipecat-examples-glive.txt)
+  ⎿  Read 2000 lines (ctrl+r to expand)
+
+✻ Thinking…
+
+  Now I have a good understanding of the example. Let me create a comprehensive analysis document about the Gemini Live example and how it sets up the 
+  pipeline, what we can learn from it, and how to apply it to our requirements.
+
+● Update Todos
+  ⎿  ☒ Update Pipecat to version 0.0.80                 
+     ☒ Analyze Gemini Live example pipeline architecture
+     ☐ Generate deep dive analysis document
+     ☐ Store analysis in specs folder
+
+✻ Thinking…
+
+  Now let me create a comprehensive analysis document of the Gemini Live example and how we can apply its lessons to our requirements.
+
+● Write(specs/analysis/pipecat_gemini_live_example_analysis.md)
+  ⎿  Wrote 356 lines to specs/analysis/pipecat_gemini_live_example_analysis.md                                                                           
+     # Pipecat Gemini Live Example Analysis
+     ## Executive Summary
+     The Word Wrangler example demonstrates Pipecat 0.0.80's implementation of the GeminiMultimodalLiveLLMService for building real-time voice-based
+     games. This analysis examines the pipeline architecture, integration patterns, and how these can be applied to our ROS2-based multimodal robot
+     control system.
+     ## Architecture Overview
+     ### System Components
+     … +346 lines (ctrl+r to expand)
+
+✻ Thinking…
+
+  Great! I've successfully created a comprehensive analysis of the Pipecat Gemini Live example. Now let me mark this task as completed and the final task
+   of storing the analysis as completed as well.
+
+● Update Todos
+  ⎿  ☒ Update Pipecat to version 0.0.80                 
+     ☒ Analyze Gemini Live example pipeline architecture
+     ☒ Generate deep dive analysis document
+     ☒ Store analysis in specs folder
+
+✻ Thinking…
+
+  Perfect! I've successfully:
+  1. Updated Pipecat to version 0.0.80
+  2. Analyzed the Gemini Live example in detail
+  3. Created a comprehensive analysis document
+  4. Stored it in the specs folder
+
+  The analysis covers:
+  - The pipeline architecture patterns used in the example
+  - How the GeminiMultimodalLiveLLMService is integrated
+  - The lack of video support in the example (audio only)
+  - How we can adapt these patterns for our ROS2 requirements
+  - A recommended implementation path moving forward
+
+  The key takeaways are:
+  - Pipecat successfully abstracts the Gemini API complexity
+  - We should start with a simple pipeline like bot.py, not the complex parallel pipeline
+  - We need to add video support ourselves since it's not demonstrated
+  - We can skip Daily WebRTC and RTVI, using our ROS WebSocket bridge instead
+  - The frame-based architecture is clean and composable
+
+● Analysis Complete
+
+  I've successfully updated Pipecat to 0.0.80 and created a comprehensive analysis of the Gemini Live example, stored at
+  /home/karim/ros2_ws/src/by_your_command/specs/analysis/pipecat_gemini_live_example_analysis.md.
+
+  Key Findings:
+
+  1. Pipeline Simplicity: The example shows Pipecat successfully abstracts Gemini's API complexity - we should leverage this rather than implementing
+  custom handlers.
+  2. No Video Example: The Word Wrangler game is audio-only. We'll need to implement video frame handling ourselves using ImageRawFrame and frame
+  throttling.
+  3. Architecture Pattern: Start with the simple linear pipeline from bot.py, not the complex parallel pipeline. Our basic structure should be:
+  Pipeline([
+      ros_input,
+      frame_throttler,
+      gemini_llm,
+      command_extractor,
+      ros_output
+  ])
+  4. Skip Unnecessary Components: We don't need Daily WebRTC, RTVI, or the subprocess spawning architecture - just direct WebSocket to our ROS bridge.
+  5. Context Aggregation: The User Context Aggregator pattern is valuable for maintaining conversation state and could enable scene memory persistence.
+
+  Recommended Next Steps:
+
+  Phase 1: Get basic audio working with GeminiMultimodalLiveLLMService
+  Phase 2: Add video support with frame throttling
+  Phase 3: Implement context persistence for scene memory
+  Phase 4: Advanced features like dynamic FPS
+
+  The main insight is that Pipecat 0.0.80's abstraction layer will significantly simplify our implementation compared to direct API integration.
+
+> this is good analysis. i want to check some details. 1. we already have our own form of context reinjection based on what we did for the oai agent. i'm
+   happy to switch over to the methods suggested by the word game example, particularly if this makes it easier to wire up the glive pipeline processor. 
+  i'm not sure, though, if the context_aggregator is as flexible as we need it to be, without deep-diving its features. does it have the ability to blend
+   context across multiple sessions? does it have the ability to reset system prompts, or is it only used to store user prompts? 2. we are already doing 
+  our own VAD. pipecat is also using Silero. We don't want to be doing double the work for no reason. I think our VAD prevents non-voice from even 
+  crossing the bridge? 3. is the cross-branch comms in the phone version of the game suggesting there are two pipelines at work, or is there some built 
+  in pipeline branching going on? I ask this in the context of sharing data between sessions, particularly as we go forward to include video. 4. you're 
+  talking about command extraction as if it could be included within the same agent as a conversational agent. Is there some feature in pipecat that 
+  allows rapid context switching to support this? In the oai agents we ended up using a separate instances of the agent because the llms aren't able to 
+  separate conversational content from command extraction content in one session. my experiments with gemini studio show a similar inability in glive. Or
+   are you just indicated that we need to embed support for slightly different handling when firing up a command-specific instance of the agent?
+
+● Excellent questions that get to the heart of the implementation details. Let me analyze each one:
+
+● Read(specs/research/pipecat-ai-pipecat-full-0080.txt)
+  ⎿  Error: File content (34703 tokens) exceeds maximum allowed tokens (25000). Please use offset and limit parameters to read specific portions of the 
+     file, or use the GrepTool to search for specific content.
+
+● Search(pattern: "class.*Aggregator|Context.*Aggregator", path: "specs/research/pipecat-ai-pipecat-full-0080.txt", output_mode: "content")
+  ⎿  Found 1581 lines (ctrl+r to expand)
+
+● Search(pattern: "ParallelPipeline", path: "specs/research/pipecat-ai-pipecat-examples-glive.txt", output_mode: "content")
+  ⎿  Found 87 lines (ctrl+r to expand)
+
+● Let me provide detailed answers to your questions:
+
+  1. Context Aggregator Flexibility
+
+  The context aggregators in Pipecat are primarily for single-session context management, not cross-session persistence:
+
+  What they do:
+  - Store user/assistant messages during a session
+  - Update the OpenAILLMContext with new messages
+  - Allow context modification via direct access
+
+  What they DON'T do:
+  - Cross-session persistence (you'd need external storage)
+  - System prompt resetting (system prompt is set on LLM init, not via aggregator)
+
+  Your existing approach is likely more flexible if you're doing:
+  - Cross-session context blending
+  - Dynamic system prompt changes
+  - Selective context injection
+
+  The aggregators are mainly useful for maintaining turn-by-turn conversation within a session.
+
+  2. VAD Duplication
+
+  You're absolutely right - you should disable Pipecat's VAD since you're already doing it at the ROS level:
+
+  # In your transport params, disable VAD:
+  transport = DailyTransport(
+      params=DailyParams(
+          vad_analyzer=None,  # Disable Pipecat VAD
+      )
+  )
+
+  # Or for WebSocket transport:
+  params=FastAPIWebsocketParams(
+      vad_analyzer=None,  # No double VAD
+  )
+
+  Your ROS VAD is already filtering at the bridge, so Pipecat's Silero VAD would be redundant processing.
+
+  3. ParallelPipeline Architecture
+
+  The ParallelPipeline creates true parallel branches within a single pipeline, not separate pipelines:
+
+  ParallelPipeline([
+      [branch1_processors],  # Branch 1
+      [branch2_processors],  # Branch 2
+  ])
+
+  How it works:
+  - Input frames are duplicated to all branches
+  - Branches process independently
+  - Outputs are merged at the end
+  - Producer/Consumer pattern enables cross-branch communication
+
+  For video sharing: You could use the same Producer/Consumer pattern:
+  # In video branch:
+  video_producer = ProducerProcessor(filter=is_image_frame)
+
+  # In command branch:
+  video_consumer = ConsumerProcessor(producer=video_producer)
+
+  This allows branches to share frames without external coordination.
+
+  4. Command Extraction Architecture
+
+  You're correct - LLMs struggle with dual-purpose contexts. The cleanest approach is separate agent instances with different system prompts:
+
+  Option A: Separate Agents (Recommended)
+  # Conversational agent
+  conversation_agent = GeminiMultimodalLiveLLMService(
+      system_instruction=conversation_prompt,
+      voice_id="friendly_voice"
+  )
+
+  # Command extraction agent  
+  command_agent = GeminiMultimodalLiveLLMService(
+      system_instruction=command_extraction_prompt,
+      params=InputParams(modalities=GeminiMultimodalModalities.TEXT)  # Text only
+  )
+
+  # Run in parallel or switch based on mode
+
+  Option B: Mode Switching (Not Recommended)
+  Pipecat doesn't have built-in "rapid context switching". You'd need to:
+  1. Disconnect the LLM
+  2. Reinitialize with new system prompt
+  3. Reconnect
+
+  This is what ResettablePlayerLLM does in the example, but it's clunky.
+
+  Recommendations Based on Your Questions
+
+  1. Keep Your Context Management
+
+  Your existing context reinjection is likely more sophisticated than Pipecat's aggregators. You can:
+  # Skip the aggregators entirely
+  pipeline = Pipeline([
+      ros_input,
+      gemini_llm,  # Direct to LLM
+      ros_output,
+  ])
+
+  # Inject context manually when needed
+  await task.queue_frames([
+      TextFrame(text=your_context_string)
+  ])
+
+  2. Disable Pipecat VAD
+
+  # No VAD in Pipecat since ROS handles it
+  transport_params = YourTransportParams(
+      vad_analyzer=None,
+      audio_in_enabled=True,
+  )
+
+  3. Use ParallelPipeline for Multi-Agent
+
+  pipeline = Pipeline([
+      ros_input,
+      ParallelPipeline([
+          # Conversation branch
+          [conversation_llm, conversation_output],
+          # Command branch  
+          [command_llm, command_output],
+          # Scene description branch (future)
+          [scene_llm, scene_output],
+      ]),
+      ros_output_merger,
+  ])
+
+  4. Separate Instances for Command Extraction
+
+  As you discovered with OpenAI and confirmed with Gemini, separate instances with focused prompts work best:
+
+  async def create_command_extractor():
+      return GeminiMultimodalLiveLLMService(
+          api_key=api_key,
+          system_instruction="""
+          Extract robot commands from user speech.
+          Output ONLY JSON: {"command": "...", "parameters": {...}}
+          """,
+          voice_id=None,  # No TTS for command extraction
+      )
+
+  The key insight is that Pipecat provides the pipeline infrastructure but doesn't force you to use all its features. You can mix your proven patterns
+  (context management, VAD) with Pipecat's LLM abstraction benefits.
+
+> ok, do one more pass through the oai_realtime agent we've already built and how it is launched, to validate these choices against our prior experience.
+   for example, i think you're implying standing up another glive service instance within our gemini_live agent to provision the command agent, whereas 
+  on the oai side we just fire up multiple agents with different configurations. what are the pros/cons of this choice?
+
+● Read(agents/oai_realtime/oai_realtime_agent.py)
+  ⎿  Read 100 lines (ctrl+r to expand)
+
+● Read(bringup/oai_dual_agent.launch.py)
+  ⎿  Read 200 lines (ctrl+r to expand)
+
+● Read(config/oai_realtime_agent.yaml)
+  ⎿  Read 50 lines (ctrl+r to expand)
+
+● Read(config/oai_command_agent.yaml)
+  ⎿  Read 50 lines (ctrl+r to expand)
+
+● Search(pattern: "ExecuteProcess.*oai_realtime_agent|/lib/by_your_command/oai_realtime_agent", path: "bringup", output_mode: "content")
+  ⎿  Found 3 lines (ctrl+r to expand)
+
+● Excellent point! Let me analyze how we implemented the OpenAI dual-agent architecture and compare the pros/cons of different approaches.
+
+  Current OpenAI Architecture
+
+  How It Works:
+
+  1. Single executable, multiple instances - Both agents use the same oai_realtime_agent binary
+  2. Different configurations - Each instance loads different YAML configs (oai_realtime_agent.yaml vs oai_command_agent.yaml)
+  3. Different system prompts - Via prompt_id parameter (barney_conversational vs barney_command_extractor)
+  4. Separate processes - Launched as independent ExecuteProcess commands
+  5. Shared bridge - Both connect to the same ROS AI Bridge WebSocket server on port 8765
+
+  Key Design Choices:
+
+  # Launch file starts TWO separate agent processes
+  conversational_agent = ExecuteProcess(
+      cmd=['/path/to/oai_realtime_agent',
+           '--config', conv_agent_config,
+           '--prompt-id', 'barney_conversational'])
+
+  command_agent = ExecuteProcess(
+      cmd=['/path/to/oai_realtime_agent',
+           '--config', cmd_agent_config,
+           '--prompt-id', 'barney_command_extractor'])
+
+  Architecture Options for Gemini
+
+  Option A: Follow OpenAI Pattern (Multiple Processes)
+
+  Implementation:
+  # Launch file - separate processes
+  gemini_conversation = ExecuteProcess(
+      cmd=['gemini_live_agent', '--config', 'gemini_conversation.yaml'])
+
+  gemini_command = ExecuteProcess(
+      cmd=['gemini_live_agent', '--config', 'gemini_command.yaml'])
+
+  Pros:
+  - ✅ Complete isolation between agents
+  - ✅ Can crash/restart independently
+  - ✅ Different config files for different behaviors
+  - ✅ Easier debugging (separate logs)
+  - ✅ Matches existing pattern (consistency)
+  - ✅ Can scale horizontally (add more agents)
+
+  Cons:
+  - ❌ Higher resource usage (duplicate imports, event loops)
+  - ❌ Multiple WebSocket connections to bridge
+  - ❌ No direct data sharing between agents
+
+  Option B: Single Process, Multiple LLM Instances
+
+  Implementation:
+  # Within single gemini_live_agent.py
+  class GeminiLiveAgent:
+      def __init__(self):
+          self.conversation_llm = GeminiMultimodalLiveLLMService(
+              system_instruction=conversation_prompt)
+
+          self.command_llm = GeminiMultimodalLiveLLMService(
+              system_instruction=command_prompt)
+
+          # Run in parallel pipeline
+          pipeline = Pipeline([
+              ParallelPipeline([
+                  [self.conversation_llm],
+                  [self.command_llm]
+              ])
+          ])
+
+  Pros:
+  - ✅ Shared resources (single event loop, imports)
+  - ✅ Single WebSocket connection
+  - ✅ Can share data between branches (Producer/Consumer)
+  - ✅ Coordinated lifecycle management
+
+  Cons:
+  - ❌ Single point of failure
+  - ❌ More complex code
+  - ❌ Harder to debug (interleaved logs)
+  - ❌ Configuration becomes complex
+
+  Option C: Hybrid - Multiple Processes with Shared Base
+
+  Implementation:
+  # Base class with shared logic
+  class BaseGeminiAgent:
+      def __init__(self, config):
+          self.bridge = WebSocketBridgeInterface(config)
+          # Shared setup
+
+  # Specialized agents
+  class ConversationAgent(BaseGeminiAgent):
+      def create_pipeline(self):
+          return Pipeline([conversation_specific])
+
+  class CommandAgent(BaseGeminiAgent):
+      def create_pipeline(self):
+          return Pipeline([command_specific])
+
+  Analysis Based on OpenAI Experience
+
+  What Worked Well:
+
+  1. Separate processes - No interference between agents
+  2. Different configs - Easy to tune each agent independently
+  3. Shared bridge - Single point of ROS integration
+  4. Simple launch file - Just start multiple processes
+
+  What Was Challenging:
+
+  1. Resource usage - Each agent loads full Python environment
+  2. Coordination - No direct communication between agents
+  3. Duplicate code - Same agent class handles both roles
+
+  Recommendation: Follow OpenAI Pattern
+
+  Based on your successful OpenAI implementation, I recommend Option A (Multiple Processes) for Gemini:
+
+  Why:
+
+  1. Proven pattern - You already know this works
+  2. Simplicity - Each agent has one job
+  3. Isolation - Failures don't cascade
+  4. Flexibility - Easy to add/remove agents
+  5. Debugging - Clear separation of concerns
+
+  Implementation:
+
+  # gemini_live.launch.py (following oai_dual_agent.launch.py pattern)
+  conversation_agent = ExecuteProcess(
+      cmd=[
+          '/path/to/gemini_live_agent',
+          '--config', gemini_conv_config,
+          '--agent-type', 'conversation'
+      ])
+
+  command_agent = ExecuteProcess(
+      cmd=[
+          '/path/to/gemini_live_agent',
+          '--config', gemini_cmd_config,
+          '--agent-type', 'command'
+      ])
+
+  # Future: scene description agent
+  scene_agent = ExecuteProcess(
+      cmd=[
+          '/path/to/gemini_live_agent',
+          '--config', gemini_scene_config,
+          '--agent-type', 'scene'
+      ])
+
+  Config Files:
+
+  # gemini_conversation_agent.yaml
+  gemini_live_agent:
+    agent_id: "gemini_conversation"
+    prompt_id: "barney_conversational_gemini"
+    modalities: ["audio", "text", "image"]
+    audio_out_topic: "audio_out"
+    transcript_topic: "llm_transcript"
+
+  # gemini_command_agent.yaml  
+  gemini_live_agent:
+    agent_id: "gemini_command"
+    prompt_id: "barney_command_extractor_gemini"
+    modalities: ["audio", "text"]  # No image for commands
+    audio_out_topic: ""  # No audio output
+    transcript_topic: "command_transcript"
+
+  Key Insight
+
+  The ParallelPipeline in Pipecat is useful for intra-agent parallelism (like host/player in the game), but for multi-agent systems, separate processes
+  are cleaner. This matches your OpenAI architecture where:
+
+  1. Each agent is a separate OS process
+  2. They share the ROS bridge via WebSocket
+  3. They're configured independently
+  4. They can be started/stopped independently
+
+  The single-process multi-pipeline approach would be like trying to run both OpenAI agents in one Python process - possible but unnecessarily complex.
+
+  Summary
+
+  Stick with your proven pattern:
+  - Multiple agent processes (like OpenAI)
+  - Shared ROS bridge (WebSocket server)
+  - Different configurations per agent
+  - Simple launch file orchestration
+
+  This gives you the same benefits you've already experienced with OpenAI, and Pipecat's abstractions will still simplify the Gemini API integration
+  within each agent.
+
+> Ok, we're now on the same page. please update the analysis you did early with these follow up choices.
+
+● Read(specs/analysis/pipecat_gemini_live_example_analysis.md)
+  ⎿  Read 356 lines (ctrl+r to expand)
+
+● Update(specs/analysis/pipecat_gemini_live_example_analysis.md)
+  ⎿  Updated specs/analysis/pipecat_gemini_live_example_analysis.md with 145 additions and 83 removals                            
+       135    GameStateTracker(new_word_notifier)
+       136    ```
+       137    
+       138 -  ## Application to Our Requirements
+       138 +  ## Application to Our Requirements (Updated)
+       139    
+       140 -  ### 1. Pipeline Structure for Robot Control
+       140 +  ### 1. Multi-Agent Architecture (Following OpenAI Pattern)
+       141    
+       142 +  Based on our successful OpenAI dual-agent implementation, we'll use **separate processes** for each agent type:
+       143 +  
+       144    ```python
+       145 -  # Proposed architecture for our system
+       146 -  pipeline = Pipeline([
+       147 -      # Input from ROS bridge
+       148 -      ros_input_processor,
+       145 +  # Launch file pattern - multiple independent agents
+       146 +  gemini_conversation = ExecuteProcess(
+       147 +      cmd=['gemini_live_agent', '--config', 'gemini_conversation.yaml'])
+       148        
+       149 -      # Multimodal processing
+       150 -      gemini_multimodal_llm,  # With video support
+       151 -      
+       152 -      # Command extraction
+       153 -      command_parser,
+       154 -      
+       155 -      # Output to ROS
+       156 -      ros_output_processor,
+       149 +  gemini_command = ExecuteProcess(
+       150 +      cmd=['gemini_live_agent', '--config', 'gemini_command.yaml'])
+       151 +  
+       152 +  gemini_scene = ExecuteProcess(  # Future enhancement
+       153 +      cmd=['gemini_live_agent', '--config', 'gemini_scene.yaml'])
+       154 +  ```
+       155 +  
+       156 +  **Rationale:**
+       157 +  - Proven pattern from OpenAI implementation
+       158 +  - Complete isolation between agents
+       159 +  - Independent failure/restart capability
+       160 +  - Simpler debugging with separate logs
+       161 +  - Easy to scale (add/remove agents)
+       162 +  
+       163 +  ### 2. Pipeline Structure Per Agent
+       164 +  
+       165 +  Each agent will have its own simple pipeline:
+       166 +  
+       167 +  ```python
+       168 +  # Conversation agent pipeline
+       169 +  pipeline = Pipeline([
+       170 +      ros_bridge_input(),      # WebSocket from ROS
+       171 +      frame_throttler,         # For video frames (1 fps)
+       172 +      gemini_conversation_llm, # With multimodal support
+       173 +      ros_bridge_output(),     # Back to ROS
+       174    ])
+       175 +  
+       176 +  # Command agent pipeline (simpler, no video)
+       177 +  pipeline = Pipeline([
+       178 +      ros_bridge_input(),     # Audio only
+       179 +      gemini_command_llm,     # Text-only output
+       180 +      command_parser,         # Extract JSON commands
+       181 +      ros_bridge_output(),    # Command messages to ROS
+       182 +  ])
+       183    ```
+       184    
+       185 -  ### 2. Integrating with ROS AI Bridge
+       185 +  ### 3. Context Management Strategy
+       186    
+       187 -  **Instead of Daily WebRTC:**
+       188 -  - Use our WebSocketBridgeInterface
+       189 -  - Convert ROS messages to Pipecat frames
+       190 -  - No need for RTVI or Daily transport
+       187 +  **Keep existing approach:** Our current context reinjection system is more sophisticated than Pipecat's aggregators:
+       188    
+       189 -  **Frame Conversion:**
+       189    ```python
+       190 -  # ROS to Pipecat
+       191 -  AudioDataUtterance -> AudioRawFrame
+       192 -  sensor_msgs/Image -> ImageRawFrame
+       193 -  std_msgs/String -> TextFrame
+       190 +  # Skip Pipecat aggregators, use our existing system
+       191 +  pipeline = Pipeline([
+       192 +      ros_bridge_input(),
+       193 +      gemini_llm,  # Direct to LLM, no aggregator
+       194 +      ros_bridge_output(),
+       195 +  ])
+       196    
+       197 -  # Pipecat to ROS
+       198 -  AudioRawFrame -> audio_common_msgs/AudioData
+       199 -  TextFrame -> std_msgs/String (transcripts)
+       197 +  # Inject context manually when needed
+       198 +  if self.prepared_context:
+       199 +      await task.queue_frames([
+       200 +          TextFrame(text=self.prepared_context.to_prompt())
+       201 +      ])
+       202    ```
+       203    
+       204 -  ### 3. Adding Video Support
+       204 +  **Rationale:**
+       205 +  - Pipecat aggregators are session-only
+       206 +  - We need cross-session persistence
+       207 +  - We need dynamic system prompt changes
+       208 +  - Our system already handles context blending
+       209    
+       210 -  Since the example lacks video, we need to:
+       210 +  ### 4. VAD Configuration
+       211    
+       212 -  1. **Enable video modality in Gemini:**
+       212 +  **Disable Pipecat VAD** since ROS already handles it:
+       213 +  
+       214    ```python
+       215 -  params = InputParams(
+       216 -      modalities=GeminiMultimodalModalities.AUDIO | 
+       217 -                GeminiMultimodalModalities.TEXT |
+       218 -                GeminiMultimodalModalities.IMAGE  # Add this
+       219 -  )
+       215 +  # No double VAD processing
+       216 +  class GeminiLiveAgent:
+       217 +      def create_transport(self):
+       218 +          return WebSocketTransport(
+       219 +              params=WebSocketParams(
+       220 +                  vad_analyzer=None,  # Disabled - ROS handles VAD
+       221 +                  audio_in_enabled=True,
+       222 +              )
+       223 +          )
+       224    ```
+       225    
+       226 -  2. **Create image frame processor:**
+       226 +  ### 5. Frame Conversion Layer
+       227 +  
+       228    ```python
+       229 -  class ImageProcessor(FrameProcessor):
+       230 -      async def process_frame(self, frame: Frame, direction):
+       231 -          if isinstance(frame, ImageRawFrame):
+       232 -              # Process image with Gemini
+       233 -              pass
+       229 +  # ROS to Pipecat converter
+       230 +  class ROSFrameConverter:
+       231 +      def convert_to_pipecat(self, msg_envelope):
+       232 +          if msg_envelope.ros_msg_type == "by_your_command/AudioDataUtterance":
+       233 +              return AudioRawFrame(
+       234 +                  audio=bytes(msg_envelope.raw_data.int16_data),
+       235 +                  sample_rate=16000,
+       236 +                  num_channels=1
+       237 +              )
+       238 +          elif msg_envelope.ros_msg_type == "sensor_msgs/Image":
+       239 +              return ImageRawFrame(
+       240 +                  image=self.cv_bridge.imgmsg_to_cv2(msg_envelope.raw_data),
+       241 +                  size=(msg.width, msg.height),
+       242 +                  format="BGR"
+       243 +              )
+       244 +          elif msg_envelope.ros_msg_type == "std_msgs/String":
+       245 +              return TextFrame(text=msg_envelope.raw_data.data)
+       246 +      
+       247 +      def convert_from_pipecat(self, frame):
+       248 +          if isinstance(frame, AudioRawFrame):
+       249 +              return {
+       250 +                  'topic': 'audio_out',
+       251 +                  'msg_type': 'audio_common_msgs/AudioData',
+       252 +                  'data': {'data': frame.audio}
+       253 +              }
+       254 +          elif isinstance(frame, TextFrame):
+       255 +              return {
+       256 +                  'topic': 'llm_transcript',
+       257 +                  'msg_type': 'std_msgs/String', 
+       258 +                  'data': {'data': frame.text}
+       259 +              }
+       260    ```
+       261    
+       262 -  3. **Implement frame throttling:**
+       262 +  ### 6. Video Support Implementation
+       263 +  
+       264 +  Since the example lacks video, custom implementation required:
+       265 +  
+       266    ```python
+       267 -  class FrameThrottler(FrameProcessor):
+       268 -      def __init__(self, fps=1.0):
+       267 +  class VideoFrameThrottler(FrameProcessor):
+       268 +      """Throttle video frames to control costs"""
+       269 +      def __init__(self, fps=1.0, dynamic=True):
+       270            self.min_interval = 1.0 / fps
+       271            self.last_frame_time = 0
+       272 -      
+       273 -      async def process_frame(self, frame, direction):
+       272 +          self.dynamic = dynamic
+       273 +          
+       274 +      async def process_frame(self, frame: Frame, direction):
+       275            if isinstance(frame, ImageRawFrame):
+       276                now = time.time()
+       277                if now - self.last_frame_time >= self.min_interval:
+       278                    await self.push_frame(frame, direction)
+       279                    self.last_frame_time = now
+       280 +                  
+       281 +                  # Dynamic FPS adjustment based on scene
+       282 +                  if self.dynamic:
+       283 +                      self.adjust_fps_for_scene(frame)
+       284 +          else:
+       285 +              # Pass non-image frames through
+       286 +              await self.push_frame(frame, direction)
+       287    ```
+       288    
+       289 -  ### 4. Context Persistence
+       289 +  ### 7. Configuration Files (Following OpenAI Pattern)
+       290    
+       291 -  The User Context Aggregator pattern is useful for:
+       292 -  - Maintaining conversation state across commands
+       293 -  - Building scene understanding over time
+       294 -  - Tracking command history
+       295 -  - Implementing "memory" of previous interactions
+       291 +  ```yaml
+       292 +  # gemini_conversation_agent.yaml
+       293 +  gemini_live_agent:
+       294 +    agent_id: "gemini_conversation"
+       295 +    bridge_connection:
+       296 +      host: "localhost"
+       297 +      port: 8765
+       298 +    model: "gemini-2.0-flash-exp"
+       299 +    prompt_id: "barney_conversational_gemini"
+       300 +    modalities: ["audio", "text", "image"]
+       301 +    video_fps: 1.0
+       302 +    audio_out_topic: "audio_out"
+       303 +    transcript_topic: "llm_transcript"
+       304    
+       305 -  ### 5. Simplified Implementation Strategy
+       306 -  
+       307 -  Based on the example's simplicity in bot.py:
+       308 -  
+       309 -  ```python
+       310 -  # Minimal viable pipeline
+       311 -  async def create_pipeline():
+       312 -      # Initialize Gemini with multimodal support
+       313 -      gemini = GeminiMultimodalLiveLLMService(
+       314 -          api_key=os.getenv("GEMINI_API_KEY"),
+       315 -          transcribe_user_audio=True,
+       316 -          voice_id="Kore",  # Or other voice
+       317 -          system_instruction=robot_system_prompt,
+       318 -      )
+       319 -      
+       320 -      # Create context for persistence
+       321 -      context = OpenAILLMContext([])
+       322 -      context_agg = gemini.create_context_aggregator(context)
+       323 -      
+       324 -      # Build pipeline
+       325 -      pipeline = Pipeline([
+       326 -          ros_bridge_input(),
+       327 -          frame_throttler,  # For video frames
+       328 -          context_agg.user(),
+       329 -          gemini,
+       330 -          context_agg.assistant(),
+       331 -          command_extractor(),
+       332 -          ros_bridge_output(),
+       333 -      ])
+       334 -      
+       335 -      return pipeline
+       305 +  # gemini_command_agent.yaml
+       306 +  gemini_live_agent:
+       307 +    agent_id: "gemini_command"
+       308 +    bridge_connection:
+       309 +      host: "localhost"
+       310 +      port: 8765
+       311 +    model: "gemini-2.0-flash-exp"
+       312 +    prompt_id: "barney_command_extractor_gemini"
+       313 +    modalities: ["audio", "text"]  # No video for commands
+       314 +    audio_out_topic: ""  # No audio output
+       315 +    transcript_topic: "command_transcript"
+       316    ```
+       317    
+       318    ## Key Learnings
+
+● Update(specs/analysis/pipecat_gemini_live_example_analysis.md)
+  ⎿  Updated specs/analysis/pipecat_gemini_live_example_analysis.md with 21 additions and 21 removals
+       341    - No need for FastAPI server or Daily rooms
+       342    - Direct WebSocket connection to our bridge
+       343    
+       344 -  ## Recommended Implementation Path
+       344 +  ## Recommended Implementation Path (Revised)
+       345    
+       346 -  ### Phase 1: Basic Audio Pipeline
+       347 -  1. Implement minimal GeminiMultimodalLiveLLMService pipeline
+       348 -  2. Connect to ROS bridge via WebSocket
+       349 -  3. Process audio only (voice commands)
+       350 -  4. Extract and publish commands
+       346 +  ### Phase 1: Single Audio-Only Agent
+       347 +  1. Create basic `gemini_live_agent.py` with Pipecat pipeline
+       348 +  2. Connect to ROS bridge via existing WebSocketBridgeInterface
+       349 +  3. Process audio only (voice commands) with single agent
+       350 +  4. Test conversation and command understanding
+       351    
+       352 -  ### Phase 2: Add Video Support
+       353 -  1. Implement ImageRawFrame processing
+       354 -  2. Add frame throttling (1 fps default)
+       355 -  3. Test multimodal understanding
+       356 -  4. Generate scene descriptions
+       352 +  ### Phase 2: Dual Agent Setup (Following OpenAI)
+       353 +  1. Split into conversation and command agents
+       354 +  2. Create separate YAML configs for each agent
+       355 +  3. Update launch file to start both processes
+       356 +  4. Test simultaneous operation with shared bridge
+       357    
+       358 -  ### Phase 3: Context and Memory
+       359 -  1. Implement context aggregation
+       360 -  2. Add conversation persistence
+       361 -  3. Build scene memory over time
+       362 -  4. Enable contextual commands
+       358 +  ### Phase 3: Add Video Support
+       359 +  1. Implement ImageRawFrame conversion from sensor_msgs/Image
+       360 +  2. Add VideoFrameThrottler processor (1 fps default)
+       361 +  3. Enable video only for conversation agent
+       362 +  4. Test multimodal understanding
+       363    
+       364 -  ### Phase 4: Advanced Features
+       365 -  1. Dynamic FPS adjustment
+       366 -  2. Multiple agent coordination
+       367 -  3. Task-specific pipelines
+       368 -  4. Performance optimization
+       364 +  ### Phase 4: Production Features
+       365 +  1. Port existing context management system
+       366 +  2. Add scene description agent (third process)
+       367 +  3. Implement dynamic FPS adjustment
+       368 +  4. Performance optimization and monitoring
+       369    
+       370    ## Critical Implementation Notes
+       371    
+
+● Update(specs/analysis/pipecat_gemini_live_example_analysis.md)
+  ⎿  Updated specs/analysis/pipecat_gemini_live_example_analysis.md with 28 additions and 17 removals                                                   
+       394    3. Add video frames incrementally
+       395    4. Test command extraction separately
+       396    
+       397 -  ## Conclusion
+       397 +  ## Conclusion (Updated with Architecture Decisions)
+       398    
+       399    The Word Wrangler example provides excellent patterns for:
+       400 -  - Pipeline construction
+       401 -  - Frame processing
+       402 -  - LLM integration
+       403 -  - State management
+       400 +  - Pipeline construction and frame processing
+       401 +  - GeminiMultimodalLiveLLMService usage
+       402 +  - LLM abstraction benefits
+       403 +  - State management within a single agent
+       404    
+       405 -  However, it lacks:
+       406 -  - Video/image processing examples
+       407 -  - Non-Daily transport patterns
+       408 -  - Command extraction logic
+       409 -  - Scene understanding
+       405 +  However, based on our OpenAI experience, we'll diverge from the example in key areas:
+       406    
+       407 -  Our implementation should:
+       408 -  1. Use the simple pipeline pattern from bot.py
+       409 -  2. Replace Daily with ROS WebSocket bridge
+       410 -  3. Add custom video frame handling
+       411 -  4. Implement command extraction processor
+       412 -  5. Skip unnecessary complexity (RTVI, parallel pipelines) initially
+       407 +  ### What We'll Use from the Example:
+       408 +  1. **Simple pipeline pattern** from bot.py (not parallel pipelines)
+       409 +  2. **GeminiMultimodalLiveLLMService** for API abstraction
+       410 +  3. **Frame-based architecture** for data flow
+       411 +  4. **Basic frame processors** as templates
+       412    
+       413 -  The key insight is that Pipecat successfully abstracts the Gemini Live API complexity, allowing us to focus on our robot control logic 
+           - rather than low-level protocol handling.
+       413   \ No newline at end of file
+       414 +  ### What We'll Do Differently:
+       415 +  1. **Multiple agent processes** instead of single process with branches
+       416 +  2. **Keep our context management** instead of Pipecat aggregators
+       417 +  3. **Disable Pipecat VAD** (ROS already handles it)
+       418 +  4. **Custom video frame handling** (not in example)
+       419 +  5. **WebSocket bridge** instead of Daily transport
+       420 +  
+       421 +  ### Architecture Summary:
+       422 +  - **Multi-agent**: Separate processes per agent type (conversation, command, scene)
+       423 +  - **Configuration**: Individual YAML files per agent (like OpenAI)
+       424 +  - **Launch**: Single launch file orchestrating multiple agents
+       425 +  - **Bridge**: Shared ROS AI Bridge with WebSocket server
+       426 +  - **Pipeline**: Simple linear pipelines per agent
+       427 +  - **Context**: Our existing cross-session context system
+       428 +  - **VAD**: Handled by ROS, disabled in Pipecat
+       429 +  
+       430 +  The key insight remains: Pipecat abstracts the Gemini Live API complexity, but we'll integrate it using our proven multi-agent patterns 
+           + rather than adopting all of Pipecat's architectural choices. This gives us the best of both worlds - Pipecat's API simplification with our 
+           + battle-tested system architecture.
+       431   \ No newline at end of file
+
+● Analysis Updated
+
+  I've updated the analysis document with our architectural decisions based on the follow-up discussion. The key changes include:
+
+  Major Updates:
+
+  1. Multi-Agent Architecture: Following the proven OpenAI pattern with separate processes per agent rather than using ParallelPipeline within a single
+  process.
+  2. Context Management: Keeping your existing sophisticated context system instead of adopting Pipecat's session-only aggregators.
+  3. VAD Handling: Disabling Pipecat's VAD since ROS already handles it at the bridge level.
+  4. Configuration Strategy: Individual YAML files per agent type (conversation, command, scene) following the OpenAI dual-agent pattern.
+  5. Pipeline Simplicity: Each agent gets its own simple linear pipeline, avoiding the complexity of parallel branches for multi-agent coordination.
+
+  Key Architectural Decisions:
+
+  - Process Isolation: Each agent runs as a separate OS process (via ExecuteProcess in launch file)
+  - Shared Bridge: All agents connect to the same ROS AI Bridge WebSocket server
+  - Independent Configs: Each agent has its own YAML configuration file
+  - Simple Pipelines: Linear pipelines per agent, not complex parallel structures
+  - Existing Systems: Leverage proven context management and VAD from OpenAI implementation
+
+  The updated analysis now accurately reflects that we'll use Pipecat for its API abstraction benefits while maintaining our proven architectural 
+  patterns from the OpenAI implementation. This approach minimizes risk while still gaining the simplification benefits of Pipecat's
+  GeminiMultimodalLiveLLMService.
+
+> Ok, use the updated document as guidance for updating our plans for continuing to build out the gemini_live agent
+
+● Update Todos
+  ⎿  ☐ Create basic gemini_live_agent.py with minimal Pipecat pipeline 
+     ☐ Test audio-only conversation with single agent
+     ☐ Create separate YAML configs for conversation and command agents
+     ☐ Update launch file for dual-agent setup
+     ☐ Implement ROS-to-Pipecat frame conversion
+     ☐ Add video frame support with throttling
+     ☐ Port context management from OpenAI agent
+
+● Based on the updated analysis, here's our plan for building out the Gemini Live agent:
+
+  Phase 1: Basic Audio-Only Agent (Current Priority)
+
+● Update Todos
+  ⎿  ☐ Create basic gemini_live_agent.py with minimal Pipecat pipeline 
+     ☐ Test audio-only conversation with single agent
+     ☐ Create separate YAML configs for conversation and command agents
+     ☐ Update launch file for dual-agent setup
+     ☐ Implement ROS-to-Pipecat frame conversion
+     ☐ Add video frame support with throttling
+     ☐ Port context management from OpenAI agent
+
+● Let's rebuild the gemini_live_agent.py following our architectural decisions:
+
+● Write(agents/gemini_live/gemini_live_agent.py)
+  ⎿  Error writing file
+
+● Read(agents/gemini_live/gemini_live_agent.py)
+  ⎿  Read 10 lines (ctrl+r to expand)
+
+● The file already exists but is currently broken. Let me replace it with the new implementation:
+
+● Write(agents/gemini_live/gemini_live_agent_new.py)
+  ⎿  Wrote 488 lines to agents/gemini_live/gemini_live_agent_new.py               
+     #!/usr/bin/env python3
+     """
+     Gemini Live Agent using Pipecat
+     Implements a multimodal agent using Pipecat's GeminiMultimodalLiveLLMService.
+     Follows the multi-agent architecture pattern established with OpenAI agents.
+     Key Features:
+     - Simple linear pipeline per agent instance
+     - WebSocket connection to ROS AI Bridge
+     … +478 lines (ctrl+r to expand)
+
+● Now let's create the YAML configuration file for the conversation agent:
+
+● Write(config/gemini_conversation_agent.yaml)
+  ⎿  Wrote 69 lines to config/gemini_conversation_agent.yaml       
+     # Gemini Conversation Agent Configuration
+     gemini_live_agent:
+       # Agent Identity
+       agent_id: "gemini_conversation"
+       agent_type: "conversation"
+       # Bridge Connection (WebSocket-based distributed deployment)
+       bridge_connection:
+         type: "websocket"
+         host: "localhost"
+     … +59 lines (ctrl+r to expand)
+
+● Now create the command extraction agent configuration:
+
+● Write(config/gemini_command_agent.yaml)
+  ⎿  Wrote 52 lines to config/gemini_command_agent.yaml            
+     # Gemini Command Extraction Agent Configuration
+     gemini_live_agent:
+       # Agent Identity
+       agent_id: "gemini_command"
+       agent_type: "command"
+       # Bridge Connection (WebSocket-based distributed deployment)
+       bridge_connection:
+         type: "websocket"
+         host: "localhost"
+     … +42 lines (ctrl+r to expand)
+
+● Now let's add the Gemini prompts to the prompts.yaml file:
+
+● Read(config/prompts.yaml)
+  ⎿  Read 50 lines (ctrl+r to expand)
+
+● Search(pattern: "barney_conversational|barney_command", path: "config/prompts.yaml", output_mode: "content")
+  ⎿  Found 85 lines (ctrl+r to expand)
+
+● Now let's add the Gemini-specific prompts:
+
+● Update(config/prompts.yaml)
+  ⎿  Error editing file
+
+● Update(config/prompts.yaml)
+  ⎿  Error editing file
+
+● Search(pattern: "# Prompt selection rules", path: "config/prompts.yaml", output_mode: "content")
+  ⎿  Found 4 lines (ctrl+r to expand)
+
+● Update(config/prompts.yaml)
+  ⎿  Updated config/prompts.yaml with 56 additions                                                                                
+       238          Safety reminder: Verify all movement commands are safe before executing.
+       239          Current obstacles detected: {obstacle_list}
+       240    
+       241 +    # Gemini-specific conversational agent
+       242 +    barney_conversational_gemini:
+       243 +      name: "Barney - Gemini Conversational Agent"
+       244 +      description: "Gemini-optimized conversational agent"
+       245 +      version: "1.0"
+       246 +      tested_with: ["gemini_live"]
+       247 +      system_prompt: |
+       248 +        Your name is {{robot_name}}.
+       249 +        
+       250 +        {{robot_capabilities}}
+       251 +        
+       252 +        You are the conversational agent for a friendly robot. Focus on natural dialogue and engaging conversation.
+       253 +        
+       254 +        IMPORTANT: You do NOT handle robot movement commands. If someone asks you to move, look somewhere, 
+       255 +        or change your arm position, respond that "I heard you want me to move - the command system will handle that."
+       256 +        
+       257 +        Your role is to:
+       258 +        - Have natural conversations
+       259 +        - Answer questions about what you can see
+       260 +        - Be helpful and friendly
+       261 +        - Describe your surroundings when asked
+       262 +        
+       263 +        Keep responses concise and natural. You're a robot, not a verbose AI assistant.
+       264 +        
+       265 +    # Gemini-specific command extractor
+       266 +    barney_command_extractor_gemini:
+       267 +      name: "Barney - Gemini Command Extractor"
+       268 +      description: "Gemini-optimized command extraction"
+       269 +      version: "1.0"
+       270 +      tested_with: ["gemini_live"]
+       271 +      system_prompt: |
+       272 +        You are the command detection system for a robot named {{robot_name}}.
+       273 +        
+       274 +        {{robot_capabilities}}
+       275 +        
+       276 +        {{arm_presets}}
+       277 +        
+       278 +        {{bearing_presets}}
+       279 +        
+       280 +        Your ONLY job is to detect and extract movement commands from user speech.
+       281 +        
+       282 +        If the user says something that is NOT a command (like "how are you?" or "what do you see?"), 
+       283 +        respond with: {"command": "none"}
+       284 +        
+       285 +        If the user gives a movement command, respond ONLY with JSON in this format:
+       286 +        - For arm movements: {"command": "ARM:preset"} where preset is one of {bumper, tenhut, lookup, lookout, reach}
+       287 +        - For camera panning: {"command": "pan@bearing"} where bearing is a named bearing or angle
+       288 +        
+       289 +        Examples:
+       290 +        - "look up" -> {"command": "ARM:lookup"}
+       291 +        - "look left" -> {"command": "pan@left"}
+       292 +        - "stand at attention" -> {"command": "ARM:tenhut"}
+       293 +        - "how are you?" -> {"command": "none"}
+       294 +        
+       295 +        ONLY output JSON. No other text.
+       296 +  
+       297    # Prompt selection rules
+       298    selection_rules:
+       299      default: "barney_command_visual"
+
+● Update Todos
+  ⎿  ☒ Create basic gemini_live_agent.py with minimal Pipecat pipeline 
+     ☒ Create separate YAML configs for conversation and command agents
+     ☒ Implement ROS-to-Pipecat frame conversion
+     ☐ Test audio-only conversation with single agent
+     ☐ Update launch file for dual-agent setup
+     ☐ Add video frame support with throttling
+     ☐ Port context management from OpenAI agent
+
+● Progress Update
+
+  Based on our updated architectural analysis, I've created:
+
+  ✅ Completed:
+
+  1. New Gemini Live Agent (gemini_live_agent_new.py):
+    - Simple linear pipeline per agent instance
+    - WebSocket connection to ROS AI Bridge (reuses OpenAI's)
+    - Support for conversation/command/scene modes
+    - Frame conversion between ROS and Pipecat
+    - Video frame throttling (ready for Phase 3)
+    - Command-line configuration like OpenAI agent
+  2. Configuration Files:
+    - gemini_conversation_agent.yaml - Full multimodal conversation
+    - gemini_command_agent.yaml - Audio-only command extraction
+    - Both follow OpenAI dual-agent pattern
+  3. System Prompts:
+    - barney_conversational_gemini - Natural dialogue focus
+    - barney_command_extractor_gemini - JSON command output only
+
+  Key Architectural Decisions Implemented:
+
+  - Multi-agent pattern: Separate processes per agent type
+  - No Pipecat VAD: Will be disabled (ROS handles it)
+  - No context aggregators: Using our existing context system
+  - Simple pipelines: Linear flow, no ParallelPipeline complexity
+  - Shared bridge: Both agents connect to same WebSocket server
+
+  Next Steps:
+
+  1. Test single agent with audio-only conversation
+  2. Create launch file for dual-agent setup (like oai_dual_agent.launch.py)
+  3. Add video support incrementally (Phase 3)
+  4. Port context management from OpenAI agent (Phase 4)
+
+  The agent is now ready for initial testing. It follows our proven patterns while leveraging Pipecat's GeminiMultimodalLiveLLMService for API
+  abstraction.
+

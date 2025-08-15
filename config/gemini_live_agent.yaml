@@ -1,0 +1,181 @@
+# Gemini Live Agent Configuration
+gemini_live_agent:
+  # Agent Identity
+  agent_id: "gemini_visual"
+  agent_type: "multimodal"  # conversation|command|visual|multimodal
+  
+  # Bridge Connection (reuses existing WebSocket infrastructure)
+  bridge_connection:
+    type: "websocket"
+    host: "localhost"
+    port: 8765
+    reconnect_interval: 5.0
+    max_reconnect_attempts: 10
+    
+  # Gemini API Configuration
+  api_key: ""  # Set via GEMINI_API_KEY environment variable
+  model: "gemini-2.0-flash-exp"
+  
+  # Modalities to enable
+  modalities:
+    - audio
+    - vision
+    - text
+    
+  # Audio Configuration
+  audio:
+    input_sample_rate: 16000   # Matches VAD output
+    output_sample_rate: 24000  # Gemini output rate
+    voice: "default"
+    
+  # Video Configuration
+  video:
+    enabled: true
+    source_topic: "camera/image_raw"
+    fps: 1.0                   # Initial FPS
+    max_fps: 10.0             # Maximum for dynamic scenes
+    min_fps: 0.1              # Minimum for static scenes
+    resolution: "480p"         # 480p|720p|1080p
+    dynamic_fps: true          # Adjust FPS based on scene complexity
+    
+  # Prompt Configuration
+  prompt_id: "gemini_multimodal"  # From prompts.yaml
+  system_prompt_override: ""       # Override if needed
+  
+  # Session Management
+  session_timeout: 300.0          # 5 minutes (no aggressive cycling needed)
+  reconnect_attempts: 5
+  max_session_duration: 3600.0    # 1 hour maximum
+  
+  # Context Management
+  max_context_tokens: 4000        # Gemini supports larger context
+  max_context_age: 600.0          # 10 minutes
+  
+  # Input Topics (from ROS)
+  input_topics:
+    voice: "voice_chunks"          # AudioDataUtterance messages
+    camera: "camera/image_raw"     # Image messages
+    depth: "camera/depth/image_raw" # Optional depth images
+    text: "text_input"             # Text input
+    
+  # Output Topics (to ROS)
+  output_topics:
+    audio: "audio_out"             # Audio responses
+    transcript: "llm_transcript"    # Conversation transcript
+    commands: "command_transcript"  # Extracted commands
+    scene: "scene_description"      # Visual scene analysis
+    
+  # Performance Settings
+  performance:
+    max_queue_size: 100
+    processing_timeout: 5.0
+    batch_audio_frames: false      # Send audio immediately
+    
+  # Logging
+  log_level: INFO  # DEBUG|INFO|WARNING|ERROR
+
+
+# ROS AI Bridge Configuration (WebSocket-enabled)
+ros_ai_bridge:
+  ros__parameters:
+    # WebSocket Server Settings
+    websocket_server:
+      enabled: true
+      host: "0.0.0.0"          # Listen on all interfaces
+      port: 8765               # Default WebSocket port
+      max_connections: 10      # Maximum concurrent agent connections
+      auth_required: false     # Authentication (future enhancement)
+      heartbeat_interval: 30   # Seconds between ping/pong
+      
+    # Agent Registration
+    agent_registration:
+      timeout_seconds: 60      # Registration timeout
+      allow_duplicate_ids: false
+      require_capabilities: []  # Required agent capabilities
+    
+    # Queue configuration
+    max_queue_size: 100
+    queue_timeout_ms: 1000
+    drop_policy: "oldest"
+    
+    # Topics to bridge (ROS → Agent)
+    subscribed_topics:
+      - topic: "voice_chunks"  # incoming human voice data (relative)
+        msg_type: "by_your_command/AudioDataUtterance"
+      - topic: "camera/image_raw"  # Camera feed (simple relative name, remapped in launch)
+        msg_type: "sensor_msgs/Image"
+      - topic: "text_input"    # incoming text prompts (relative)
+        msg_type: "std_msgs/String"
+      - topic: "conversation_id" # Conversation boundary tracking (relative)
+        msg_type: "std_msgs/String"
+        
+    # Topics to publish (Agent → ROS)
+    published_topics:
+      - topic: "audio_out"       # generated voice response (relative)
+        msg_type: "audio_common_msgs/AudioData"
+      - topic: "llm_transcript"  # response transcript (relative)
+        msg_type: "std_msgs/String"
+      - topic: "command_transcript"  # extracted commands (relative)
+        msg_type: "std_msgs/String"
+      - topic: "scene_description"  # visual scene analysis (relative)
+        msg_type: "std_msgs/String"
+
+
+# Multi-Agent Configuration
+multi_agent_gemini:
+  mode: "single"  # single|mixed|triple
+  
+  # Single Gemini Visual Agent
+  single_config:
+    agent: "gemini_visual"
+    config_file: "gemini_live_agent.yaml"
+    
+  # Mixed Mode: OpenAI + Gemini
+  mixed_config:
+    openai_agents:
+      - type: "conversation"
+        config: "oai_realtime_agent.yaml"
+      - type: "command"
+        config: "oai_command_agent.yaml"
+    gemini_agents:
+      - type: "visual"
+        config: "gemini_live_agent.yaml"
+        
+  # Triple Gemini Agents
+  triple_config:
+    conversation:
+      agent_id: "gemini_conversation"
+      agent_type: "conversation"
+      modalities: ["audio", "text"]
+      prompt_id: "conversational_assistant"
+      video_enabled: false
+      
+    command:
+      agent_id: "gemini_command"
+      agent_type: "command"
+      modalities: ["audio", "text"]
+      prompt_id: "command_extractor"
+      video_enabled: false
+      
+    visual:
+      agent_id: "gemini_visual"
+      agent_type: "visual"
+      modalities: ["vision", "text", "audio"]
+      prompt_id: "visual_analyzer"
+      video_enabled: true
+      
+  # Topic Routing
+  routing:
+    voice_chunks:
+      - "gemini_conversation"
+      - "gemini_command"
+    camera_image:
+      - "gemini_visual"
+    text_input:
+      - "gemini_conversation"
+      
+  # Coordination Settings
+  coordination:
+    visual_to_conversation: true   # Route scene descriptions to conversation
+    command_priority: "command"    # Which agent's commands take precedence
+    merge_transcripts: true        # Combine transcripts from all agents
