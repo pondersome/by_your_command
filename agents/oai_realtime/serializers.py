@@ -16,7 +16,7 @@ from typing import Optional, Dict, Any
 import numpy as np
 
 from ros_ai_bridge import MessageEnvelope
-from .websocket_bridge import WebSocketMessageEnvelope
+from ..common.websocket_bridge import WebSocketMessageEnvelope
 
 
 class SerializationError(Exception):

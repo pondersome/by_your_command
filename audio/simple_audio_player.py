@@ -74,6 +74,14 @@ class SimpleAudioPlayer(Node):
             10
         )
         
+        # Subscribe to interruption signal to clear audio queue
+        self.interruption_sub = self.create_subscription(
+            Bool,
+            'interruption_signal',  # Relative topic name - will be in node's namespace
+            self.interruption_callback,
+            10
+        )
+        
         # Start playback thread
         self.playback_thread = threading.Thread(target=self.playback_loop, daemon=True)
         self.playback_thread.start()
@@ -139,6 +147,46 @@ class SimpleAudioPlayer(Node):
                     
         except Exception as e:
             self.get_logger().error(f"Error in audio callback: {e}")
+            
+    def interruption_callback(self, msg: Bool):
+        """Handle interruption signal to clear audio queue"""
+        if msg.data:
+            self.clear_audio_queue()
+            self.get_logger().info("⚡ Received interruption signal - cleared audio queue")
+    
+    def clear_audio_queue(self):
+        """Clear all pending audio from the queue and force stop playback"""
+        queue_size = self.audio_queue.qsize()
+        if queue_size > 0:
+            # Clear the queue
+            with self.audio_queue.mutex:
+                self.audio_queue.queue.clear()
+                
+            self.get_logger().info(f"🗑️ Cleared {queue_size} audio chunks from queue")
+        
+        # Force stop current playback immediately, even if queue was empty
+        if self.playing:
+            self.force_stop_playback()
+    
+    def force_stop_playback(self):
+        """Immediately stop audio playback and clear PyAudio buffers"""
+        if not self.playing:
+            return
+            
+        try:
+            # More aggressive stopping - abort instead of stop
+            if hasattr(self, 'stream') and self.stream:
+                self.stream.abort()  # Immediately stop, don't wait for buffer to drain
+                self.stream.close()
+                
+            self.playing = False
+            # Signal that assistant stopped speaking
+            self.speaking_pub.publish(Bool(data=False))
+            self.get_logger().info("🛑 FORCE stopped audio playback - cleared PyAudio buffers")
+        except Exception as e:
+            self.get_logger().error(f"Error force stopping playback: {e}")
+            # Set playing to False anyway
+            self.playing = False
             
     def start_playback(self):
         """Start audio playback stream"""

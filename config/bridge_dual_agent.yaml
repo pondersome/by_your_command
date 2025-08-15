@@ -49,3 +49,5 @@ ros_ai_bridge:
         msg_type: "geometry_msgs/Twist"
       - topic: "conversation_id" # Bidirectional - agent conversation resets
         msg_type: "std_msgs/String"
+      - topic: "interruption_signal" # Signal to clear audio player queue
+        msg_type: "std_msgs/Bool"

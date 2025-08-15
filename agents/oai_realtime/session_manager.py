@@ -21,8 +21,7 @@ try:
 except ImportError:
     raise ImportError("websockets library required: pip install websockets")
 
-from .context import ConversationContext, ContextManager
-from .prompt_loader import PromptLoader
+from ..common import ConversationContext, ContextManager, PromptLoader
 
 
 class SessionState(Enum):
@@ -179,7 +178,11 @@ When users ask questions or make requests, provide clear and helpful responses."
                     "model": "whisper-1"
                 },
                 "turn_detection": {
-                    "type": "server_vad"
+                    "type": "server_vad",
+                    "threshold": self.config.get('vad_threshold', 0.5),  # Sensitivity (0.0-1.0)
+                    "prefix_padding_ms": self.config.get('vad_prefix_padding', 300),  # Audio before speech 
+                    "silence_duration_ms": self.config.get('vad_silence_duration', 200),  # Silence before turn ends
+                    "create_response": self.config.get('vad_create_response', False)  # Manual response triggering
                 }
             }
         }

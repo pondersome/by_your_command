@@ -2,6 +2,8 @@
 
 by_your_command is a ROS 2 package for multimodal human-robot interaction supporting voice, camera, and video streams. It provides a complete pipeline from audio capture through LLM integration for real-time conversational robotics.
 
+## Warning: This project is in rapid development and is not ready for production use. Waaaay pre-alpha.
+
 ## Key Features
 
 - **Voice Activity Detection**: Real-time speech detection using Silero VAD
@@ -10,6 +12,7 @@ by_your_command is a ROS 2 package for multimodal human-robot interaction suppor
 - **Distributed Architecture**: WebSocket-based agent deployment for flexibility
 - **Cost-Optimized Sessions**: Intelligent session cycling to manage API costs
 - **Multi-Agent Support**: Dual-agent mode for simultaneous conversation and command extraction
+- **Multiple Providers**: Support for multiple LLM providers (OpenAI, Gemini Live)
 - **Command Processing**: Automatic robot command extraction and routing
 - **Namespace Support**: Full ROS2 namespace and prefix flexibility for multi-robot deployments
 - **Recursive Macro System**: Configurable prompts with nested macro expansion
@@ -93,6 +96,7 @@ system_prompts:
 Set your OpenAI API key either in `config/oai_realtime_agent.yaml` or as an environment variable:
 ```bash
 export OPENAI_API_KEY="your-api-key-here"
+export GEMINI_API_KEY="your-api-key-here"
 ```
 
 ### VAD Settings
@@ -202,6 +206,12 @@ ROS Bridge → /audio_out → simple_audio_player → Speakers
          └──────────→ /llm_transcript ──────────────────┘
                                 ↓
                       /assistant_speaking → echo_suppressor (mutes mic)
+
+User Interruption Flow:
+User Speech → VAD → /voice_chunks → Agent (while assistant speaking) →
+  1. response.cancel → OpenAI API (stops generation)
+  2. conversation.item.truncate → OpenAI API (cleans context)
+  3. /interruption_signal → simple_audio_player → PyAudio abort() (immediate cutoff)
 ```
 
 #### Complete System Architecture
@@ -292,6 +302,12 @@ ROS Bridge → /audio_out → simple_audio_player → Speakers
 - `nodes/`: Core processing nodes (command_processor)
 - `ros_ai_bridge/`: Minimal data transport layer between ROS2 and async agents
 - `agents/`: LLM integration agents with asyncio concurrency
+  - `common/`: Shared components across all agents
+    - `websocket_bridge.py`: WebSocket bridge interface for distributed agent deployment
+    - `prompt_loader.py`: Dynamic prompt loading with recursive macro expansion
+    - `context.py`: Conversation context management and preservation
+    - `conversation_monitor.py`: Real-time conversation state monitoring
+    - `pause_detector.py`: Intelligent pause detection for session management
   - `graph.py`: Agent orchestration and workflow management
   - `oai_realtime/`: OpenAI Realtime API integration with prompt macros
   - `tools/`: Command processing and ROS action tools
@@ -305,6 +321,62 @@ ROS Bridge → /audio_out → simple_audio_player → Speakers
 - `bringup/`: Launch files and system orchestration
 - `setup/`: Installation scripts and dependencies
 - `devrules/`: Development guidelines and coding standards
+
+#### Common Agent Components
+
+The `agents/common/` module provides shared functionality across all agent implementations:
+
+**Benefits**:
+- **Code Reuse**: Consistent behavior across OpenAI, Gemini, and future agent types
+- **Easier Maintenance**: Single implementation for core features like context management
+- **Standardized APIs**: Uniform interfaces for WebSocket communication and prompt handling
+
+**Components**:
+- **WebSocketBridgeInterface**: Manages agent-to-bridge WebSocket connections with automatic reconnection
+- **PromptLoader**: Handles dynamic prompt loading with recursive macro expansion
+- **ConversationContext**: Preserves conversation history across session boundaries
+- **ConversationMonitor**: Monitors conversation state and provides real-time insights
+- **PauseDetector**: Intelligent detection of conversation pauses for session cycling
+
+### Real-Time User Interruption System
+
+The system supports natural interruptions where users can speak over the assistant to stop responses immediately:
+
+#### Three-Stage Interruption Process
+
+1. **OpenAI API Cancellation**
+   - Detects user speech while assistant is speaking
+   - Sends `response.cancel` to immediately stop LLM generation
+   - Sends `conversation.item.truncate` to remove partial response from context
+   - Prevents pollution of conversation history with incomplete text
+
+2. **Context Cleanup**
+   - Tracks the last assistant response item ID for proper truncation
+   - Ensures conversation context remains clean after interruption
+   - Maintains conversation flow without corrupted partial responses
+
+3. **Audio Queue Clearing**
+   - Publishes `/interruption_signal` to audio player
+   - Clears buffered audio data to prevent continued playback
+   - Uses PyAudio `abort()` for immediate audio cutoff (not graceful `stop()`)
+
+#### Configuration
+
+The interruption system requires the `/interruption_signal` topic in bridge configuration:
+
+```yaml
+# config/bridge_dual_agent.yaml
+published_topics:
+  - topic: "interruption_signal"
+    msg_type: "std_msgs/Bool"
+```
+
+#### Troubleshooting Interruptions
+
+- **Laggy interruptions**: Ensure `/interruption_signal` topic is configured in bridge
+- **Continued audio after "stop"**: Check that audio player is using `abort()` not `stop()`
+- **Context pollution**: Verify `conversation.item.truncate` is being sent with correct item ID
+- **No interruption detection**: Monitor that user speech is detected while `assistant_speaking` is true
 
 ## Nodes
 
@@ -369,10 +441,11 @@ A minimal data transport bridge that handles message queuing between ROS2's call
 - `websocket_server.port` (int, default 8765): WebSocket server port
 
 ### simple_audio_player
-A lightweight audio player specifically designed for playing AudioData messages at 24kHz from OpenAI Realtime API.
+A lightweight audio player specifically designed for playing AudioData messages at 24kHz from OpenAI Realtime API with real-time interruption support.
 
 **Subscribed Topics**:
 - `/audio_out` (audio_common_msgs/AudioData): Audio data to play
+- `/interruption_signal` (std_msgs/Bool): Signal to immediately clear audio queue and stop playback
 
 **Published Topics**:
 - `assistant_speaking` (std_msgs/Bool): True when playing audio, False when stopped (respects namespace)
@@ -388,6 +461,8 @@ A lightweight audio player specifically designed for playing AudioData messages 
 - Automatic start/stop based on audio presence
 - Queue-based buffering for smooth playback
 - Assistant speaking status for echo suppression
+- **Real-time interruption support**: Immediate audio cutoff via `interruption_signal`
+- **Aggressive audio stopping**: Uses PyAudio `abort()` for instant termination without buffer drainage
 
 ### command_processor
 A node that listens for command transcripts from AI agents and routes them to appropriate robot subsystems.

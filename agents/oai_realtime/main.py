@@ -37,6 +37,7 @@ def load_config(config_path: str = None) -> Dict[str, Any]:
         'vad_threshold': 0.5,
         'vad_prefix_padding': 300,
         'vad_silence_duration': 200,
+        'vad_create_response': False,  # Use manual triggering for reliable responses
         'log_level': logging.INFO,
         'system_prompt': """You are a helpful robotic assistant. You can control robot movements, 
 answer questions, and engage in natural conversation. Be concise but friendly.
@@ -73,7 +74,10 @@ Respond naturally to the user's speech and provide helpful information or assist
         'OPENAI_MODEL': 'model', 
         'OPENAI_VOICE': 'voice',
         'PAUSE_TIMEOUT': 'session_pause_timeout',
-        'MAX_DURATION': 'session_max_duration'
+        'MAX_DURATION': 'session_max_duration',
+        'VAD_THRESHOLD': 'vad_threshold',
+        'VAD_PREFIX_PADDING': 'vad_prefix_padding',
+        'VAD_SILENCE_DURATION': 'vad_silence_duration'
     }
     
     for env_var, config_key in env_mappings.items():
@@ -81,9 +85,14 @@ Respond naturally to the user's speech and provide helpful information or assist
         print(f"🔍 Checking {env_var}: {'***' if env_var == 'OPENAI_API_KEY' and value else value or 'NOT SET'}")
         if value:
             # Convert numeric values
-            if config_key.endswith('_timeout') or config_key.endswith('_duration'):
+            if config_key.endswith('_timeout') or config_key.endswith('_duration') or config_key.startswith('vad_'):
                 try:
-                    config[config_key] = float(value)
+                    if config_key == 'vad_threshold':
+                        config[config_key] = float(value)
+                    elif config_key.endswith('_padding') or config_key.endswith('_duration'):
+                        config[config_key] = int(value)
+                    else:
+                        config[config_key] = float(value)
                 except ValueError:
                     print(f"⚠️ Invalid numeric value for {env_var}: {value}")
             else:

@@ -23,13 +23,10 @@ import websockets
 from std_msgs.msg import String
 from audio_common_msgs.msg import AudioData
 
-from .websocket_bridge import WebSocketBridgeInterface
 from .serializers import OpenAIRealtimeSerializer
-from .pause_detector import PauseDetector
 from .session_manager import SessionManager, SessionState
-from .context import ConversationContext
-from .conversation_monitor import ConversationMonitor
 from .debug_interface import DebugInterface
+from ..common import WebSocketBridgeInterface, PauseDetector, ConversationContext, ConversationMonitor
 
 
 class OpenAIRealtimeAgent:
@@ -76,6 +73,7 @@ class OpenAIRealtimeAgent:
         
         # Assistant response accumulation
         self.assistant_transcript_buffer = ""
+        self.last_assistant_item_id: Optional[str] = None
         
         # Debug interface for standalone testing
         self.debug_interface: Optional[DebugInterface] = None
@@ -87,7 +85,8 @@ class OpenAIRealtimeAgent:
         self.published_topics = {
             'audio_out': self.config.get('audio_out_topic', 'audio_out'),  # Relative for namespacing
             'transcript': self.config.get('transcript_topic', 'llm_transcript'),  # Relative for namespacing
-            'command_detected': self.config.get('command_detected_topic', 'command_detected')  # Relative for namespacing
+            'command_detected': self.config.get('command_detected_topic', 'command_detected'),  # Relative for namespacing
+            'interruption_signal': self.config.get('interruption_signal_topic', 'interruption_signal')  # Relative for namespacing
         }
         
         # Setup logging
@@ -493,12 +492,16 @@ class OpenAIRealtimeAgent:
             elif event_type == "input_audio_buffer.speech_started":
                 self.pause_detector.record_message("speech_started")
                 self.logger.info("🎤 OpenAI detected speech start")
+                # Handle user interruption during assistant response
+                await self._handle_user_interruption()
                 
             elif event_type == "conversation.item.created":
                 # Check if this is the assistant's response starting
                 item = data.get("item", {})
                 if item.get("role") == "assistant":
-                    self.logger.info("🤖 Assistant starting to formulate response")
+                    # Store the assistant item ID for potential truncation
+                    self.last_assistant_item_id = item.get("id")
+                    self.logger.info(f"🤖 Assistant starting response (item: {self.last_assistant_item_id})")
                     # Don't mark complete here - wait for actual content
                 self.logger.debug(f"📝 OpenAI created conversation item: role={item.get('role')}")
                 
@@ -632,8 +635,8 @@ class OpenAIRealtimeAgent:
             self.logger.info(f"👤 User transcript: {transcript}")
             self._mark_response_complete('transcription')
             
-            # Manually trigger response since OpenAI server VAD doesn't automatically respond
-            # This is the permanent solution after discovering server VAD only transcribes but doesn't trigger responses
+            # Manually trigger response since OpenAI server VAD doesn't automatically respond reliably
+            # Keep manual triggering for now while we investigate interruption separately
             if self.pending_responses.get('assistant_response', False):
                 self.logger.info("🤖 Triggering OpenAI response generation")
                 try:
@@ -999,6 +1002,62 @@ class OpenAIRealtimeAgent:
                 self.logger.warning("Failed to publish conversation ID")
         except Exception as e:
             self.logger.error(f"Error publishing conversation ID: {e}")
+            
+    async def _handle_user_interruption(self):
+        """Handle user interruption during assistant response"""
+        try:
+            # Check if assistant is currently responding (has active response)
+            if not self.pause_detector.is_llm_speaking():
+                self.logger.debug("👂 User speech detected, but assistant not speaking - no interruption needed")
+                return
+                
+            self.logger.info("⚡ User interruption detected - canceling assistant response")
+            
+            # 1. Cancel current response
+            cancel_msg = {"type": "response.cancel"}
+            await self.session_manager.websocket.send(json.dumps(cancel_msg))
+            self.logger.info("🛑 Sent response.cancel")
+            
+            # 2. Clear output audio buffer to stop playback immediately  
+            clear_msg = {"type": "output_audio_buffer.clear"}
+            await self.session_manager.websocket.send(json.dumps(clear_msg))
+            self.logger.info("🔇 Cleared output audio buffer")
+            
+            # 3. Truncate conversation item to prevent partial text in context
+            if self.last_assistant_item_id:
+                truncate_msg = {
+                    "type": "conversation.item.truncate",
+                    "item_id": self.last_assistant_item_id,
+                    "content_index": 0,  # Truncate from beginning - remove entire partial response
+                    "audio_end_ms": 0    # Start from beginning of audio
+                }
+                await self.session_manager.websocket.send(json.dumps(truncate_msg))
+                self.logger.info(f"✂️ Truncated conversation item: {self.last_assistant_item_id}")
+            
+            # 4. Clear assistant transcript buffer to prevent partial text pollution
+            if self.assistant_transcript_buffer:
+                self.logger.info(f"🧹 Clearing partial transcript: '{self.assistant_transcript_buffer[:50]}...'")
+                self.assistant_transcript_buffer = ""
+            
+            # 5. Signal ROS audio player to clear its queue
+            if self.published_topics.get('interruption_signal') and self.bridge_interface:
+                interrupt_signal = {"data": True}
+                await self.bridge_interface.put_outbound_message(
+                    self.published_topics['interruption_signal'],
+                    interrupt_signal,
+                    "std_msgs/Bool"
+                )
+                self.logger.info("📡 Sent interruption signal to audio player")
+            
+            # 6. Mark LLM response as complete since we're interrupting it
+            self.pause_detector.mark_llm_response_complete()
+            self._mark_response_complete('assistant_response')
+            self._mark_response_complete('audio_complete')
+            
+            self.logger.info("✅ Interruption handled - ready for new user input")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error handling user interruption: {e}")
 
 
 # Convenience function for standalone usage

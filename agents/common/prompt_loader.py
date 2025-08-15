@@ -45,15 +45,15 @@ class PromptLoader:
         if prompts_file is None:
             # Try to find prompts.yaml in multiple possible locations
             possible_paths = [
-                # Source directory (development)
-                os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config', 'prompts.yaml'),
+                # Source directory (development) - from agents/common to config
+                os.path.join(os.path.dirname(os.path.dirname(__file__)), '..', 'config', 'prompts.yaml'),
                 # Install directory (installed package)
                 os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '..', '..', '..', 'src', 'by_your_command', 'config', 'prompts.yaml'),
                 # ROS workspace source
                 '/home/karim/ros2_ws/src/by_your_command/config/prompts.yaml',
                 # Current working directory
                 os.path.join(os.getcwd(), 'config', 'prompts.yaml'),
-                # Relative to agent directory
+                # Relative to common directory
                 os.path.join(os.path.dirname(__file__), '..', '..', 'config', 'prompts.yaml')
             ]
             

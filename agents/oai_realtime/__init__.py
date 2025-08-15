@@ -2,9 +2,9 @@
 
 from .oai_realtime_agent import OpenAIRealtimeAgent
 from .session_manager import SessionManager
-from .pause_detector import PauseDetector
-# AgentGraph moved to parent agents/ directory as LangGraph placeholder
 from .serializers import OpenAIRealtimeSerializer
+# Common utilities moved to agents.common
+from ..common import PauseDetector
 
 __all__ = [
     'OpenAIRealtimeAgent',
