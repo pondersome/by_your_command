@@ -664,6 +664,15 @@ ros2 topic echo /command_detected
 - Monitor VAD output: `ros2 topic echo /voice_activity`
 - Verify audio input: `ros2 topic hz /audio`
 
+## Future Considerations
+
+### Wake Word Attention Management
+The OpenAI Realtime API's "always-on" nature makes it unsuitable for public deployments where background conversations trigger unwanted responses. A comprehensive analysis of implementing sleep/wake functionality using OpenWakeWord for attention management is documented in:
+
+📄 **[Wake Word Attention Management Analysis](specs/analysis/wakeword_wakeword_partytime_excellent.md)**
+
+This analysis covers multiple approaches for implementing robot attention states, ultimately recommending OpenWakeWord as a solution that combines VAD and wake word detection at the ROS level. The approach would enable natural sleep commands ("go to sleep", "be quiet") and wake phrases ("Hey Barney") while eliminating API costs and inappropriate responses during sleep periods.
+
 ## Contributing
 
 Contributions are welcome! Please follow the development guidelines in `devrules/agentic_rules.md`.
