@@ -18,7 +18,7 @@ Date: January 2025
 import re
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 from typing import Optional, Tuple
 
 
@@ -56,6 +56,13 @@ class CommandProcessor(Node):
         self.behavior_command_pub = self.create_publisher(
             String,
             behavior_topic,
+            10
+        )
+        
+        # Publisher for voice_active control (sleep command)
+        self.voice_active_pub = self.create_publisher(
+            Bool,
+            'voice_active',  # Relative topic name for namespacing
             10
         )
         
@@ -179,6 +186,15 @@ class CommandProcessor(Node):
     
     def handle_behavior_command(self, command: str, modifier: Optional[str]):
         """Publish behavior commands."""
+        # Handle special sleep command for voice control
+        if command == 'sleep':
+            # Send voice_active false to mute VAD
+            voice_msg = Bool()
+            voice_msg.data = False
+            self.voice_active_pub.publish(voice_msg)
+            self.get_logger().info("Sleep command - muting voice detection")
+        
+        # Also publish the behavior command normally for other systems
         if modifier:
             full_command = f"{command}@{modifier}"
         else:

@@ -336,7 +336,7 @@ class OpenAIRealtimeAgent:
                     
             # Handle other message types...
             elif envelope.ros_msg_type == "std_msgs/String":
-                await self.inject_text_input(envelope.raw_data.data)
+                await self.send_text_to_llm(envelope.raw_data.data)
     
     async def handle_llm_response(self):
         """Process responses from OpenAI and send back through WebSocket bridge"""
@@ -768,7 +768,40 @@ class ConversationMonitor:
         """Background task checking for conversation timeout"""
 ```
 
-#### 3.2.2 ROS Topic Integration
+#### 3.2.2 Response Tracking and Timeout Protection
+
+The agent implements robust response expectation tracking to prevent deadlock states:
+
+**Response Expectations**:
+```python
+self.pending_responses = {
+    'transcription': True,      # Expect user transcript from OpenAI
+    'assistant_response': True, # Expect assistant to start responding
+    'audio_complete': True      # Expect response completion
+}
+```
+
+**Timeout Protection**:
+- **10-second timeout** prevents indefinite waiting for responses that never arrive
+- **Automatic recovery** clears expectations and allows session cycling
+- **Log throttling** (5-second intervals) prevents spam during waiting periods
+- **Long response protection** - timeout only applies during waiting phase, not active responses
+
+**Common Deadlock Scenarios**:
+1. OpenAI doesn't provide transcription (no speech detected, API issues)
+2. Assistant doesn't respond (prompt issues, API problems)
+3. Response never completes (WebSocket disconnection)
+
+**Recovery Mechanism**:
+```python
+# After 10 seconds of waiting
+if timeout_exceeded:
+    self.logger.warning("⏰ Response timeout - forcing cycle")
+    self._clear_response_expectations()
+    # Session cycling can now proceed
+```
+
+#### 3.2.3 ROS Topic Integration
 **Topic**: `conversation_id` (relative topic - respects namespace/prefix)
 - **Message Type**: `std_msgs/String`
 - **Publishers**: Agent on timeout or reset

@@ -51,3 +51,19 @@ ros_ai_bridge:
         msg_type: "std_msgs/String"
       - topic: "interruption_signal" # Signal to clear audio player queue
         msg_type: "std_msgs/Bool"
+
+# Silero VAD Node Configuration
+silero_vad_node:
+  ros__parameters:
+    sample_rate: 16000
+    max_buffer_frames: 250
+    pre_roll_frames: 15
+    utterance_chunk_frames: 10
+    threshold: 0.5
+    min_silence_duration_ms: 250
+    
+    # Clap detection parameters for wake-up when muted
+    clap_detection_enabled: true  # Enable adaptive clap detection
+    clap_spike_ratio: 4.0         # Clap must be 4x louder than background noise
+    clap_min_gap_ms: 300          # Minimum gap between claps for double-clap detection (ms)
+    clap_max_gap_ms: 800          # Maximum gap between claps for double-clap detection (ms)

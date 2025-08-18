@@ -100,7 +100,21 @@ export GEMINI_API_KEY="your-api-key-here"
 ```
 
 ### VAD Settings
-Edit `config/config.yaml` to tune voice detection parameters.
+Edit `config/config.yaml` to tune voice detection and clap detection parameters:
+
+```yaml
+silero_vad_node:
+  ros__parameters:
+    # VAD parameters
+    threshold: 0.5
+    min_silence_duration_ms: 250
+    
+    # Clap detection parameters
+    clap_detection_enabled: true
+    clap_spike_ratio: 4.0
+    clap_min_gap_ms: 300
+    clap_max_gap_ms: 800
+```
 
 ### Acoustic Echo Cancellation (AEC)
 
@@ -184,7 +198,23 @@ ros2 run by_your_command oai_realtime_agent
 ros2 run by_your_command test_utterance_chunks
 ros2 run by_your_command test_recorder_integration
 ros2 run by_your_command test_command_processor
+ros2 run by_your_command test_vad_mute_control
+ros2 run by_your_command test_sleep_clap_integration
+ros2 run by_your_command test_clap_detection
 ros2 run by_your_command publish_command "lookup"
+
+# Voice control commands
+ros2 topic pub /command_transcript std_msgs/String "data: 'sleep'"  # Sleep command (mutes VAD)
+
+# Text input (alternative to voice when microphone unavailable/muted)
+ros2 topic pub /text_input std_msgs/String "data: 'Hello robot, what time is it?'" --once
+
+# Text-based wake commands (when VAD is muted/sleeping)
+ros2 topic pub /text_input std_msgs/String "data: 'wake up'" --once
+
+# Remote mute/unmute control for VAD node
+ros2 topic pub /voice_active std_msgs/Bool "data: false"  # Mute
+ros2 topic pub /voice_active std_msgs/Bool "data: true"   # Unmute
 ```
 
 ## Architecture
@@ -195,6 +225,12 @@ ros2 run by_your_command publish_command "lookup"
 ```
 Microphone → audio_capturer → echo_suppressor → /audio_filtered → 
 silero_vad → /voice_chunks → ROS Bridge → WebSocket → 
+OpenAI Agent → OpenAI Realtime API
+```
+
+#### Text Input Flow (Alternative Path)
+```
+/text_input → ROS Bridge → WebSocket → 
 OpenAI Agent → OpenAI Realtime API
 ```
 
@@ -338,6 +374,22 @@ The `agents/common/` module provides shared functionality across all agent imple
 - **ConversationMonitor**: Monitors conversation state and provides real-time insights
 - **PauseDetector**: Intelligent detection of conversation pauses for session cycling
 
+### Response Timeout Protection
+
+The system includes robust protection against agent deadlock:
+
+#### Timeout Mechanism
+- **10-second timeout** for response expectations (transcription, assistant response, audio completion)
+- **Automatic recovery** when responses don't arrive (API issues, no speech detected, etc.)
+- **Log throttling** to prevent spam (messages every 5 seconds instead of every 100ms)
+- **Long response protection** - timeout only applies to waiting phase, not active responses
+
+#### Benefits
+- Prevents indefinite agent deadlock from stuck "waiting for responses" states
+- Maintains responsiveness during API connectivity issues
+- Cleaner logs with throttled status messages
+- Compatible with both conversational and command agents
+
 ### Real-Time User Interruption System
 
 The system supports natural interruptions where users can speak over the assistant to stop responses immediately:
@@ -385,6 +437,8 @@ A node that performs voice activity detection using the Silero VAD model and pub
 
 **Subscribed Topics**:
 - `/audio` (audio_common_msgs/AudioStamped): Input audio stream
+- `/voice_active` (std_msgs/Bool): Remote mute/unmute control (default: true/active)
+- `/text_input` (std_msgs/String): Text-based wake commands when muted
 
 **Published Topics**:
 - `/voice_activity` (std_msgs/Bool): Voice activity detection status
@@ -397,11 +451,19 @@ A node that performs voice activity detection using the Silero VAD model and pub
 - `utterance_chunk_frames` (int, default 100): Frames per chunk (0 = full utterance mode)
 - `threshold` (float, default 0.5): VAD sensitivity threshold
 - `min_silence_duration_ms` (int, default 200): Silence duration to end utterance
+- `clap_detection_enabled` (bool, default true): Enable adaptive clap detection for wake-up
+- `clap_spike_ratio` (float, default 4.0): Clap must be this many times louder than background
+- `clap_min_gap_ms` (int, default 300): Minimum gap between claps for double-clap detection
+- `clap_max_gap_ms` (int, default 800): Maximum gap between claps for double-clap detection
 
 **Features**:
 - Utterance ID stamping using first frame timestamp
 - One-frame delay end-of-utterance detection
 - Configurable chunking with pre-roll support
+- **Remote mute/unmute control**: Stops all audio processing and forwarding when muted
+- **Adaptive clap detection**: When muted, listens for double-clap pattern to wake up
+- **Text-based wake commands**: Responds to "wake", "awaken", "wake up" in text_input messages
+- **Background noise adaptation**: Clap threshold automatically adjusts to environment noise level
 
 ### voice_chunk_recorder
 A node that subscribes to enhanced voice chunks and writes them to WAV files with utterance-aware naming.
@@ -473,6 +535,7 @@ A node that listens for command transcripts from AI agents and routes them to ap
 **Published Topics**:
 - `/grunt1/arm_preset` (std_msgs/String): Arm preset commands (absolute path, no namespace)
 - `/grunt1/behavior_command` (std_msgs/String): Behavior commands (absolute path, no namespace)
+- `voice_active` (std_msgs/Bool): Voice control for sleep command (relative topic name)
 
 **Parameters**:
 - `command_transcript_topic` (string, default "command_transcript"): Input topic for commands
@@ -485,6 +548,7 @@ A node that listens for command transcripts from AI agents and routes them to ap
 - Routes behavior commands to behavior system
 - Validates command syntax and modifiers
 - Supports bearings as standalone pan commands
+- **Sleep command integration**: "sleep" command mutes voice detection via `/voice_active` topic
 
 **Supported Commands**:
 - **Arm Presets**: bumper, tenhut, lookup, lookout, reach, pan (with bearing modifier)

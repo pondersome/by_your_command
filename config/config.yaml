@@ -8,3 +8,9 @@ silero_vad_node:
     utterance_chunk_frames: 10 # 0 for no chunking - send the whole utterance as detected by silero. Otherwise, send interim chunks of the utterance at least every n frames
     threshold: 0.5 # VAD threshold
     min_silence_duration_ms: 250 # Minimum duration of silence in milliseconds before signaling end of utterance
+    
+    # Clap detection parameters for wake-up when muted
+    clap_detection_enabled: true  # Enable adaptive clap detection
+    clap_spike_ratio: 4.0         # Clap must be 4x louder than background noise
+    clap_min_gap_ms: 300          # Minimum gap between claps for double-clap detection (ms)
+    clap_max_gap_ms: 800          # Maximum gap between claps for double-clap detection (ms)

@@ -70,6 +70,10 @@ class OpenAIRealtimeAgent:
             'assistant_response': False, # Waiting for assistant to start responding
             'audio_complete': False     # Waiting for assistant response to complete
         }
+        self.response_timeout_start = None  # When we started waiting for responses
+        self.response_timeout_seconds = 10.0  # Max time to wait for responses
+        self.last_waiting_log_time = 0  # Last time we logged "waiting for responses"
+        self.waiting_log_interval = 5.0  # Log waiting message every 5 seconds
         
         # Assistant response accumulation
         self.assistant_transcript_buffer = ""
@@ -331,6 +335,20 @@ class OpenAIRealtimeAgent:
                         self.logger.info(f"📨 Received external conversation ID: {new_conversation_id}")
                         self.conversation_monitor.handle_external_reset(new_conversation_id)
                         
+                elif envelope.ros_msg_type == "std_msgs/String" and envelope.topic_name.endswith("/text_input"):
+                    # Handle text input - inject as conversation item
+                    text_content = envelope.raw_data.data
+                    self.logger.info(f"📝 Received text input: '{text_content[:50]}...'")
+                    
+                    # Wait for session to be ready (reuses session creation logic above)
+                    if not self.session_ready.is_set():
+                        self.logger.info("⏳ Waiting for session ready before sending text...")
+                        await self.session_ready.wait()
+                        self.logger.info("✅ Session ready - proceeding with text input")
+                    
+                    # Send text as conversation item to OpenAI
+                    await self._send_text_to_openai(envelope)
+                        
                 else:
                     # Handle other message types
                     api_msg = await self.serializer.safe_serialize(envelope)
@@ -368,8 +386,17 @@ class OpenAIRealtimeAgent:
         # Check if we're still waiting for responses
         pending_count = sum(self.pending_responses.values())
         if pending_count > 0:
-            self.logger.info(f"⏳ Pause detected but waiting for {pending_count} responses - delaying cycle")
-            return
+            # Check for timeout
+            if self.response_timeout_start and time.time() - self.response_timeout_start > self.response_timeout_seconds:
+                self.logger.warning(f"⏰ Response timeout after {self.response_timeout_seconds}s - forcing cycle")
+                self._clear_response_expectations()
+            else:
+                # Throttle log messages - only log every 5 seconds
+                current_time = time.time()
+                if current_time - self.last_waiting_log_time >= self.waiting_log_interval:
+                    self.logger.info(f"⏳ Pause detected but waiting for {pending_count} responses - delaying cycle")
+                    self.last_waiting_log_time = current_time
+                return
             
         # Check if session creation/cycling is already in progress
         if self.session_creating:
@@ -740,6 +767,8 @@ class OpenAIRealtimeAgent:
             'assistant_response': True, # Expect assistant to respond  
             'audio_complete': True      # Expect response completion
         }
+        self.response_timeout_start = time.time()  # Start timeout timer
+        self.last_waiting_log_time = 0  # Reset throttling timer
         self.logger.info("⏳ Expecting transcription + assistant response")
         
     def _mark_response_complete(self, response_type: str):
@@ -748,6 +777,70 @@ class OpenAIRealtimeAgent:
             self.pending_responses[response_type] = False
             self.logger.info(f"✅ {response_type} complete")
             self._check_cycle_readiness()
+            
+    def _clear_response_expectations(self):
+        """Clear all pending response expectations (for timeout recovery)"""
+        self.pending_responses = {
+            'transcription': False,
+            'assistant_response': False,
+            'audio_complete': False
+        }
+        self.response_timeout_start = None
+        self.last_waiting_log_time = 0  # Reset throttling timer
+        self.logger.info("🚫 Cleared all response expectations")
+        
+    async def _send_text_to_openai(self, envelope):
+        """Send text input as a conversation item to OpenAI"""
+        try:
+            # Use existing serializer that already handles text format
+            api_msg = self.serializer.serialize_text_data(envelope)
+            
+            if api_msg and self.session_manager.is_connected():
+                await self.session_manager.websocket.send(json.dumps(api_msg))
+                self.metrics['messages_sent_to_openai'] += 1
+                self.logger.info(f"✅ Sent text to OpenAI: '{envelope.raw_data.data[:50]}...'")
+                
+                # Trigger response creation immediately for text input
+                response_msg = {"type": "response.create"}
+                await self.session_manager.websocket.send(json.dumps(response_msg))
+                self.logger.info("🚀 Triggered response creation for text input")
+                
+                # Set up response expectations (text also expects responses)
+                self._setup_response_expectations()
+                
+            else:
+                self.logger.warning("⚠️ Text message ready but no active session")
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error sending text to OpenAI: {e}")
+            
+    async def send_text_to_llm(self, text: str) -> bool:
+        """
+        Send text input to the LLM as a conversation item.
+        
+        This is a common interface method that should be implemented by all agents.
+        Different LLM providers may handle text differently internally.
+        
+        Args:
+            text: The text message to send to the LLM
+            
+        Returns:
+            bool: True if message was sent successfully
+        """
+        # For OpenAI, we need the full envelope for metadata
+        # Create a minimal envelope for the text
+        envelope = type('TextEnvelope', (object,), {
+            'raw_data': type('RawData', (object,), {'data': text})(),
+            'ros_msg_type': 'std_msgs/String',
+            'topic_name': 'text_input'
+        })()
+        
+        try:
+            await self._send_text_to_openai(envelope)
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to send text to LLM: {e}")
+            return False
             
     def _check_cycle_readiness(self):
         """Check if all responses are complete and we can cycle session"""
@@ -790,6 +883,7 @@ class OpenAIRealtimeAgent:
         
         if all_complete:
             self.logger.info("🔄 All responses complete - ready to cycle session")
+            self.response_timeout_start = None  # Clear timeout timer
             # Reset pause detector since we're ready for the next utterance
             self.pause_detector.reset()
         else:
@@ -802,6 +896,7 @@ class OpenAIRealtimeAgent:
             'assistant_response': False, 
             'audio_complete': False
         }
+        self.response_timeout_start = None  # Clear timeout timer
         # Clear assistant transcript buffer
         self.assistant_transcript_buffer = ""
             

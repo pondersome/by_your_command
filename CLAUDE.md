@@ -33,6 +33,15 @@ ros2 run by_your_command voice_chunk_recorder
 # Test scripts
 ros2 run by_your_command test_utterance_chunks
 ros2 run by_your_command test_recorder_integration
+ros2 run by_your_command test_sleep_clap_integration
+ros2 run by_your_command test_clap_detection
+
+# Voice control commands
+ros2 topic pub /command_transcript std_msgs/String "data: 'sleep'"  # Sleep command
+
+# Remote mute/unmute control for Silero VAD
+ros2 topic pub /voice_active std_msgs/Bool "data: false"  # Mute
+ros2 topic pub /voice_active std_msgs/Bool "data: true"   # Unmute
 ```
 
 ## Architecture
