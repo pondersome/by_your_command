@@ -1,7 +1,7 @@
 # Wake Word Attention Management Analysis
 ## Solving the "Always-On" Problem for Public Space Deployments
 
-**Author**: Karim Virani & Claude  
+**Author**: Karim Virani 
 **Date**: August 2025  
 **Status**: Analysis Complete - Future Implementation Project
 
@@ -298,7 +298,7 @@ openwakeword_gate:
 
 ## Implementation Roadmap
 
-### Phase 1: Foundation (Week 1-2)
+### Phase 1: Foundation
 **Goal**: Replace Silero VAD with OpenWakeWord VAD
 - Install and configure OpenWakeWord
 - Create new `openwakeword_gate_node.py`
@@ -310,7 +310,7 @@ openwakeword_gate:
 - Performance benchmarks vs. Silero
 - Integration tests with existing pipeline
 
-### Phase 2: Wake Word Integration (Week 3-4)  
+### Phase 2: Wake Word Integration  
 **Goal**: Add wake word detection and basic state management
 - Implement pre-trained wake word models ("hey jarvis" initially)
 - Add state machine (ACTIVE/LIGHT_SLEEP/DEEP_SLEEP)
@@ -322,7 +322,7 @@ openwakeword_gate:
 - Wake word detection with configurable thresholds
 - State persistence and recovery
 
-### Phase 3: Custom Training (Week 5-6)
+### Phase 3: Custom Training
 **Goal**: Train robot-specific wake words
 - Use OpenWakeWord's Colab notebook for "Hey Barney" training
 - Collect/generate training data for robot name
@@ -334,7 +334,7 @@ openwakeword_gate:
 - Training documentation and process
 - Performance validation in target environments
 
-### Phase 4: Advanced Features (Week 7-8)
+### Phase 4: Advanced Features
 **Goal**: Polish and production readiness
 - Add visual/audio state indicators
 - Implement command detection from transcripts
