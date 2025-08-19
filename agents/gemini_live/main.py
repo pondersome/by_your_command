@@ -2,8 +2,8 @@
 """
 Gemini Live Agent Main Entry Point
 
-Standalone executable for running the Gemini Live multimodal agent with
-ROS AI Bridge integration via WebSockets.
+Standalone executable for running the Gemini Live agent with
+ROS AI Bridge integration.
 
 Author: Karim Virani  
 Version: 1.0
@@ -17,8 +17,7 @@ import yaml
 from typing import Dict, Any
 from datetime import datetime
 
-# Import the new Gemini agent with Pipecat pipeline
-from agents.gemini_live.gemini_live_agent_new import GeminiLiveAgent
+from agents.oai_realtime.oai_realtime_agent import OpenAIRealtimeAgent
 
 
 def load_config(config_path: str = None) -> Dict[str, Any]:
@@ -26,34 +25,23 @@ def load_config(config_path: str = None) -> Dict[str, Any]:
     
     # Default configuration
     config = {
-        'agent_id': 'gemini_visual',
-        'agent_type': 'multimodal',
-        'api_key': '',
-        'model': 'gemini-2.0-flash-exp',
-        'bridge_connection': {
-            'type': 'websocket',
-            'host': 'localhost',
-            'port': 8765,
-            'reconnect_interval': 5.0,
-            'max_reconnect_attempts': 10
-        },
-        'modalities': ['audio', 'vision', 'text'],
-        'audio': {
-            'input_sample_rate': 16000,
-            'output_sample_rate': 24000,
-            'voice': 'default'
-        },
-        'video': {
-            'enabled': True,
-            'fps': 1.0,
-            'max_fps': 10.0,
-            'min_fps': 0.1,
-            'resolution': '480p',
-            'dynamic_fps': True
-        },
-        'session_timeout': 300.0,
-        'max_context_tokens': 4000,
-        'log_level': logging.INFO
+        'openai_api_key': '',
+        'model': 'gpt-4o-realtime-preview',
+        'voice': 'alloy',
+        'session_pause_timeout': 10.0,
+        'session_max_duration': 120.0,
+        'session_max_tokens': 50000,
+        'session_max_cost': 5.00,
+        'max_context_tokens': 2000,
+        'conversation_timeout': 600.0,  # 10 minutes
+        'vad_threshold': 0.5,
+        'vad_prefix_padding': 300,
+        'vad_silence_duration': 200,
+        'vad_create_response': False,  # Use manual triggering for reliable responses
+        'log_level': logging.INFO,
+        'system_prompt': """You are a helpful robotic assistant. You can control robot movements, 
+answer questions, and engage in natural conversation. Be concise but friendly.
+Respond naturally to the user's speech and provide helpful information or assistance."""
     }
     
     # Load from config file if specified
@@ -62,15 +50,18 @@ def load_config(config_path: str = None) -> Dict[str, Any]:
             with open(config_path, 'r') as f:
                 file_config = yaml.safe_load(f)
                 # Look for agent-specific configuration
-                if 'gemini_live_agent' in file_config:
-                    agent_config = file_config['gemini_live_agent']
-                    print(f"✅ Found gemini_live_agent config with keys: {list(agent_config.keys())}")
-                    # Merge nested configs properly
-                    for key, value in agent_config.items():
-                        if isinstance(value, dict) and key in config and isinstance(config[key], dict):
-                            config[key].update(value)
-                        else:
-                            config[key] = value
+                if 'openai_realtime_agent' in file_config:
+                    agent_config = file_config['openai_realtime_agent']
+                    print(f"✅ Found openai_realtime_agent config with keys: {list(agent_config.keys())}")
+                    if 'voice' in agent_config:
+                        print(f"✅ Voice setting in YAML: {agent_config['voice']}")
+                    config.update(agent_config)
+                elif 'openai_command_agent' in file_config:
+                    agent_config = file_config['openai_command_agent']
+                    print(f"✅ Found openai_command_agent config with keys: {list(agent_config.keys())}")
+                    if 'voice' in agent_config:
+                        print(f"✅ Voice setting in YAML: {agent_config['voice']}")
+                    config.update(agent_config)
                 else:
                     config.update(file_config)
             print(f"✅ Loaded configuration from {config_path}")
@@ -79,37 +70,47 @@ def load_config(config_path: str = None) -> Dict[str, Any]:
     
     # Override with environment variables
     env_mappings = {
-        'GEMINI_API_KEY': 'api_key',
-        'AGENT_TYPE': 'agent_type',
-        'PAUSE_TIMEOUT': 'session_timeout'
+        'OPENAI_API_KEY': 'openai_api_key',
+        'OPENAI_MODEL': 'model', 
+        'OPENAI_VOICE': 'voice',
+        'PAUSE_TIMEOUT': 'session_pause_timeout',
+        'MAX_DURATION': 'session_max_duration',
+        'VAD_THRESHOLD': 'vad_threshold',
+        'VAD_PREFIX_PADDING': 'vad_prefix_padding',
+        'VAD_SILENCE_DURATION': 'vad_silence_duration'
     }
     
     for env_var, config_key in env_mappings.items():
         value = os.getenv(env_var)
-        print(f"🔍 Checking {env_var}: {'***' if env_var == 'GEMINI_API_KEY' and value else value or 'NOT SET'}")
+        print(f"🔍 Checking {env_var}: {'***' if env_var == 'OPENAI_API_KEY' and value else value or 'NOT SET'}")
         if value:
             # Convert numeric values
-            if config_key.endswith('_timeout'):
+            if config_key.endswith('_timeout') or config_key.endswith('_duration') or config_key.startswith('vad_'):
                 try:
-                    config[config_key] = float(value)
+                    if config_key == 'vad_threshold':
+                        config[config_key] = float(value)
+                    elif config_key.endswith('_padding') or config_key.endswith('_duration'):
+                        config[config_key] = int(value)
+                    else:
+                        config[config_key] = float(value)
                 except ValueError:
                     print(f"⚠️ Invalid numeric value for {env_var}: {value}")
             else:
                 config[config_key] = value
     
     # Validate required configuration
-    if not config.get('api_key'):
-        raise ValueError("Gemini API key required. Set GEMINI_API_KEY environment variable or add to config file.")
+    if not config.get('openai_api_key'):
+        raise ValueError("OpenAI API key required. Set OPENAI_API_KEY environment variable or add to config file.")
     
     # Debug: Show final config
-    print(f"📋 Final config - agent_type: {config.get('agent_type', 'NOT SET')}, model: {config.get('model', 'NOT SET')}")
+    print(f"📋 Final config - voice: {config.get('voice', 'NOT SET')}, model: {config.get('model', 'NOT SET')}")
     
     return config
 
 
 class AgentFormatter(logging.Formatter):
     """Custom formatter for agent logs"""
-    def __init__(self, agent_type='gemini'):
+    def __init__(self, agent_type='conv'):
         self.agent_type = agent_type
         super().__init__()
         
@@ -122,8 +123,8 @@ class AgentFormatter(logging.Formatter):
 def setup_logging(level: int = logging.INFO, config: Dict[str, Any] = None):
     """Setup logging configuration"""
     # Determine agent type from config
-    agent_id = config.get('agent_id', 'gemini_visual') if config else 'gemini_visual'
-    agent_type = 'visual' if 'visual' in agent_id.lower() else 'gemini'
+    agent_id = config.get('agent_id', 'openai_realtime') if config else 'openai_realtime'
+    agent_type = 'cmd' if 'command' in agent_id.lower() else 'conv'
     
     # Create console handler with custom formatter
     handler = logging.StreamHandler()
@@ -138,23 +139,21 @@ def setup_logging(level: int = logging.INFO, config: Dict[str, Any] = None):
     # Set specific logger levels
     logging.getLogger('websockets').setLevel(logging.WARNING)
     logging.getLogger('urllib3').setLevel(logging.WARNING)
-    logging.getLogger('pipecat').setLevel(logging.INFO)
 
 
 async def run_standalone_agent(config: Dict[str, Any]):
-    """Run agent as standalone process connecting to bridge via WebSocket"""
+    """Run agent as standalone process connecting to bridge queues"""
     
     try:
-        # Create and initialize agent (connects to bridge via WebSocket)
-        agent = GeminiLiveAgent(config)
+        # Create and initialize agent (connects to existing bridge)
+        agent = OpenAIRealtimeAgent(config)
         await agent.initialize()
         
-        print("🚀 Gemini Live Agent started!")
+        print("🚀 OpenAI Realtime Agent started!")
         print(f"📡 Model: {config.get('model', 'unknown')}")
-        print(f"🎯 Agent Type: {config.get('agent_type', 'multimodal')}")
-        print(f"📷 Video: {'Enabled' if config.get('video', {}).get('enabled') else 'Disabled'}")
-        print(f"🎙️  Audio: {config.get('audio', {}).get('input_sample_rate', 16000)}Hz input")
-        print("🔊 Listening for multimodal input...")
+        print(f"⏱️  Pause timeout: {config.get('session_pause_timeout', 10)}s")
+        print(f"🎙️  Voice: {config.get('voice', 'alloy')}")
+        print("🔊 Listening for speech...")
         
         # Run agent main loop
         await agent.run()
@@ -168,7 +167,7 @@ async def run_standalone_agent(config: Dict[str, Any]):
         # Cleanup
         try:
             if 'agent' in locals():
-                await agent.shutdown()
+                await agent.stop()
         except:
             pass
         print("👋 Goodbye!")
@@ -178,7 +177,7 @@ def main():
     """Main entry point"""
     import argparse
     
-    parser = argparse.ArgumentParser(description="Gemini Live Multimodal Agent")
+    parser = argparse.ArgumentParser(description="OpenAI Realtime Agent")
     parser.add_argument(
         '--config', '-c',
         type=str,
@@ -192,23 +191,17 @@ def main():
     parser.add_argument(
         '--pause-timeout', '-p',
         type=float,
-        help='Session timeout in seconds'
+        help='Session pause timeout in seconds'
     )
     parser.add_argument(
         '--api-key',
         type=str,
-        help='Gemini API key (overrides environment variable)'
-    )
-    parser.add_argument(
-        '--agent-type',
-        type=str,
-        choices=['multimodal', 'conversation', 'command', 'visual'],
-        help='Agent type (overrides config file)'
+        help='OpenAI API key (overrides environment variable)'
     )
     parser.add_argument(
         '--prompt-id',
         type=str,
-        help='Prompt ID from prompts.yaml (overrides config file)'
+        help='Named prompt ID from prompts.yaml (overrides config file)'
     )
     
     args = parser.parse_args()
@@ -219,13 +212,10 @@ def main():
         
         # Override with command line arguments
         if args.pause_timeout:
-            config['session_timeout'] = args.pause_timeout
+            config['session_pause_timeout'] = args.pause_timeout
             
         if args.api_key:
-            config['api_key'] = args.api_key
-            
-        if args.agent_type:
-            config['agent_type'] = args.agent_type
+            config['openai_api_key'] = args.api_key
             
         if args.prompt_id:
             config['prompt_id'] = args.prompt_id
@@ -236,14 +226,14 @@ def main():
         # Setup logging with agent type
         setup_logging(config['log_level'], config)
         
-        print("🤖 Starting Gemini Live Agent...")
+        print("🤖 Starting OpenAI Realtime Agent...")
         
         # Run agent
         asyncio.run(run_standalone_agent(config))
         
     except ValueError as e:
         print(f"❌ Configuration error: {e}")
-        print("💡 Set GEMINI_API_KEY environment variable or use --config option")
+        print("💡 Set OPENAI_API_KEY environment variable or use --config option")
         exit(1)
     except KeyboardInterrupt:
         print("\n👋 Goodbye!")

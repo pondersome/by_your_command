@@ -19,7 +19,7 @@ import logging
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
-from session_manager import SessionManager
+from oai_session_manager import OpenAISessionManager as SessionManager
 
 
 async def test_runtime_prompt_switching():

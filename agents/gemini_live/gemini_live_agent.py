@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Gemini Live Agent with Pipecat Pipeline
+Gemini Live API Agent
 
-Multimodal agent for real-time voice and vision processing using Google's Gemini Live API
-and Pipecat's pipeline architecture. Integrates with ROS2 through the existing WebSocket bridge.
+Main agent implementation with intelligent session management and conversation
+continuity. Integrates with ROS AI Bridge for zero-copy message handling.
 
 Author: Karim Virani
 Version: 1.0
@@ -11,517 +11,1166 @@ Date: August 2025
 """
 
 import asyncio
-import logging
-from typing import Optional, Dict, Any, List, AsyncGenerator
-from dataclasses import dataclass
 import base64
+import json
+import logging
+import time
+from typing import Optional, Dict, Any, List
 import numpy as np
+import websockets
 
-# Pipecat imports
-try:
-    from pipecat.pipeline.pipeline import Pipeline
-    from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext  # Use as base class example
-    from pipecat.frames.frames import Frame, AudioRawFrame, TextFrame, ImageRawFrame
-    # Note: Pipecat uses different frame names than we expected
-    AudioFrame = AudioRawFrame  # Alias for compatibility
-    ImageFrame = ImageRawFrame  # Alias for compatibility
-    
-    # Base processor class
-    from pipecat.processors.frame_processor import FrameProcessor as Processor
-except ImportError as e:
-    raise ImportError(f"Pipecat required: pip install pipecat-ai. Error: {e}")
+#import rclpy
+from std_msgs.msg import String
+from audio_common_msgs.msg import AudioData
 
-# Import reusable components from OpenAI agent
-from ..oai_realtime.websocket_bridge import WebSocketBridgeInterface
-from ..oai_realtime.context import ConversationContext, ContextManager
-
-# Import custom processors
-from .gemini_bridge_processor import GeminiLiveBridgeProcessor
-from .visual_processor import VisualProcessor
-from .serializers import GeminiSerializer
+# Use refactored components
+from .oai_serializer import OpenAISerializer
+from .oai_session_manager import OpenAISessionManager
+from ..common.base_session_manager import SessionState
+from ..common.debug_interface import DebugInterface
+from ..common import WebSocketBridgeInterface, PauseDetector, ConversationContext, ConversationMonitor
 
 
-@dataclass
-class GeminiConfig:
-    """Configuration for Gemini Live agent"""
-    agent_id: str = "gemini_live"
-    agent_type: str = "multimodal"  # conversation|command|visual|multimodal
-    api_key: str = ""
-    model: str = "gemini-2.0-flash-exp"
-    
-    # Modalities
-    modalities: List[str] = None
-    
-    # Audio settings
-    audio_input_sample_rate: int = 16000
-    audio_output_sample_rate: int = 24000
-    voice: str = "default"
-    
-    # Video settings
-    video_enabled: bool = True
-    video_fps: float = 1.0
-    video_max_fps: float = 10.0
-    video_min_fps: float = 0.1
-    video_resolution: str = "480p"
-    video_dynamic_fps: bool = True
-    
-    # Session settings
-    session_timeout: float = 300.0
-    reconnect_attempts: int = 5
-    
-    # Topics
-    voice_topic: str = "voice_chunks"
-    camera_topic: str = "camera/image_raw"
-    audio_out_topic: str = "audio_out"
-    transcript_topic: str = "llm_transcript"
-    command_topic: str = "command_transcript"
-    scene_topic: str = "scene_description"
-    
-    def __post_init__(self):
-        if self.modalities is None:
-            self.modalities = ["audio", "vision", "text"]
-
-
-class ROSInputProcessor(Processor):
-    """Base processor for ROS input handling"""
-    
-    def __init__(self, agent: 'GeminiLiveAgent', topic_name: str):
-        super().__init__()
-        self.agent = agent
-        self.topic_name = topic_name
-        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
-        
-    async def process(self, frame: Frame) -> AsyncGenerator[Frame, None]:
-        """Process frames - to be implemented by subclasses"""
-        yield frame
-
-
-class ROSVoiceInputProcessor(ROSInputProcessor):
-    """Process voice chunks from ROS topics"""
-    
-    async def process(self, frame: Frame) -> AsyncGenerator[Frame, None]:
-        """Convert ROS AudioDataUtterance to Pipecat AudioFrame"""
-        if hasattr(frame, 'envelope'):
-            envelope = frame.envelope
-            if envelope.ros_msg_type == "by_your_command/AudioDataUtterance":
-                audio_data = envelope.raw_data
-                
-                # Convert int16 data to bytes for Gemini
-                if audio_data.int16_data:
-                    pcm_bytes = np.array(audio_data.int16_data, dtype=np.int16).tobytes()
-                    
-                    # Create Pipecat AudioFrame
-                    audio_frame = AudioFrame(
-                        audio=pcm_bytes,
-                        sample_rate=self.agent.config.audio_input_sample_rate,
-                        channels=1
-                    )
-                    
-                    # Add metadata
-                    audio_frame.utterance_id = audio_data.utterance_id
-                    audio_frame.is_utterance_end = audio_data.is_utterance_end
-                    
-                    yield audio_frame
-
-
-class ROSCameraInputProcessor(ROSInputProcessor):
-    """Process camera frames from ROS topics"""
-    
-    async def process(self, frame: Frame) -> AsyncGenerator[Frame, None]:
-        """Convert ROS Image to Pipecat ImageFrame"""
-        if hasattr(frame, 'envelope'):
-            envelope = frame.envelope
-            if envelope.ros_msg_type == "sensor_msgs/Image":
-                image_msg = envelope.raw_data
-                
-                # Convert ROS image to numpy array
-                # This is simplified - in practice would use cv_bridge
-                if image_msg.encoding == "rgb8":
-                    height = image_msg.height
-                    width = image_msg.width
-                    channels = 3
-                    img_array = np.frombuffer(image_msg.data, dtype=np.uint8)
-                    img_array = img_array.reshape((height, width, channels))
-                    
-                    # Create Pipecat ImageFrame
-                    image_frame = ImageFrame(
-                        image=img_array,
-                        size=(width, height),
-                        format="rgb"
-                    )
-                    
-                    # Add timestamp metadata
-                    image_frame.timestamp = envelope.timestamp
-                    
-                    yield image_frame
-
-
-class ResponseRouterProcessor(Processor):
-    """Route Gemini responses to appropriate outputs"""
-    
-    def __init__(self, agent: 'GeminiLiveAgent'):
-        super().__init__()
-        self.agent = agent
-        self.logger = logging.getLogger(f"{__name__}.ResponseRouter")
-        
-    async def process(self, frame: Frame) -> AsyncGenerator[Frame, None]:
-        """Route frames based on type"""
-        if isinstance(frame, AudioFrame):
-            # Audio response - route to speaker output
-            yield frame
-            
-        elif isinstance(frame, TextFrame):
-            # Text response - determine type and route
-            if hasattr(frame, 'response_type'):
-                if frame.response_type == 'transcript':
-                    await self._publish_transcript(frame.text)
-                elif frame.response_type == 'command':
-                    await self._publish_command(frame.text)
-                elif frame.response_type == 'scene':
-                    await self._publish_scene(frame.text)
-            yield frame
-            
-    async def _publish_transcript(self, text: str):
-        """Publish conversation transcript to ROS"""
-        if self.agent.bridge_interface:
-            await self.agent.bridge_interface.publish_message(
-                self.agent.config.transcript_topic,
-                {"data": text},
-                "std_msgs/String"
-            )
-            
-    async def _publish_command(self, command: str):
-        """Publish extracted command to ROS"""
-        if self.agent.bridge_interface:
-            await self.agent.bridge_interface.publish_message(
-                self.agent.config.command_topic,
-                {"data": command},
-                "std_msgs/String"
-            )
-            
-    async def _publish_scene(self, description: str):
-        """Publish scene description to ROS"""
-        if self.agent.bridge_interface:
-            await self.agent.bridge_interface.publish_message(
-                self.agent.config.scene_topic,
-                {"data": description},
-                "std_msgs/String"
-            )
-
-
-class ROSAudioOutputProcessor(Processor):
-    """Output audio to ROS topics"""
-    
-    def __init__(self, agent: 'GeminiLiveAgent'):
-        super().__init__()
-        self.agent = agent
-        self.logger = logging.getLogger(f"{__name__}.AudioOutput")
-        
-    async def process(self, frame: Frame) -> AsyncGenerator[Frame, None]:
-        """Publish audio frames to ROS"""
-        if isinstance(frame, AudioFrame):
-            # Convert audio bytes to int16 array for ROS
-            audio_array = np.frombuffer(frame.audio, dtype=np.int16)
-            
-            # Publish to ROS topic
-            if self.agent.bridge_interface:
-                await self.agent.bridge_interface.publish_message(
-                    self.agent.config.audio_out_topic,
-                    {"int16_data": audio_array.tolist()},
-                    "audio_common_msgs/AudioData"
-                )
-                
-        yield frame  # Pass through for potential downstream processors
-
-
-class GeminiLiveAgent:
+class OpenAIRealtimeAgent:
     """
-    Gemini Live agent using Pipecat pipeline architecture.
+    OpenAI Realtime API agent with intelligent session management.
     
     Features:
-    - Multimodal processing (voice + vision)
-    - Flexible pipeline composition
-    - ROS2 integration via WebSocket bridge
-    - Support for multiple deployment configurations
+    - Cost-optimized session cycling on conversation pauses
+    - Seamless conversation continuity through context preservation
+    - Zero-copy integration with ROS AI Bridge
+    - Comprehensive error handling and recovery
     """
     
     def __init__(self, config: Optional[Dict] = None):
-        # Initialize configuration
-        config_dict = config or {}
-        self.config = GeminiConfig(**{k: v for k, v in config_dict.items() 
-                                      if k in GeminiConfig.__annotations__})
+        self.config = config or {}
+        self.bridge_interface: Optional[WebSocketBridgeInterface] = None  # Will be set in initialize()
         
-        # Initialize components
-        self.bridge_interface: Optional[WebSocketBridgeInterface] = None
-        self.pipeline: Optional[Pipeline] = None
-        self.serializer = GeminiSerializer()
+        # Core components - using refactored classes
+        self.serializer = OpenAISerializer()
+        self.pause_detector = PauseDetector(
+            pause_timeout=self.config.get('session_pause_timeout', 10.0)
+        )
+        self.session_manager = OpenAISessionManager(self.config)
         
-        # Context management (reuse from OpenAI agent)
-        self.context_manager = ContextManager(
-            max_context_tokens=config_dict.get('max_context_tokens', 2000),
-            max_context_age=config_dict.get('max_context_age', 600.0)
+        # Conversation monitoring
+        conversation_timeout = self.config.get('conversation_timeout', 
+                                              self.config.get('max_context_age', 600.0))
+        self.conversation_monitor = ConversationMonitor(
+            timeout=conversation_timeout,
+            on_conversation_change=self._handle_conversation_change
         )
         
         # State
         self.running = False
-        self.session_active = False
+        self.prepared_context: Optional[ConversationContext] = None
+        self.session_creating = False  # Flag to prevent concurrent session creation
         
-        # Metrics
-        self.metrics = {
-            'messages_processed': 0,
-            'frames_processed': 0,
-            'audio_frames_sent': 0,
-            'image_frames_sent': 0,
-            'responses_received': 0
+        # Response tracking for proper session cycling
+        self.pending_responses = {
+            'transcription': False,     # Waiting for user transcript
+            'assistant_response': False, # Waiting for assistant to start responding
+            'audio_complete': False     # Waiting for assistant response to complete
+        }
+        self.response_timeout_start = None  # When we started waiting for responses
+        self.response_timeout_seconds = 10.0  # Max time to wait for responses
+        self.last_waiting_log_time = 0  # Last time we logged "waiting for responses"
+        self.waiting_log_interval = 5.0  # Log waiting message every 5 seconds
+        
+        # Assistant response accumulation
+        self.assistant_transcript_buffer = ""
+        self.last_assistant_item_id: Optional[str] = None
+        
+        # Debug interface for standalone testing
+        self.debug_interface: Optional[DebugInterface] = None
+        
+        # Session ready event for synchronization
+        self.session_ready = asyncio.Event()
+        
+        # Published topic configuration (support command extractor agent)
+        self.published_topics = {
+            'audio_out': self.config.get('audio_out_topic', 'audio_out'),  # Relative for namespacing
+            'transcript': self.config.get('transcript_topic', 'llm_transcript'),  # Relative for namespacing
+            'command_detected': self.config.get('command_detected_topic', 'command_detected'),  # Relative for namespacing
+            'interruption_signal': self.config.get('interruption_signal_topic', 'interruption_signal')  # Relative for namespacing
         }
         
         # Setup logging
         self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(config_dict.get('log_level', logging.INFO))
+        self.logger.setLevel(self.config.get('log_level', logging.INFO))
+        
+        # Metrics
+        self.metrics = {
+            'messages_processed': 0,
+            'messages_sent_to_openai': 0,
+            'messages_sent_to_ros': 0,
+            'sessions_cycled_on_pause': 0,
+            'sessions_cycled_on_limits': 0,
+            'total_runtime': 0.0
+        }
+        
+        self.start_time: Optional[float] = None
         
     async def initialize(self):
-        """Initialize the agent and create pipeline"""
-        self.logger.info(f"Initializing Gemini Live agent: {self.config.agent_id}")
+        """Initialize agent components"""
+        self.logger.info("Initializing OpenAI Realtime Agent...")
         
-        # Initialize bridge interface
-        bridge_config = {
-            'bridge_connection': {
-                'host': 'localhost',
-                'port': 8765
-            },
-            'agent_id': self.config.agent_id
-        }
-        self.bridge_interface = WebSocketBridgeInterface(bridge_config)
+        # Setup conversation ID logging after we have a conversation monitor
+        self._setup_conversation_logging()
         
-        # Create Pipecat pipeline
-        await self._create_pipeline()
+        # Start conversation monitoring
+        await self.conversation_monitor.start_monitoring()
         
-        # Connect to bridge
-        await self.bridge_interface.connect()
-        
-        self.logger.info("Gemini Live agent initialized successfully")
-        
-    async def _create_pipeline(self):
-        """Create the Pipecat processing pipeline"""
-        
-        # Create processors
-        voice_input = ROSVoiceInputProcessor(self, self.config.voice_topic)
-        camera_input = ROSCameraInputProcessor(self, self.config.camera_topic) if self.config.video_enabled else None
-        
-        # Create Gemini bridge processor
-        gemini_bridge = GeminiLiveBridgeProcessor(
-            api_key=self.config.api_key,
-            model=self.config.model,
-            modalities=self.config.modalities,
-            config=self.config
-        )
-        
-        # Visual processor for scene analysis (if needed)
-        visual_processor = VisualProcessor(self.config) if self.config.video_enabled else None
-        
-        # Response routing
-        response_router = ResponseRouterProcessor(self)
-        
-        # Audio output
-        audio_output = ROSAudioOutputProcessor(self)
-        
-        # Build pipeline based on configuration
-        processors = []
-        
-        # Input processors
-        processors.append(voice_input)
-        if camera_input and self.config.video_enabled:
-            processors.append(camera_input)
+        # Validate configuration
+        api_key = self.config.get('openai_api_key', '')
+        if not api_key:
+            self.logger.error("❌ No OpenAI API key found in configuration")
+            raise ValueError("OpenAI API key required in configuration")
+        else:
+            # Show masked API key for confirmation
+            masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
+            self.logger.info(f"🔑 OpenAI API key configured: {masked_key}")
             
-        # Core processing
-        processors.append(gemini_bridge)
+        # Connect to bridge interface
+        await self._connect_to_bridge()
         
-        # Visual analysis (if applicable)
-        if visual_processor and self.config.agent_type in ["visual", "multimodal"]:
-            processors.append(visual_processor)
+        # Initialize debug interface if no bridge connection
+        if not self.bridge_interface:
+            self.debug_interface = DebugInterface(self)
+            await self.debug_interface.start()
+            self.logger.info("🔧 Debug interface enabled for standalone mode")
             
-        # Output processors
-        processors.append(response_router)
-        processors.append(audio_output)
+        self.logger.info("Agent initialized successfully")
+        self.logger.info(f"🎭 Initial conversation ID: {self.conversation_monitor.current_conversation_id}")
         
-        # Create pipeline (Pipecat expects a list)
-        self.pipeline = Pipeline(processors)
+        # Publish initial conversation ID after a small delay to ensure bridge is ready
+        if self.bridge_interface and self.bridge_interface.is_connected():
+            await asyncio.sleep(1.0)  # Give bridge time to set up publishers
+            await self._publish_conversation_id(self.conversation_monitor.current_conversation_id)
         
-        self.logger.info(f"Created pipeline with {len(processors)} processors")
+    async def _connect_to_bridge(self):
+        """Connect to the ROS AI Bridge via WebSocket for distributed deployment"""
+        try:
+            self.logger.info("Connecting to ROS AI Bridge via WebSocket...")
+            
+            # Create WebSocket bridge interface
+            self.bridge_interface = WebSocketBridgeInterface(self.config)
+            
+            # Attempt connection with retries
+            success = await self.bridge_interface.connect_with_retry()
+            
+            if success:
+                self.logger.info("✅ Successfully connected to bridge via WebSocket")
+            else:
+                self.logger.warning("❌ Failed to connect to bridge - running in standalone mode")
+                self.bridge_interface = None
+            
+        except Exception as e:
+            self.logger.error(f"Bridge connection error: {e}")
+            self.logger.warning("Running in standalone mode without bridge connection")
+            self.bridge_interface = None
         
     async def run(self):
-        """Main agent execution loop"""
+        """Main agent loop - consumes from bridge, manages sessions"""
         self.running = True
-        self.logger.info(f"Starting Gemini Live agent: {self.config.agent_id}")
+        self.start_time = time.time()
+        self.logger.info(f"[{self.conversation_monitor.current_conversation_id[-12:]}] Starting OpenAI Realtime Agent main loop...")
         
         try:
-            # Initialize if not already done
-            if not self.bridge_interface:
-                await self.initialize()
+            while self.running:
+                # Ensure session is ready when needed
+                await self._ensure_session_ready()
                 
-            # Create pipeline runner
-            pipeline_runner = self.pipeline.run() if self.pipeline else None
-            
-            # Start pipeline task
-            if pipeline_runner:
-                pipeline_task = asyncio.create_task(pipeline_runner)
-                self.logger.info("Pipeline runner started")
-            else:
-                pipeline_task = asyncio.create_task(asyncio.sleep(0))  # Dummy task
+                # Process incoming messages from bridge
+                await self._process_bridge_messages()
                 
-            # Start message processing from bridge
-            bridge_task = asyncio.create_task(self._process_bridge_messages())
-            
-            # Initialize pipeline with StartFrame after it's running
-            if pipeline_runner:
-                await self._start_pipeline()
-            
-            # Wait for both tasks
-            await asyncio.gather(pipeline_task, bridge_task)
-            
+                # Handle session lifecycle management
+                await self._manage_session_lifecycle()
+                
+                # Process OpenAI responses
+                await self._process_openai_responses()
+                
+                # Small sleep to prevent busy loop
+                await asyncio.sleep(0.01)
+                
         except Exception as e:
-            self.logger.error(f"Agent error: {e}", exc_info=True)
+            self.logger.error(f"Agent main loop error: {e}", exc_info=True)
         finally:
-            self.running = False
-            await self.shutdown()
+            await self._cleanup()
             
-    async def _start_pipeline(self):
-        """Initialize the Pipecat pipeline with StartFrame"""
-        if self.pipeline:
-            # Wait a moment for pipeline to be ready
-            await asyncio.sleep(0.1)
+    async def _ensure_session_ready(self):
+        """Ensure we have an active session when needed"""
+        if (self.session_manager.state == SessionState.IDLE and 
+            self.prepared_context is not None and 
+            not self.session_creating):
             
-            # Send StartFrame to initialize the pipeline
-            from pipecat.frames.frames import StartFrame
-            start_frame = StartFrame()
-            await self.pipeline.push_frame(start_frame)
-            self.logger.info("Pipeline initialized with StartFrame")
-            
-    async def _process_bridge_messages(self):
-        """Process messages from ROS bridge"""
-        while self.running:
+            self.session_creating = True
             try:
-                # Get message from bridge
-                envelope = await self.bridge_interface.get_inbound_message(timeout=1.0)
-                
-                if envelope:
-                    self.metrics['messages_processed'] += 1
+                # Create new session with prepared context
+                success = await self.session_manager.connect_session(self.prepared_context)
+                if success:
+                    self.prepared_context = None
+                    self.pause_detector.reset()
+                    self._reset_response_tracking()
+                    self.session_ready.set()  # Set immediately - session is ready
                     
-                    # Convert envelope to appropriate Pipecat frame type
-                    frame = await self._envelope_to_frame(envelope)
+                    # Start response processor immediately after session creation
+                    if not hasattr(self, '_response_processor_task') or self._response_processor_task.done():
+                        self.logger.info("🚀 Starting continuous response processor task immediately")
+                        self._response_processor_task = asyncio.create_task(self._continuous_response_processor())
                     
-                    # Inject frame into pipeline
-                    if self.pipeline and frame:
-                        await self.pipeline.push_frame(frame)
-                        
-            except asyncio.TimeoutError:
-                continue
-            except Exception as e:
-                self.logger.error(f"Error processing bridge message: {e}")
+                    self.logger.info("✅ Session created with injected context")
+                else:
+                    self.logger.error("❌ Failed to create session with context")
+            finally:
+                self.session_creating = False
                 
-    async def _envelope_to_frame(self, envelope: Dict[str, Any]) -> Optional[Frame]:
-        """Convert WebSocket envelope to appropriate Pipecat frame"""
+    async def _process_bridge_messages(self):
+        """Process messages from bridge interface"""
         try:
-            msg_type = envelope.get('msg_type', '')
+            # Skip if bridge interface not connected yet
+            if not self.bridge_interface or not self.bridge_interface.is_connected():
+                return
+                
+            # Try to get message with short timeout
+            envelope = await self.bridge_interface.get_inbound_message(timeout=0.1)
             
-            if msg_type == 'by_your_command/AudioDataUtterance':
-                # Convert audio data to AudioRawFrame
-                audio_data = envelope.get('int16_data', [])
-                if audio_data:
-                    # Convert list to numpy array
-                    audio_array = np.array(audio_data, dtype=np.int16)
-                    # Convert to bytes for Pipecat
-                    audio_bytes = audio_array.tobytes()
-                    return AudioRawFrame(
-                        audio=audio_bytes,
-                        sample_rate=16000,
-                        num_channels=1
-                    )
+            if envelope is None:
+                # No message available
+                return
+            
+            if envelope:
+                self.pause_detector.record_message(envelope.ros_msg_type)
+                self.metrics['messages_processed'] += 1
+                self.logger.info(f"[{self.conversation_monitor.current_conversation_id[-12:]}] 📨 Processing message: {envelope.ros_msg_type} from {envelope.topic_name}")
+                
+                # Record activity for conversation monitoring if it's a voice chunk
+                if envelope.ros_msg_type == "by_your_command/AudioDataUtterance":
+                    self.conversation_monitor.record_activity()
+                
+                # Ensure we have a session for incoming messages
+                if self.session_manager.state == SessionState.IDLE:
+                    # Check if we have prepared context first (priority)
+                    if self.prepared_context is not None:
+                        self.logger.info("🔄 Deferring to prepared context session creation")
+                        return  # Let _ensure_session_ready() handle it
                     
-            elif msg_type == 'sensor_msgs/Image':
-                # Convert image data to ImageRawFrame
-                data = envelope.get('data', [])
-                if data:
-                    # Image data is usually in uint8 format
-                    image_array = np.array(data, dtype=np.uint8)
-                    width = envelope.get('width', 0)
-                    height = envelope.get('height', 0)
-                    encoding = envelope.get('encoding', 'rgb8')
+                    # Check if session creation is already in progress
+                    if self.session_creating:
+                        self.logger.info("⏳ Session creation in progress, skipping")
+                        return
+                        
+                    self.session_creating = True
+                    try:
+                        self.logger.info("🔗 Creating OpenAI session for incoming message...")
+                        success = await self.session_manager.connect_session()
+                        if success:
+                            self.pause_detector.reset()
+                            self._reset_response_tracking()
+                            self.session_ready.set()  # Set immediately - session is ready
+                            
+                            # Start response processor immediately after session creation
+                            if not hasattr(self, '_response_processor_task') or self._response_processor_task.done():
+                                self.logger.info("🚀 Starting continuous response processor task immediately")
+                                self._response_processor_task = asyncio.create_task(self._continuous_response_processor())
+                            
+                            self.logger.info("✅ Session created for incoming message")
+                        else:
+                            self.logger.error("❌ Failed to create session - check configuration and API status")
+                            return
+                    finally:
+                        self.session_creating = False
+                
+                # Handle AudioDataUtterance with metadata
+                if envelope.ros_msg_type == "by_your_command/AudioDataUtterance":
+                    # Serialize for OpenAI Realtime API (agent responsibility)
+                    api_msg = await self.serializer.safe_serialize(envelope)
                     
-                    # Reshape based on encoding
-                    if encoding == 'rgb8':
-                        image_array = image_array.reshape((height, width, 3))
-                    elif encoding == 'bgr8':
-                        # Convert BGR to RGB
-                        image_array = image_array.reshape((height, width, 3))
-                        image_array = image_array[:, :, ::-1]  # BGR to RGB
+                    chunk_id = envelope.raw_data.chunk_sequence
                     
-                    return ImageRawFrame(
-                        image=image_array,
-                        size=(width, height),
-                        format="RGB"
-                    )
+                    if api_msg:
+                        # Wait for session to be ready before sending audio
+                        if not self.session_ready.is_set():
+                            self.logger.info(f"⏳ Waiting for session ready before sending chunk #{chunk_id}...")
+                            await self.session_ready.wait()
+                            self.logger.info(f"✅ Session ready - proceeding with chunk #{chunk_id}")
+                        
+                        if self.session_manager.is_ready_for_audio():
+                            await self.session_manager.websocket.send(json.dumps(api_msg))
+                            self.metrics['messages_sent_to_openai'] += 1
+                            self.logger.info(f"✅ SENT chunk #{chunk_id} ({len(json.dumps(api_msg))} bytes)")
+                            
+                            # Check if this is the end of utterance - commit audio buffer
+                            if envelope.raw_data.is_utterance_end:
+                                # Add small delay to ensure audio is processed by OpenAI
+                                await asyncio.sleep(0.1)  # 100ms delay
+                                
+                                commit_msg = self.serializer.create_audio_buffer_commit()
+                                await self.session_manager.websocket.send(json.dumps(commit_msg))
+                                utterance_id = envelope.raw_data.utterance_id
+                                self.logger.info(f"💾 Committed audio buffer for utterance {utterance_id}")
+                                
+                                # Log current session configuration for debugging
+                                self.logger.info(f"📊 Session state: {self.session_manager.state.value}")
+                                
+                                # Set up response expectations
+                                self._setup_response_expectations()
+                        else:
+                            current_state = self.session_manager.state.value
+                            has_websocket = self.session_manager.websocket is not None
+                            self.logger.warning(f"⏳ BLOCKED chunk #{chunk_id} - session not ready (state: {current_state}, websocket: {has_websocket})")
+                        
+                        # Store metadata for context injection
+                        utterance_metadata = self.serializer.get_utterance_metadata()
+                        if utterance_metadata:
+                            self.serializer.add_utterance_context(utterance_metadata)
+                            
+                    elif api_msg:
+                        self.logger.warning("⚠️ AudioDataUtterance serialized but no active session")
+                    else:
+                        self.logger.error("❌ Failed to serialize AudioDataUtterance")
+                        
+                elif envelope.ros_msg_type == "std_msgs/String" and envelope.topic_name.endswith("/conversation_id"):
+                    # Handle external conversation ID changes
+                    new_conversation_id = envelope.raw_data.data
+                    if new_conversation_id != self.conversation_monitor.current_conversation_id:
+                        self.logger.info(f"📨 Received external conversation ID: {new_conversation_id}")
+                        self.conversation_monitor.handle_external_reset(new_conversation_id)
+                        
+                elif envelope.ros_msg_type == "std_msgs/String" and envelope.topic_name.endswith("/text_input"):
+                    # Handle text input - inject as conversation item
+                    text_content = envelope.raw_data.data
+                    self.logger.info(f"📝 Received text input: '{text_content[:50]}...'")
                     
-            elif msg_type == 'std_msgs/String':
-                # Convert text to TextFrame
-                text = envelope.get('data', '')
-                if text:
-                    return TextFrame(text=text)
+                    # Wait for session to be ready (reuses session creation logic above)
+                    if not self.session_ready.is_set():
+                        self.logger.info("⏳ Waiting for session ready before sending text...")
+                        await self.session_ready.wait()
+                        self.logger.info("✅ Session ready - proceeding with text input")
                     
+                    # Send text as conversation item to OpenAI
+                    await self._send_text_to_openai(envelope)
+                        
+                else:
+                    # Handle other message types
+                    api_msg = await self.serializer.safe_serialize(envelope)
+                    
+                    if api_msg and self.session_manager.is_connected():
+                        await self.session_manager.websocket.send(json.dumps(api_msg))
+                        self.metrics['messages_sent_to_openai'] += 1
+                        self.logger.debug(f"Sent to OpenAI: {api_msg['type']}")
+                    elif api_msg:
+                        self.logger.warn("Message serialized but no active session")
+                    
+        except asyncio.TimeoutError:
+            # No message - normal when no audio input
+            pass
+        except Exception as e:
+            # Throttle error messages to avoid flooding
+            if not hasattr(self, '_last_bridge_error_time') or time.time() - self._last_bridge_error_time > 5.0:
+                self.logger.error(f"Error processing bridge message: {e}")
+                self._last_bridge_error_time = time.time()
+            
+    async def _manage_session_lifecycle(self):
+        """Handle session cycling and limits"""
+        # Check for pause-based cycling (primary strategy)
+        if (self.session_manager.state == SessionState.ACTIVE and 
+            self.pause_detector.check_pause_condition()):
+            
+            await self._cycle_session_on_pause()
+            
+        # Check for limit-based cycling (fallback)
+        elif self.session_manager.check_session_limits():
+            await self._cycle_session_on_limits()
+            
+    async def _cycle_session_on_pause(self):
+        """Cycle session due to pause detection - only if all responses complete"""
+        # Check if we're still waiting for responses
+        pending_count = sum(self.pending_responses.values())
+        if pending_count > 0:
+            # Check for timeout
+            if self.response_timeout_start and time.time() - self.response_timeout_start > self.response_timeout_seconds:
+                self.logger.warning(f"⏰ Response timeout after {self.response_timeout_seconds}s - forcing cycle")
+                self._clear_response_expectations()
             else:
-                self.logger.debug(f"Unknown message type: {msg_type}")
+                # Throttle log messages - only log every 5 seconds
+                current_time = time.time()
+                if current_time - self.last_waiting_log_time >= self.waiting_log_interval:
+                    self.logger.info(f"⏳ Pause detected but waiting for {pending_count} responses - delaying cycle")
+                    self.last_waiting_log_time = current_time
+                return
+            
+        # Check if session creation/cycling is already in progress
+        if self.session_creating:
+            self.logger.info("⏳ Session creation in progress, delaying cycle")
+            return
+            
+        self.logger.info("🔄 Cycling session on pause (all responses complete)")
+        
+        context = await self.session_manager.close_session()
+        self.prepared_context = context
+        self.metrics['sessions_cycled_on_pause'] += 1
+        
+        # Reset response tracking and pause detector for next conversation
+        self._reset_response_tracking()
+        self.pause_detector.reset()
+        
+        self.logger.info("✅ Session cycled - ready for next speech")
+        
+    async def _cycle_session_on_limits(self):
+        """Cycle session due to time/cost limits - seamless rotation"""
+        # Check if session creation is already in progress
+        if self.session_creating:
+            self.logger.info("⏳ Session creation in progress, delaying limits cycle")
+            return
+            
+        self.logger.info("🔄 Cycling session on limits (seamless rotation)")
+        
+        self.session_creating = True
+        try:
+            context = await self.session_manager.close_session() 
+            
+            # Immediately reconnect with context (no pause to wait)
+            if context:
+                success = await self.session_manager.connect_session(context)
+                if success:
+                    self.metrics['sessions_cycled_on_limits'] += 1
+                    self.pause_detector.reset()
+                    self._reset_response_tracking()
+                    self.session_ready.set()  # Set immediately - session is ready
+                    self.logger.info("✅ Session rotated seamlessly")
+                else:
+                    self.logger.error("❌ Failed to rotate session - preparing for next message")
+                    self.prepared_context = context
+        finally:
+            self.session_creating = False
+            
+    async def _process_openai_responses(self):
+        """Process responses from OpenAI WebSocket"""
+        if not self.session_manager.is_connected():
+            return
+            
+        try:
+            # Check if we have a response processor task running
+            if not hasattr(self, '_response_processor_task') or self._response_processor_task.done():
+                # Start continuous response processor
+                self.logger.info(f"🚀 Starting continuous response processor")
+                self._response_processor_task = asyncio.create_task(self._continuous_response_processor())
                 
         except Exception as e:
-            self.logger.error(f"Error converting envelope to frame: {e}")
+            self.logger.error(f"Error managing response processor: {e}")
             
-        return None
-    
-    async def shutdown(self):
-        """Clean shutdown of agent"""
-        self.logger.info("Shutting down Gemini Live agent")
+    async def _continuous_response_processor(self):
+        """Continuously process responses from OpenAI WebSocket"""
+        try:
+            self.logger.info("🎧 Starting continuous OpenAI response listener")
+            
+            while self.session_manager.is_connected() and self.running:
+                try:
+                    websocket = self.session_manager.websocket
+                    if not websocket:
+                        self.logger.warning("🎧 No websocket available, waiting...")
+                        await asyncio.sleep(0.1)
+                        continue
+                        
+                    # Continuously listen for messages (no timeout)
+                    # Continuously listen - no debug spam
+                    message = await websocket.recv()
+                    self.logger.debug(f"🎧 Received message from OpenAI")
+                    data = json.loads(message)
+                    event_type = data.get('type', 'unknown')
+                    
+                    # Log events with appropriate detail level
+                    if event_type in ['response.audio.delta', 'response.audio_transcript.delta']:
+                        # Audio deltas are frequent - log at debug level
+                        self.logger.debug(f"🎵 OpenAI: {event_type} ({len(message)} chars)")
+                    elif event_type in ['session.updated', 'response.created', 'conversation.item.created']:
+                        # Important events - log with detail
+                        self.logger.info(f"🎯 OpenAI: {event_type}")
+                        self.logger.debug(f"   Event data: {json.dumps(data, indent=2)[:200]}...")
+                    else:
+                        # Other events - standard logging
+                        self.logger.info(f"🎯 OpenAI: {event_type}")
+                        
+                    await self._handle_openai_event(data)
+                    
+                except websockets.exceptions.ConnectionClosed:
+                    self.logger.warning("⚠️ OpenAI connection closed")
+                    break
+                except json.JSONDecodeError as e:
+                    self.logger.error(f"❌ Invalid JSON from OpenAI: {e}")
+                except Exception as e:
+                    self.logger.error(f"❌ Error in response processor: {e}")
+                    
+        except Exception as e:
+            self.logger.error(f"❌ Fatal error in continuous response processor: {e}")
+        finally:
+            self.logger.info("🛑 Stopped OpenAI response listener")
+            
+    async def _handle_openai_event(self, data: Dict):
+        """Handle individual OpenAI Realtime API events"""
+        event_type = data.get("type", "")
         
-        # Stop pipeline
-        if self.pipeline:
-            # Pipecat pipelines don't have a stop() method
-            # Cleanup is handled by individual processors
-            pass
+        try:
+            if event_type == "response.audio_transcript.done":
+                await self._handle_assistant_transcript_complete(data)
+                
+            elif event_type == "response.audio.delta":
+                await self._handle_audio_delta(data)
+                
+            elif event_type == "input_audio_buffer.speech_started":
+                self.pause_detector.record_message("speech_started")
+                self.logger.info("🎤 OpenAI detected speech start")
+                # Handle user interruption during assistant response
+                await self._handle_user_interruption()
+                
+            elif event_type == "conversation.item.created":
+                # Check if this is the assistant's response starting
+                item = data.get("item", {})
+                if item.get("role") == "assistant":
+                    # Store the assistant item ID for potential truncation
+                    self.last_assistant_item_id = item.get("id")
+                    self.logger.info(f"🤖 Assistant starting response (item: {self.last_assistant_item_id})")
+                    # Don't mark complete here - wait for actual content
+                self.logger.debug(f"📝 OpenAI created conversation item: role={item.get('role')}")
+                
+            elif event_type == "conversation.item.input_audio_transcription.delta":
+                # Partial transcription - we can ignore these for cleaner logs
+                pass
+                
+            elif event_type == "conversation.item.input_audio_transcription.completed":
+                await self._handle_user_transcript(data)
+                
+            elif event_type == "input_audio_buffer.speech_stopped": 
+                self.logger.debug("🎤 OpenAI detected speech stop")
+                
+            elif event_type == "input_audio_buffer.committed":
+                self.logger.info("💾 OpenAI committed audio buffer")
+                
+            elif event_type == "response.created":
+                self.logger.info("🤖 OpenAI creating response...")
+                # Clear assistant transcript buffer for new response
+                self.assistant_transcript_buffer = ""
+                self._mark_response_complete('assistant_response')
+                
+            elif event_type == "response.output_item.added":
+                self.logger.debug("📝 OpenAI added response item")
+                
+            elif event_type == "response.content_part.added":
+                self.logger.debug("📋 OpenAI added response content part")
+                
+            elif event_type == "response.audio_transcript.delta":
+                # Accumulate assistant transcript deltas (streaming text)
+                delta_text = data.get("delta", "")
+                if delta_text:
+                    self.assistant_transcript_buffer += delta_text
+                    self.logger.debug(f"📝 Assistant delta: +{len(delta_text)} chars")
+                    
+            elif event_type == "response.audio_transcript.done":
+                await self._handle_assistant_transcript_complete(data)
+                
+            elif event_type == "response.audio.transcript.delta":
+                # Legacy event type (keeping for compatibility)
+                transcript = data.get("delta", "")
+                self.logger.debug(f"📝 Legacy transcript delta: {transcript}")
+                
+            elif event_type == "response.audio.delta":
+                await self._handle_audio_delta(data)
+                
+            elif event_type == "response.done":
+                self.pause_detector.mark_llm_response_complete()
+                self.logger.info("🤖 Assistant response complete")
+                self._mark_response_complete('audio_complete')
+                
+            elif event_type == "session.created":
+                # Session already marked ready during connection, this is just for logging
+                session_info = data.get('session', {})
+                session_id = session_info.get('id', 'unknown')
+                self.logger.debug(f"📝 Received session.created confirmation: {session_id}")
+                # Ensure session_ready is set (defensive programming)
+                if not self.session_ready.is_set():
+                    self.session_ready.set()
+                
+            elif event_type == "session.updated":
+                session_config = data.get('session', {})
+                turn_detection = session_config.get('turn_detection', {})
+                self.logger.info(f"📝 OpenAI session updated - turn_detection: {turn_detection.get('type')}")
+                
+            elif event_type == "error":
+                await self._handle_openai_error(data)
+                
+            else:
+                # Log unhandled events
+                self.logger.debug(f"🔍 Unhandled OpenAI event: {event_type}")
+                if event_type not in ['response.audio.delta', 'response.audio_transcript.delta']:
+                    self.logger.debug(f"   Event data: {json.dumps(data, indent=2)[:100]}...")
+                
+        except Exception as e:
+            self.logger.error(f"Error handling OpenAI event {event_type}: {e}")
             
-        # Disconnect from bridge
+        
+    async def _handle_audio_delta(self, data: Dict):
+        """Handle audio response delta - convert base64 PCM to ROS audio"""
+        audio_b64 = data.get("delta", "")
+        if not audio_b64:
+            self.logger.debug("🔊 Empty audio delta received")
+            return
+            
+        if not self.bridge_interface:
+            self.logger.debug("🔊 Audio delta received but no bridge interface")
+            return
+            
+        try:
+            # Decode base64 PCM audio data
+            audio_data = base64.b64decode(audio_b64)
+            if len(audio_data) == 0:
+                self.logger.debug("🔊 Empty audio data after decoding")
+                return
+                
+            # Convert to int16 array for ROS
+            audio_array_24k = np.frombuffer(audio_data, dtype=np.int16)
+            
+            # Resample from 24kHz to 16kHz using simple 3:2 decimation
+            # For every 3 samples at 24kHz, output 2 samples at 16kHz
+            audio_array_16k = self._simple_resample_24k_to_16k(audio_array_24k)
+            
+            # Send audio as-is to preserve timing
+            audio_data_dict = {"int16_data": audio_array_16k.tolist()}
+            
+            # Send to ROS via bridge if audio output is enabled
+            if self.published_topics['audio_out']:  # Skip if topic is empty/disabled
+                success = await self.bridge_interface.put_outbound_message(
+                    self.published_topics['audio_out'], 
+                    audio_data_dict, 
+                    "audio_common_msgs/AudioData"
+                )
+                
+                if success:
+                    self.metrics['messages_sent_to_ros'] += 1
+                    self.logger.debug(f"🔊 Audio delta sent: {len(audio_array_16k)} samples @ 16kHz (from {len(audio_array_24k)} @ 24kHz)")
+                else:
+                    self.logger.warning("⚠️ Failed to send audio delta to ROS")
+            else:
+                self.logger.debug("🔇 Audio output disabled for this agent")
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error processing audio delta: {e}")
+            
+        # Mark LLM response as active for pause detection
+        self.pause_detector.mark_llm_response_active()
+        
+    async def _handle_user_transcript(self, data: Dict):
+        """Handle completed user transcript"""
+        transcript = data.get("transcript", "").strip()
+        if transcript:
+            self.session_manager.add_conversation_turn("user", transcript)
+            self.logger.info(f"👤 User transcript: {transcript}")
+            self._mark_response_complete('transcription')
+            
+            # Manually trigger response since OpenAI server VAD doesn't automatically respond reliably
+            # Keep manual triggering for now while we investigate interruption separately
+            if self.pending_responses.get('assistant_response', False):
+                self.logger.info("🤖 Triggering OpenAI response generation")
+                try:
+                    response_msg = self.serializer.create_response_trigger()
+                    await self.session_manager.websocket.send(json.dumps(response_msg))
+                    self.logger.info("✅ Response generation triggered")
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to trigger response: {e}")
+        else:
+            self.logger.warning("⚠️ Empty user transcript received")
+            self._mark_response_complete('transcription')
+            
+    async def _handle_assistant_transcript_complete(self, data: Dict):
+        """Handle completed assistant transcript"""
+        # Get final transcript from buffer or data
+        final_transcript = self.assistant_transcript_buffer.strip()
+        if not final_transcript:
+            # Fallback to transcript in event data
+            final_transcript = data.get("transcript", "").strip()
+            
+        if final_transcript:
+            # Add to conversation context
+            self.session_manager.add_conversation_turn("assistant", final_transcript)
+            self.logger.info(f"🤖 Assistant transcript: {final_transcript}")
+            
+            # Send transcript to ROS via WebSocket
+            if self.bridge_interface:
+                transcript_data = {"data": final_transcript}
+                success = await self.bridge_interface.put_outbound_message(
+                    self.published_topics['transcript'], 
+                    transcript_data, 
+                    "std_msgs/String"
+                )
+                
+                if success:
+                    self.metrics['messages_sent_to_ros'] += 1
+                    self.logger.info("📤 Assistant transcript sent to ROS")
+                    
+                    # For command extractor: check if this looks like a command
+                    if (self.published_topics.get('command_detected') and 
+                        final_transcript.startswith("COMMAND:")):
+                        # Publish command detected signal
+                        command_signal = {"data": True}
+                        await self.bridge_interface.put_outbound_message(
+                            self.published_topics['command_detected'],
+                            command_signal,
+                            "std_msgs/Bool"
+                        )
+                        self.logger.info("🤖 Command detected and signaled")
+                else:
+                    self.logger.warning("⚠️ Failed to send assistant transcript to ROS")
+        else:
+            self.logger.warning("⚠️ Empty assistant transcript received")
+            
+        # Clear the buffer
+        self.assistant_transcript_buffer = ""
+        self.pause_detector.mark_llm_response_complete()
+            
+    async def _trigger_response(self):
+        """Manually trigger OpenAI to generate a response (for testing/debug)"""
+        if not self.session_manager.is_connected():
+            self.logger.warning("⚠️ Cannot trigger response - no active session")
+            return
+            
+        try:
+            # Send response.create message to explicitly request a response
+            response_msg = {
+                "type": "response.create",
+                "response": {
+                    "modalities": ["text", "audio"],
+                    "instructions": "Please respond to the user's message naturally and helpfully."
+                }
+            }
+            
+            await self.session_manager.websocket.send(json.dumps(response_msg))
+            self.logger.info("🎯 Manually triggered OpenAI response generation")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Failed to trigger response: {e}")
+            
+    async def _handle_openai_error(self, data: Dict):
+        """Handle OpenAI API errors"""
+        error_code = data.get("error", {}).get("code", "unknown")
+        error_message = data.get("error", {}).get("message", "Unknown error")
+        
+        self.logger.error(f"🚨 OpenAI API error [{error_code}]: {error_message}")
+        
+        # Handle specific error types
+        if error_code in ["invalid_api_key", "insufficient_quota"]:
+            self.logger.error("❌ API key or quota issue - stopping agent")
+            self.running = False
+        elif error_code == "rate_limit_exceeded":
+            self.logger.warn("⏰ Rate limited - will retry connection")
+            # Close current session, will retry on next message
+            await self.session_manager.close_session()
+            
+    def _setup_response_expectations(self):
+        """Set up response tracking after committing audio buffer"""
+        self.pending_responses = {
+            'transcription': True,      # Expect user transcript
+            'assistant_response': True, # Expect assistant to respond  
+            'audio_complete': True      # Expect response completion
+        }
+        self.response_timeout_start = time.time()  # Start timeout timer
+        self.last_waiting_log_time = 0  # Reset throttling timer
+        self.logger.info("⏳ Expecting transcription + assistant response")
+        
+    def _mark_response_complete(self, response_type: str):
+        """Mark a response type as complete"""
+        if response_type in self.pending_responses:
+            self.pending_responses[response_type] = False
+            self.logger.info(f"✅ {response_type} complete")
+            self._check_cycle_readiness()
+            
+    def _clear_response_expectations(self):
+        """Clear all pending response expectations (for timeout recovery)"""
+        self.pending_responses = {
+            'transcription': False,
+            'assistant_response': False,
+            'audio_complete': False
+        }
+        self.response_timeout_start = None
+        self.last_waiting_log_time = 0  # Reset throttling timer
+        self.logger.info("🚫 Cleared all response expectations")
+        
+    async def _send_text_to_openai(self, envelope):
+        """Send text input as a conversation item to OpenAI"""
+        try:
+            # Use existing serializer that already handles text format
+            api_msg = self.serializer.serialize_text(envelope)
+            
+            if api_msg and self.session_manager.is_connected():
+                await self.session_manager.websocket.send(json.dumps(api_msg))
+                self.metrics['messages_sent_to_openai'] += 1
+                self.logger.info(f"✅ Sent text to OpenAI: '{envelope.raw_data.data[:50]}...'")
+                
+                # Trigger response creation immediately for text input
+                response_msg = self.serializer.create_response_trigger()
+                await self.session_manager.websocket.send(json.dumps(response_msg))
+                self.logger.info("🚀 Triggered response creation for text input")
+                
+                # Set up response expectations (text also expects responses)
+                self._setup_response_expectations()
+                
+            else:
+                self.logger.warning("⚠️ Text message ready but no active session")
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error sending text to OpenAI: {e}")
+            
+    async def send_text_to_llm(self, text: str) -> bool:
+        """
+        Send text input to the LLM as a conversation item.
+        
+        This is a common interface method that should be implemented by all agents.
+        Different LLM providers may handle text differently internally.
+        
+        Args:
+            text: The text message to send to the LLM
+            
+        Returns:
+            bool: True if message was sent successfully
+        """
+        # For OpenAI, we need the full envelope for metadata
+        # Create a minimal envelope for the text
+        envelope = type('TextEnvelope', (object,), {
+            'raw_data': type('RawData', (object,), {'data': text})(),
+            'ros_msg_type': 'std_msgs/String',
+            'topic_name': 'text_input'
+        })()
+        
+        try:
+            await self._send_text_to_openai(envelope)
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to send text to LLM: {e}")
+            return False
+            
+    def _check_cycle_readiness(self):
+        """Check if all responses are complete and we can cycle session"""
+        self._continue_check_cycle_readiness()
+        
+    def _simple_resample_24k_to_16k(self, audio_data):
+        """Simple 3:2 decimation from 24kHz to 16kHz
+        
+        For every 3 samples at 24kHz, we output 2 samples at 16kHz.
+        Uses linear interpolation for smoother resampling.
+        """
+        if len(audio_data) == 0:
+            return np.array([], dtype=np.int16)
+            
+        # Calculate output size (2/3 of input)
+        output_size = int(len(audio_data) * 2 / 3)
+        output = np.zeros(output_size, dtype=np.int16)
+        
+        # Resample using linear interpolation
+        for i in range(output_size):
+            # Map output index to input index
+            input_idx = i * 1.5  # 3/2 ratio
+            idx_int = int(input_idx)
+            fraction = input_idx - idx_int
+            
+            # Linear interpolation
+            if idx_int + 1 < len(audio_data):
+                sample1 = audio_data[idx_int]
+                sample2 = audio_data[idx_int + 1]
+                output[i] = int(sample1 * (1 - fraction) + sample2 * fraction)
+            elif idx_int < len(audio_data):
+                output[i] = audio_data[idx_int]
+                
+        return output
+        
+    def _continue_check_cycle_readiness(self):
+        """Continue the cycle readiness check logic"""
+        all_complete = not any(self.pending_responses.values())
+        pending_count = sum(self.pending_responses.values())
+        
+        if all_complete:
+            self.logger.info("🔄 All responses complete - ready to cycle session")
+            self.response_timeout_start = None  # Clear timeout timer
+            # Reset pause detector since we're ready for the next utterance
+            self.pause_detector.reset()
+        else:
+            self.logger.debug(f"⏳ Still waiting for {pending_count} responses")
+            
+    def _reset_response_tracking(self):
+        """Reset response tracking for new utterance"""
+        self.pending_responses = {
+            'transcription': False,
+            'assistant_response': False, 
+            'audio_complete': False
+        }
+        self.response_timeout_start = None  # Clear timeout timer
+        # Clear assistant transcript buffer
+        self.assistant_transcript_buffer = ""
+            
+    async def _cleanup(self):
+        """Clean up resources"""
+        if self.start_time:
+            self.metrics['total_runtime'] = time.time() - self.start_time
+            
+        self.logger.info("🧹 Cleaning up OpenAI Realtime Agent...")
+        
+        # Stop conversation monitoring
+        await self.conversation_monitor.stop_monitoring()
+        
+        # Stop response processor task
+        if hasattr(self, '_response_processor_task') and not self._response_processor_task.done():
+            self._response_processor_task.cancel()
+            try:
+                await self._response_processor_task
+            except asyncio.CancelledError:
+                pass
+        
+        if self.session_manager.state == SessionState.ACTIVE:
+            await self.session_manager.close_session()
+            
         if self.bridge_interface:
-            # TODO: Add disconnect method to WebSocketBridgeInterface
-            # await self.bridge_interface.disconnect()
-            pass
+            await self.bridge_interface.close()
             
-        self.logger.info(f"Agent shutdown complete. Metrics: {self.metrics}")
-
-
-async def main():
-    """Standalone test entry point"""
-    import yaml
-    import os
-    
-    # Load configuration
-    config_path = os.path.join(
-        os.path.dirname(__file__), 
-        "../../config/gemini_live_agent.yaml"
-    )
-    
-    if os.path.exists(config_path):
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
-            agent_config = config.get('gemini_live_agent', {})
-    else:
-        agent_config = {}
+        if self.debug_interface:
+            await self.debug_interface.stop()
         
-    # Override with environment variables
-    if os.environ.get('GEMINI_API_KEY'):
-        agent_config['api_key'] = os.environ['GEMINI_API_KEY']
+        # Log final metrics
+        final_metrics = self.get_metrics()
+        self.logger.info(f"📊 Final metrics: {final_metrics}")
+        self.logger.info("✅ Agent cleanup complete")
         
-    # Create and run agent
-    agent = GeminiLiveAgent(agent_config)
-    await agent.run()
+    async def stop(self):
+        """Stop the agent gracefully"""
+        self.logger.info("🛑 Stop signal received")
+        self.running = False
+        
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get comprehensive agent metrics"""
+        # Combine all metrics
+        combined_metrics = self.metrics.copy()
+        
+        # Add component metrics
+        combined_metrics.update({
+            'serializer': self.serializer.get_metrics(),
+            'pause_detector': self.pause_detector.get_metrics(),
+            'session_manager': self.session_manager.get_metrics(),
+            'conversation_monitor': self.conversation_monitor.get_metrics(),
+            'bridge_interface': self.bridge_interface.get_metrics() if self.bridge_interface else {}
+        })
+        
+        # Calculate runtime
+        if self.start_time:
+            combined_metrics['current_runtime'] = time.time() - self.start_time
+            
+        return combined_metrics
+        
+    def get_status_summary(self) -> str:
+        """Get human-readable status summary"""
+        session_status = f"Session: {self.session_manager.state.value}"
+        bridge_status = self.bridge_interface.get_status_summary() if self.bridge_interface else "Bridge: Disconnected"
+        pause_status = self.pause_detector.get_status_summary()
+        conv_status = self.conversation_monitor.get_status_summary()
+        message_stats = f"Processed: {self.metrics['messages_processed']}"
+        
+        return f"{session_status} | {bridge_status} | {pause_status} | {conv_status} | {message_stats}"
+        
+    def update_configuration(self, new_config: Dict):
+        """Update agent configuration at runtime"""
+        old_config = self.config.copy()
+        self.config.update(new_config)
+        
+        # Update components
+        if 'session_pause_timeout' in new_config:
+            self.pause_detector.update_pause_timeout(new_config['session_pause_timeout'])
+            
+        self.session_manager.update_configuration(new_config)
+        
+        self.logger.info("⚙️ Configuration updated")
+        
+    async def switch_system_prompt(self, prompt_id: str = None, context_updates: Dict[str, Any] = None) -> bool:
+        """Switch system prompt during runtime
+        
+        Args:
+            prompt_id: Specific prompt to switch to (overrides context-based selection)
+            context_updates: Updates to prompt selection context (e.g., {'user_age': 8})
+            
+        Returns:
+            bool: True if switch was successful
+        """
+        success = await self.session_manager.switch_prompt(prompt_id, context_updates)
+        
+        if success:
+            prompt_info = self.session_manager.get_effective_prompt_selection()
+            self.logger.info(f"🔄 System prompt switched: {prompt_info['selection_type']} -> {prompt_info.get('prompt_id', 'unknown')}")
+        
+        return success
+        
+    def get_current_system_prompt_info(self) -> Dict[str, Any]:
+        """Get information about currently active system prompt"""
+        return self.session_manager.get_effective_prompt_selection()
+        
+    def list_available_system_prompts(self) -> List[str]:
+        """List all available system prompt IDs"""
+        return self.session_manager.list_available_prompts()
+        
+    def clear_system_prompt_override(self):
+        """Clear any prompt override and return to context-based selection"""
+        self.session_manager.clear_prompt_override()
+        self.logger.info("🔄 Cleared system prompt override - using context-based selection")
+        
+    def reload_system_prompts(self):
+        """Reload system prompts from prompts.yaml file"""
+        self.session_manager.reload_prompts()
+        self.logger.info("🔄 System prompts reloaded from file")
+        
+    # Debug interface methods for standalone testing
+    async def debug_inject_audio(self, audio_data: List[int], utterance_id: str = None, 
+                               confidence: float = 0.95, is_utterance_end: bool = False) -> bool:
+        """Inject audio data for testing (standalone mode only)"""
+        if not self.debug_interface:
+            self.logger.warning("Debug interface not available - agent connected to bridge")
+            return False
+            
+        return await self.debug_interface.inject_audio_data(
+            audio_data, utterance_id, confidence, is_utterance_end
+        )
+        
+    async def debug_inject_text(self, text: str) -> bool:
+        """Inject text message for testing (standalone mode only)"""
+        if not self.debug_interface:
+            self.logger.warning("Debug interface not available - agent connected to bridge")
+            return False
+            
+        return await self.debug_interface.inject_text_message(text)
+        
+    def get_debug_stats(self) -> Dict[str, Any]:
+        """Get debug interface statistics"""
+        if not self.debug_interface:
+            return {"debug_interface": "not_available"}
+            
+        return self.debug_interface.get_stats()
+        
+    def is_standalone_mode(self) -> bool:
+        """Check if agent is running in standalone mode"""
+        return self.bridge_interface is None and self.debug_interface is not None
+        
+    def _setup_conversation_logging(self):
+        """Add conversation ID to all log messages"""
+        # Create a custom filter that adds conversation ID
+        class ConversationFilter(logging.Filter):
+            def __init__(self, monitor):
+                self.monitor = monitor
+                
+            def filter(self, record):
+                # Add conversation ID to log record
+                record.conversation_id = self.monitor.current_conversation_id[-12:]  # Last 12 chars
+                return True
+                
+        # Add filter to logger
+        conv_filter = ConversationFilter(self.conversation_monitor)
+        self.logger.addFilter(conv_filter)
+        
+        # For now, just log conversation ID in messages rather than changing formatter
+        # This avoids conflicts with existing log formats
+                
+    def _handle_conversation_change(self, old_id: str, new_id: str, is_external: bool = False):
+        """Handle conversation ID change callback"""
+        self.logger.info(f"🎭 CONVERSATION CHANGE: {old_id[-12:]} → {new_id[-12:]}")
+        
+        # Clear conversation context
+        self.session_manager.reset_conversation_context()
+        
+        # If we have an active session, we'll keep it but with cleared context
+        if self.session_manager.state == SessionState.ACTIVE:
+            self.logger.info("🔄 Active session will continue with fresh context")
+            
+        # Only publish conversation ID if this was an internal change (timeout)
+        # External changes should not be re-published to avoid loops
+        if not is_external and self.bridge_interface and self.bridge_interface.is_connected():
+            asyncio.create_task(self._publish_conversation_id(new_id))
+            
+    async def _publish_conversation_id(self, conversation_id: str):
+        """Publish conversation ID to ROS topic"""
+        try:
+            conv_msg = {"data": conversation_id}
+            success = await self.bridge_interface.put_outbound_message(
+                "conversation_id",  # Use relative topic name for bridge compatibility
+                conv_msg,
+                "std_msgs/String"
+            )
+            if success:
+                self.logger.info(f"📤 Published conversation ID: {conversation_id}")
+            else:
+                self.logger.warning("Failed to publish conversation ID")
+        except Exception as e:
+            self.logger.error(f"Error publishing conversation ID: {e}")
+            
+    async def _handle_user_interruption(self):
+        """Handle user interruption during assistant response"""
+        try:
+            # Check if assistant is currently responding (has active response)
+            if not self.pause_detector.is_llm_speaking():
+                self.logger.debug("👂 User speech detected, but assistant not speaking - no interruption needed")
+                return
+                
+            self.logger.info("⚡ User interruption detected - canceling assistant response")
+            
+            # 1. Cancel current response
+            cancel_msg = self.serializer.create_response_cancel()
+            await self.session_manager.websocket.send(json.dumps(cancel_msg))
+            self.logger.info("🛑 Sent response.cancel")
+            
+            # 2. Clear output audio buffer to stop playback immediately  
+            clear_msg = self.serializer.create_audio_buffer_clear()
+            await self.session_manager.websocket.send(json.dumps(clear_msg))
+            self.logger.info("🔇 Cleared output audio buffer")
+            
+            # 3. Truncate conversation item to prevent partial text in context
+            if self.last_assistant_item_id:
+                truncate_msg = self.serializer.create_conversation_truncate(
+                    self.last_assistant_item_id,
+                    audio_end_ms=0  # Start from beginning of audio
+                )
+                await self.session_manager.websocket.send(json.dumps(truncate_msg))
+                self.logger.info(f"✂️ Truncated conversation item: {self.last_assistant_item_id}")
+            
+            # 4. Clear assistant transcript buffer to prevent partial text pollution
+            if self.assistant_transcript_buffer:
+                self.logger.info(f"🧹 Clearing partial transcript: '{self.assistant_transcript_buffer[:50]}...'")
+                self.assistant_transcript_buffer = ""
+            
+            # 5. Signal ROS audio player to clear its queue
+            if self.published_topics.get('interruption_signal') and self.bridge_interface:
+                interrupt_signal = {"data": True}
+                await self.bridge_interface.put_outbound_message(
+                    self.published_topics['interruption_signal'],
+                    interrupt_signal,
+                    "std_msgs/Bool"
+                )
+                self.logger.info("📡 Sent interruption signal to audio player")
+            
+            # 6. Mark LLM response as complete since we're interrupting it
+            self.pause_detector.mark_llm_response_complete()
+            self._mark_response_complete('assistant_response')
+            self._mark_response_complete('audio_complete')
+            
+            self.logger.info("✅ Interruption handled - ready for new user input")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Error handling user interruption: {e}")
 
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    asyncio.run(main())
+# Convenience function for standalone usage
+async def create_and_run_agent(config: Dict) -> OpenAIRealtimeAgent:
+    """Create and run agent with proper error handling"""
+    agent = OpenAIRealtimeAgent(config)
+    
+    try:
+        await agent.initialize()
+        await agent.run()
+    except KeyboardInterrupt:
+        agent.logger.info("⌨️ Keyboard interrupt received")
+    except Exception as e:
+        agent.logger.error(f"❌ Agent error: {e}", exc_info=True)
+    finally:
+        await agent.stop()
+        
+    return agent
