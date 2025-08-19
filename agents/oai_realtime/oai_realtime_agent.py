@@ -23,9 +23,11 @@ import websockets
 from std_msgs.msg import String
 from audio_common_msgs.msg import AudioData
 
-from .serializers import OpenAIRealtimeSerializer
-from .session_manager import SessionManager, SessionState
-from .debug_interface import DebugInterface
+# Use refactored components
+from .oai_serializer import OpenAISerializer
+from .oai_session_manager import OpenAISessionManager
+from ..common.base_session_manager import SessionState
+from ..common.debug_interface import DebugInterface
 from ..common import WebSocketBridgeInterface, PauseDetector, ConversationContext, ConversationMonitor
 
 
@@ -44,12 +46,12 @@ class OpenAIRealtimeAgent:
         self.config = config or {}
         self.bridge_interface: Optional[WebSocketBridgeInterface] = None  # Will be set in initialize()
         
-        # Core components
-        self.serializer = OpenAIRealtimeSerializer()
+        # Core components - using refactored classes
+        self.serializer = OpenAISerializer()
         self.pause_detector = PauseDetector(
             pause_timeout=self.config.get('session_pause_timeout', 10.0)
         )
-        self.session_manager = SessionManager(self.config)
+        self.session_manager = OpenAISessionManager(self.config)
         
         # Conversation monitoring
         conversation_timeout = self.config.get('conversation_timeout', 
@@ -210,7 +212,7 @@ class OpenAIRealtimeAgent:
                     self.prepared_context = None
                     self.pause_detector.reset()
                     self._reset_response_tracking()
-                    self.session_ready.clear()  # Reset session ready event
+                    self.session_ready.set()  # Set immediately - session is ready
                     
                     # Start response processor immediately after session creation
                     if not hasattr(self, '_response_processor_task') or self._response_processor_task.done():
@@ -265,7 +267,7 @@ class OpenAIRealtimeAgent:
                         if success:
                             self.pause_detector.reset()
                             self._reset_response_tracking()
-                            self.session_ready.clear()  # Reset session ready event
+                            self.session_ready.set()  # Set immediately - session is ready
                             
                             # Start response processor immediately after session creation
                             if not hasattr(self, '_response_processor_task') or self._response_processor_task.done():
@@ -274,7 +276,7 @@ class OpenAIRealtimeAgent:
                             
                             self.logger.info("✅ Session created for incoming message")
                         else:
-                            self.logger.error("❌ Failed to create session - check OpenAI API key")
+                            self.logger.error("❌ Failed to create session - check configuration and API status")
                             return
                     finally:
                         self.session_creating = False
@@ -303,7 +305,7 @@ class OpenAIRealtimeAgent:
                                 # Add small delay to ensure audio is processed by OpenAI
                                 await asyncio.sleep(0.1)  # 100ms delay
                                 
-                                commit_msg = {"type": "input_audio_buffer.commit"}
+                                commit_msg = self.serializer.create_audio_buffer_commit()
                                 await self.session_manager.websocket.send(json.dumps(commit_msg))
                                 utterance_id = envelope.raw_data.utterance_id
                                 self.logger.info(f"💾 Committed audio buffer for utterance {utterance_id}")
@@ -435,7 +437,7 @@ class OpenAIRealtimeAgent:
                     self.metrics['sessions_cycled_on_limits'] += 1
                     self.pause_detector.reset()
                     self._reset_response_tracking()
-                    self.session_ready.clear()  # Reset session ready event
+                    self.session_ready.set()  # Set immediately - session is ready
                     self.logger.info("✅ Session rotated seamlessly")
                 else:
                     self.logger.error("❌ Failed to rotate session - preparing for next message")
@@ -581,10 +583,13 @@ class OpenAIRealtimeAgent:
                 self._mark_response_complete('audio_complete')
                 
             elif event_type == "session.created":
+                # Session already marked ready during connection, this is just for logging
                 session_info = data.get('session', {})
-                session_ready = self.session_manager.handle_session_created(session_info)
-                if session_ready:
-                    self.session_ready.set()  # Signal that session is ready
+                session_id = session_info.get('id', 'unknown')
+                self.logger.debug(f"📝 Received session.created confirmation: {session_id}")
+                # Ensure session_ready is set (defensive programming)
+                if not self.session_ready.is_set():
+                    self.session_ready.set()
                 
             elif event_type == "session.updated":
                 session_config = data.get('session', {})
@@ -667,7 +672,7 @@ class OpenAIRealtimeAgent:
             if self.pending_responses.get('assistant_response', False):
                 self.logger.info("🤖 Triggering OpenAI response generation")
                 try:
-                    response_msg = {"type": "response.create"}
+                    response_msg = self.serializer.create_response_trigger()
                     await self.session_manager.websocket.send(json.dumps(response_msg))
                     self.logger.info("✅ Response generation triggered")
                 except Exception as e:
@@ -793,7 +798,7 @@ class OpenAIRealtimeAgent:
         """Send text input as a conversation item to OpenAI"""
         try:
             # Use existing serializer that already handles text format
-            api_msg = self.serializer.serialize_text_data(envelope)
+            api_msg = self.serializer.serialize_text(envelope)
             
             if api_msg and self.session_manager.is_connected():
                 await self.session_manager.websocket.send(json.dumps(api_msg))
@@ -801,7 +806,7 @@ class OpenAIRealtimeAgent:
                 self.logger.info(f"✅ Sent text to OpenAI: '{envelope.raw_data.data[:50]}...'")
                 
                 # Trigger response creation immediately for text input
-                response_msg = {"type": "response.create"}
+                response_msg = self.serializer.create_response_trigger()
                 await self.session_manager.websocket.send(json.dumps(response_msg))
                 self.logger.info("🚀 Triggered response creation for text input")
                 
@@ -1109,23 +1114,21 @@ class OpenAIRealtimeAgent:
             self.logger.info("⚡ User interruption detected - canceling assistant response")
             
             # 1. Cancel current response
-            cancel_msg = {"type": "response.cancel"}
+            cancel_msg = self.serializer.create_response_cancel()
             await self.session_manager.websocket.send(json.dumps(cancel_msg))
             self.logger.info("🛑 Sent response.cancel")
             
             # 2. Clear output audio buffer to stop playback immediately  
-            clear_msg = {"type": "output_audio_buffer.clear"}
+            clear_msg = self.serializer.create_audio_buffer_clear()
             await self.session_manager.websocket.send(json.dumps(clear_msg))
             self.logger.info("🔇 Cleared output audio buffer")
             
             # 3. Truncate conversation item to prevent partial text in context
             if self.last_assistant_item_id:
-                truncate_msg = {
-                    "type": "conversation.item.truncate",
-                    "item_id": self.last_assistant_item_id,
-                    "content_index": 0,  # Truncate from beginning - remove entire partial response
-                    "audio_end_ms": 0    # Start from beginning of audio
-                }
+                truncate_msg = self.serializer.create_conversation_truncate(
+                    self.last_assistant_item_id,
+                    audio_end_ms=0  # Start from beginning of audio
+                )
                 await self.session_manager.websocket.send(json.dumps(truncate_msg))
                 self.logger.info(f"✂️ Truncated conversation item: {self.last_assistant_item_id}")
             

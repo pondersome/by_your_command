@@ -6,7 +6,7 @@ WebSocket connections, context management, and session lifecycle.
 
 Author: Karim Virani
 Version: 1.0
-Date: December 2024
+Date: August 2025
 """
 
 import asyncio
@@ -81,23 +81,38 @@ class BaseSessionManager(ABC):
             return False
             
         try:
+            import random
+            conn_id = random.randint(1000, 9999)
             self.state = SessionState.CONNECTING
-            self.logger.info("🔌 Connecting to LLM provider...")
+            self.logger.info(f"🔌 [{conn_id}] Connecting to LLM provider...")
             
-            # Get provider-specific WebSocket URL
+            # Get provider-specific WebSocket URL and connection parameters
+            self.logger.debug(f"[{conn_id}] Getting WebSocket URL...")
             url = self._get_websocket_url()
+            self.logger.debug(f"[{conn_id}] Got URL: {url}")
             
-            # Common WebSocket connection parameters
-            self.websocket = await websockets.connect(
-                url,
-                ping_interval=30,
-                ping_timeout=10,
-                close_timeout=10,
-                max_size=10 * 1024 * 1024  # 10MB max message size
-            )
+            # Get provider-specific connection parameters (headers, etc.)
+            connect_params = self._get_connection_params()
+            
+            # Merge common and provider-specific parameters
+            ws_params = {
+                'ping_interval': 30,
+                'ping_timeout': 20,
+                'close_timeout': 10,
+                'open_timeout': 30,  # Increase timeout for slower connections
+                'max_size': 10 * 1024 * 1024,  # 10MB max message size
+            }
+            
+            # Add provider-specific parameters (like extra_headers)
+            if connect_params:
+                ws_params.update(connect_params)
+            
+            # Connect with merged parameters
+            self.logger.debug(f"[{conn_id}] Attempting WebSocket connection...")
+            self.websocket = await websockets.connect(url, **ws_params)
             
             self.state = SessionState.CONNECTED
-            self.logger.info("✅ WebSocket connected, configuring session...")
+            self.logger.info(f"✅ [{conn_id}] WebSocket connected, configuring session...")
             
             # Provider-specific session configuration
             await self._configure_session(context)
@@ -114,7 +129,24 @@ class BaseSessionManager(ABC):
                 return False
                 
         except Exception as e:
-            self.logger.error(f"❌ Connection failed: {e}")
+            error_msg = str(e)
+            if "3000" in error_msg and "invalid_request_error" in error_msg:
+                self.logger.error(f"❌ Connection failed - Invalid request format or parameters: {e}")
+                self.logger.error("Check: prompt configuration, model availability, or API format changes")
+            elif "401" in error_msg or "403" in error_msg:
+                self.logger.error(f"❌ Connection failed - Authentication issue: {e}")
+                self.logger.error("Check: API key is valid and has proper permissions")
+            elif "429" in error_msg:
+                self.logger.error(f"❌ Connection failed - Rate limit exceeded: {e}")
+            elif "timeout" in error_msg.lower():
+                self.logger.error(f"❌ Connection failed - Timeout: {e}")
+                if "opening handshake" in error_msg.lower():
+                    self.logger.error("Network issue or API temporarily unavailable - will retry on next message")
+                else:
+                    self.logger.error("Check network connectivity and API status")
+            else:
+                self.logger.error(f"❌ [{conn_id if 'conn_id' in locals() else '????'}] Connection failed: {e}")
+            
             self.state = SessionState.IDLE
             if self.websocket:
                 await self.websocket.close()
@@ -150,6 +182,8 @@ class BaseSessionManager(ABC):
                 
             self.state = SessionState.IDLE
             self.session_start_time = None
+            self.current_session_id = None
+            self.session_created_at = None
             self.logger.info("🔌 Session closed")
             
             return context
@@ -158,13 +192,25 @@ class BaseSessionManager(ABC):
             self.logger.error(f"Error closing session: {e}")
             self.state = SessionState.IDLE
             self.websocket = None
+            self.session_start_time = None
+            self.current_session_id = None
+            self.session_created_at = None
             return None
     
     def is_connected(self) -> bool:
         """Check if WebSocket is connected"""
-        return (self.state in [SessionState.CONNECTED, SessionState.ACTIVE] and 
-                self.websocket is not None and 
-                not self.websocket.closed)
+        if self.state not in [SessionState.CONNECTED, SessionState.ACTIVE]:
+            return False
+        if self.websocket is None:
+            return False
+        # Check websocket state for websockets 15.x compatibility
+        try:
+            # For websockets 15.x, check state attribute
+            from websockets.protocol import State
+            return self.websocket.state == State.OPEN
+        except (AttributeError, ImportError):
+            # Fallback for older versions
+            return not getattr(self.websocket, 'closed', True)
     
     def is_ready_for_audio(self) -> bool:
         """Check if session is ready to receive audio"""
@@ -210,11 +256,13 @@ class BaseSessionManager(ABC):
                 prompt = prompt_text
                 prompt_info = "direct text"
             elif prompt_id:
-                prompt = self.prompt_loader.get_prompt(prompt_id)
+                prompt_obj = self.prompt_loader.get_prompt_info(prompt_id)
+                prompt = prompt_obj.system_prompt if prompt_obj else None
                 prompt_info = f"id: {prompt_id}"
             else:
-                prompt = self.prompt_loader.get_prompt(self.config.get('prompt_id'))
-                prompt_info = f"default: {self.config.get('prompt_id')}"
+                # Use context-based selection or default
+                prompt = self.prompt_loader.select_prompt({})
+                prompt_info = "context-selected"
                 
             if not prompt:
                 self.logger.error("No prompt available for update")
@@ -236,7 +284,17 @@ class BaseSessionManager(ABC):
     
     def add_context_item(self, text: str, role: str = "user"):
         """Add item to conversation context"""
-        self.context_manager.add_to_context(text, role)
+        self.context_manager.add_turn(role, text)
+    
+    def reset_conversation_context(self):
+        """Reset conversation context (called on conversation ID change)"""
+        self.logger.info("🧹 Resetting conversation context")
+        self.context_manager.reset_context()
+        
+        # If we have an active session, update it with fresh system prompt
+        # (subclasses can override to do provider-specific updates)
+        if self.state == SessionState.ACTIVE:
+            asyncio.create_task(self.update_session_prompt())
     
     def get_metrics(self) -> Dict[str, Any]:
         """Get session metrics"""
@@ -259,6 +317,16 @@ class BaseSessionManager(ABC):
         
         Returns:
             str: WebSocket URL for the provider
+        """
+        pass
+    
+    @abstractmethod
+    def _get_connection_params(self) -> Dict[str, Any]:
+        """
+        Get provider-specific connection parameters
+        
+        Returns:
+            Dict: Extra parameters for websocket connection (e.g., extra_headers)
         """
         pass
     

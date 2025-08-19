@@ -6,7 +6,7 @@ ROS messages to OpenAI Realtime API format.
 
 Author: Karim Virani
 Version: 1.0
-Date: December 2024
+Date: August 2025
 """
 
 import logging
@@ -158,3 +158,19 @@ class OpenAISerializer(BaseSerializer):
             Dict: Audio buffer commit message
         """
         return {"type": "input_audio_buffer.commit"}
+    
+    def get_utterance_metadata(self) -> Dict:
+        """Get metadata from last processed utterance"""
+        return self.current_utterance_metadata.copy() if hasattr(self, 'current_utterance_metadata') else {}
+    
+    def add_utterance_context(self, metadata: Dict):
+        """Store utterance metadata for session context"""
+        if not hasattr(self, 'utterance_contexts'):
+            self.utterance_contexts = []
+        self.utterance_contexts.append({
+            "utterance_id": metadata.get("utterance_id", ""),
+            "confidence": metadata.get("confidence", 0.0), 
+            "start_time": metadata.get("start_time", 0.0),
+            "chunk_sequence": metadata.get("chunk_sequence", 0),
+            "duration": metadata.get("duration", 0.0)
+        })

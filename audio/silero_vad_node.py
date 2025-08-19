@@ -40,10 +40,10 @@ class AdaptiveClapDetector:
         
         # Background noise tracking
         self.background_rms = 0.01  # Initialize with small non-zero value
-        self.background_update_rate = 0.05  # Exponential moving average rate
+        self.background_update_rate = 0.02  # Exponential moving average rate (slower to prevent over-adaptation)
         
-        # Clap detection parameters
-        self.spike_threshold_ratio = 4.0  # Spike must be 4x background
+        # Clap detection parameters (more selective to avoid false positives)
+        self.spike_threshold_ratio = 8.0  # Spike must be 8x background (increased from 4.0)
         self.min_clap_duration_ms = 50
         self.max_clap_duration_ms = 200
         self.min_gap_ms = 300
@@ -70,8 +70,8 @@ class AdaptiveClapDetector:
                                   self.background_update_rate * current_rms
         # If current sound is much louder, it's likely a clap - don't contaminate background
         
-        # Ensure background doesn't go to zero
-        self.background_rms = max(self.background_rms, 0.0001)
+        # Ensure background doesn't go too low (prevent false triggers from silence)
+        self.background_rms = max(self.background_rms, 0.001)  # Higher floor to prevent speech false positives
     
     def is_sharp_transient(self, audio_chunk):
         """Check if chunk contains a sharp transient (like a clap)"""
@@ -105,12 +105,18 @@ class AdaptiveClapDetector:
             peak_rms = np.max(np.abs(audio_float))
             
             # More stringent criteria for clap detection
-            sharp_attack = start_rms > end_rms * 1.2  # Attack higher than decay
-            high_peak = peak_rms > rms * 1.5  # Peak significantly higher than average
-            transient_ratio = rms / self.background_rms > 8.0  # Must be much louder than background
+            sharp_attack = start_rms > end_rms * 1.8  # Attack much higher than decay (increased selectivity)
+            high_peak = peak_rms > rms * 2.5  # Peak significantly higher than average (increased selectivity)
+            transient_ratio = rms / self.background_rms > 15.0  # Must be MUCH louder than background
             
-            if sharp_attack and high_peak and transient_ratio:
-                print(f"[CLAP DEBUG] Sharp transient confirmed: attack={start_rms:.4f}, decay={end_rms:.4f}, peak={peak_rms:.4f}")
+            # Additional check: claps have very short duration and high frequency content
+            # Check zero-crossing rate for high frequency content
+            zero_crossings = np.sum(np.diff(np.sign(audio_float)) != 0)
+            zc_rate = zero_crossings / len(audio_float)
+            high_frequency = zc_rate > 0.2  # Claps have high frequency content
+            
+            if sharp_attack and high_peak and transient_ratio and high_frequency:
+                print(f"[CLAP DEBUG] Sharp transient confirmed: attack={start_rms:.4f}, decay={end_rms:.4f}, peak={peak_rms:.4f}, zc_rate={zc_rate:.3f}")
                 return True
         
         return False

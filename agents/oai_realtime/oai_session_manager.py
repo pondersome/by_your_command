@@ -6,7 +6,7 @@ configuration for the OpenAI Realtime API.
 
 Author: Karim Virani
 Version: 1.0
-Date: December 2024
+Date: August 2025
 """
 
 import asyncio
@@ -37,32 +37,46 @@ class OpenAISessionManager(BaseSessionManager):
         self.conversation_id: Optional[str] = None
         
     def _get_websocket_url(self) -> str:
-        """Get OpenAI WebSocket URL with authentication"""
+        """Get OpenAI WebSocket URL"""
+        from urllib.parse import quote
+        model = self.config.get('model', 'gpt-4o-realtime-preview')
+        # URL encode the model parameter in case of special characters
+        encoded_model = quote(model, safe='')
+        url = f"wss://api.openai.com/v1/realtime?model={encoded_model}"
+        self.logger.info(f"OpenAI WebSocket URL: {url}")
+        return url
+    
+    def _get_connection_params(self) -> Dict[str, Any]:
+        """Get OpenAI-specific connection parameters including auth headers"""
         api_key = self.config.get('openai_api_key', os.getenv('OPENAI_API_KEY'))
         if not api_key:
             raise ValueError("OpenAI API key not found in config or environment")
-            
-        model = self.config.get('model', 'gpt-4o-realtime-preview')
         
-        # Construct URL with API key as bearer token
-        url = f"wss://api.openai.com/v1/realtime?model={model}"
+        # Log key presence (not the key itself)
+        self.logger.debug(f"API key found: {len(api_key)} characters")
         
-        # Note: OpenAI expects the API key in the Authorization header
-        # This is handled by the websockets library with custom headers
-        self._websocket_headers = {
-            "Authorization": f"Bearer {api_key}",
-            "OpenAI-Beta": "realtime=v1"
+        # OpenAI expects the API key in the Authorization header
+        # Note: websockets 15.x uses 'additional_headers' not 'extra_headers'
+        return {
+            'additional_headers': {
+                "Authorization": f"Bearer {api_key}",
+                "OpenAI-Beta": "realtime=v1"
+            }
         }
-        
-        return url
     
     async def _configure_session(self, context: Optional[ConversationContext] = None):
         """Send OpenAI-specific session configuration"""
         
         # Load and build system prompt
         prompt_id = self.config.get('prompt_id')
-        selected_prompt = self.prompt_loader.get_prompt(prompt_id) if prompt_id else None
         
+        # Try to get specific prompt by ID, or use context-based selection
+        if prompt_id:
+            prompt_info = self.prompt_loader.get_prompt_info(prompt_id)
+            selected_prompt = prompt_info.system_prompt if prompt_info else None
+        else:
+            selected_prompt = self.prompt_loader.select_prompt({})
+            
         if not selected_prompt:
             selected_prompt = "You are a helpful assistant."
             self.logger.warning("No prompt found, using default")
@@ -99,23 +113,7 @@ class OpenAISessionManager(BaseSessionManager):
             }
         }
         
-        # Need to handle custom headers for OpenAI auth
-        if hasattr(self, '_websocket_headers'):
-            # Reconnect with headers if not already connected with them
-            if not self.websocket:
-                url = self._get_websocket_url()
-                self.websocket = await asyncio.wait_for(
-                    websockets.connect(
-                        url,
-                        extra_headers=self._websocket_headers,
-                        ping_interval=30,
-                        ping_timeout=10,
-                        close_timeout=10,
-                        max_size=10 * 1024 * 1024
-                    ),
-                    timeout=10.0
-                )
-        
+        # Send configuration to OpenAI
         await self.websocket.send(json.dumps(config_msg))
         self.logger.info("📤 OpenAI session configuration sent")
         self.logger.debug(f"Configuration: {json.dumps(config_msg, indent=2)}")
@@ -141,8 +139,23 @@ class OpenAISessionManager(BaseSessionManager):
                         self.logger.info(f"✅ OpenAI session created: {self.session_id}")
                         return True
                     elif event_type == "error":
-                        error_msg = data.get("error", {}).get("message", "Unknown error")
-                        self.logger.error(f"❌ OpenAI error: {error_msg}")
+                        error_data = data.get("error", {})
+                        error_msg = error_data.get("message", "Unknown error")
+                        error_type = error_data.get("type", "unknown")
+                        error_code = error_data.get("code", "")
+                        
+                        self.logger.error(f"❌ OpenAI API error: {error_type} - {error_msg}")
+                        if error_code:
+                            self.logger.error(f"   Error code: {error_code}")
+                        
+                        # Provide helpful context based on error type
+                        if "invalid_request" in error_type:
+                            self.logger.error("   Check: session configuration, prompt format, or model parameters")
+                        elif "authentication" in error_type or "unauthorized" in error_type:
+                            self.logger.error("   Check: API key validity and permissions")
+                        elif "rate_limit" in error_type:
+                            self.logger.error("   Rate limit exceeded - wait and retry")
+                            
                         return False
                         
                 except asyncio.TimeoutError:
@@ -255,3 +268,33 @@ class OpenAISessionManager(BaseSessionManager):
         except Exception as e:
             self.logger.error(f"Failed to truncate item: {e}")
             return False
+    
+    async def close_session(self) -> Optional[ConversationContext]:
+        """Close session and clean up OpenAI-specific state"""
+        # Call parent close_session first
+        context = await super().close_session()
+        
+        # Reset OpenAI-specific variables
+        self.session_id = None
+        self.conversation_id = None
+        
+        return context
+    
+    def add_conversation_turn(self, role: str, text: str, metadata: Optional[Dict] = None):
+        """Add turn to conversation context"""
+        self.context_manager.add_turn(role, text, metadata)
+        
+        # Rough token estimation for cost tracking (OpenAI-specific)
+        token_estimate = len(text) // 4  # ~4 chars per token
+        if not hasattr(self, 'current_session_tokens'):
+            self.current_session_tokens = 0
+        if not hasattr(self, 'current_session_cost'):
+            self.current_session_cost = 0.0
+            
+        self.current_session_tokens += token_estimate
+        
+        # Rough cost estimation (example rates)
+        if role == "user":
+            self.current_session_cost += token_estimate * 0.00001  # Input tokens
+        else:
+            self.current_session_cost += token_estimate * 0.00003  # Output tokens
