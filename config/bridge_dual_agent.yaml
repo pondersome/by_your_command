@@ -19,7 +19,7 @@ ros_ai_bridge:
       require_capabilities: []  # Required agent capabilities
     
     # Queue configuration
-    max_queue_size: 100
+    max_queue_size: 500  # Increased for Gemini agent which might process slower
     queue_timeout_ms: 1000
     drop_policy: "oldest"
     

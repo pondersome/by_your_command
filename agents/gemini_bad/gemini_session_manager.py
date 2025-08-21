@@ -101,25 +101,20 @@ class GeminiSessionManager(BaseSessionManager):
             
             self.logger.debug(f"[{conn_id}] Using API key: {'*' * 10}{self.api_key[-4:] if len(self.api_key) > 4 else '****'}")
             
-            # Create client if not already created (reuse for better performance)
-            if not hasattr(self, 'client') or self.client is None:
-                self.client = genai.Client(
-                    api_key=self.api_key,
-                    http_options={'api_version': 'v1beta'}
-                )
-                # Small delay on first client creation to ensure initialization
-                await asyncio.sleep(0.5)
-                self.logger.debug(f"[{conn_id}] Created new Gemini client")
+            self.client = genai.Client(
+                api_key=self.api_key,
+                http_options={'api_version': 'v1beta'}
+            )
             
             # Connect using async context manager with timeout
             self.logger.debug(f"[{conn_id}] Attempting connection to Gemini Live...")
-            # Connect with configuration
+            # Try simpler connection without config first
             self.session_context = self.client.aio.live.connect(
-                model=self.model_name,
-                config=config
+                model=self.model_name
             )
             
             # Add timeout for connection
+            import asyncio
             self.session = await asyncio.wait_for(
                 self.session_context.__aenter__(),
                 timeout=30.0  # 30 second timeout
@@ -139,10 +134,6 @@ class GeminiSessionManager(BaseSessionManager):
             self.sessions_created += 1
             self.logger.info(f"✅ Session #{self.sessions_created} active")
             
-            # Note: start_stream() requires stream and mime_type arguments
-            # We don't actually need to call this for basic audio streaming
-            # The session is ready to receive audio after connection
-            
             return True
             
         except asyncio.TimeoutError:
@@ -151,55 +142,27 @@ class GeminiSessionManager(BaseSessionManager):
             self.logger.error("  1. Check your internet connection")
             self.logger.error("  2. Verify API key is valid: set GEMINI_API_KEY environment variable")
             self.logger.error("  3. Check if Gemini Live API is available in your region")
-            self.logger.error(f"  4. Verify the model is correct: {self.model_name}")
-            
-            # Clean up the hanging connection attempt
-            if hasattr(self, 'session_context') and self.session_context:
-                try:
-                    await self.session_context.__aexit__(None, None, None)
-                except:
-                    pass  # Ignore cleanup errors
-                self.session_context = None
-            
-            # Reset state so retries can work
-            self.state = SessionState.IDLE
-            self.session = None
-            self.connection_start_time = None
-            self.session_start_time = None
-            return False
+            self.logger.error("  4. Verify the model is correct: models/gemini-2.0-flash-exp")
             
         except Exception as e:
             error_msg = str(e)
-            import traceback
-            
-            # Always log the actual error first
-            self.logger.error(f"❌ [{conn_id if 'conn_id' in locals() else '????'}] Connection failed with {type(e).__name__}: {e}")
-            
-            # Log full traceback for debugging
-            self.logger.error(f"Full error details:\n{traceback.format_exc()}")
-            
-            # Then provide helpful context
             if "quota" in error_msg.lower():
-                self.logger.error("Likely cause: API quota exceeded")
+                self.logger.error(f"❌ Connection failed - Quota exceeded: {e}")
             elif "api key" in error_msg.lower() or "invalid" in error_msg.lower() or "unauthorized" in error_msg.lower():
-                self.logger.error("Likely cause: Authentication issue")
+                self.logger.error(f"❌ Connection failed - Authentication issue: {e}")
+                self.logger.error("Check: API key is valid and has proper permissions")
                 self.logger.error(f"Current API key ends with: ...{self.api_key[-4:] if self.api_key and len(self.api_key) > 4 else '????'}")
             elif "model" in error_msg.lower():
-                self.logger.error(f"Likely cause: Model '{self.model_name}' issue")
+                self.logger.error(f"❌ Connection failed - Model issue: {e}")
+                self.logger.error(f"Check: Model '{self.model_name}' is available and accessible")
             elif "timed out" in error_msg.lower():
-                self.logger.error("Likely cause: Network timeout")
-            elif "dns" in error_msg.lower() or "getaddrinfo" in error_msg.lower():
-                self.logger.error("Likely cause: DNS resolution failure - check internet connection")
+                self.logger.error(f"❌ [{conn_id if 'conn_id' in locals() else '????'}] Connection failed: {e}")
+                self.logger.error("WebSocket handshake timeout - check network and API availability")
+            else:
+                self.logger.error(f"❌ [{conn_id if 'conn_id' in locals() else '????'}] Connection failed: {e}")
+                import traceback
+                self.logger.debug(f"Full traceback:\n{traceback.format_exc()}")
             
-            # Clean up any hanging connection
-            if hasattr(self, 'session_context') and self.session_context:
-                try:
-                    await self.session_context.__aexit__(None, None, None)
-                except:
-                    pass  # Ignore cleanup errors
-                self.session_context = None
-            
-            # Reset state for retries
             self.state = SessionState.IDLE
             self.session = None
             self.connection_start_time = None
@@ -229,10 +192,20 @@ class GeminiSessionManager(BaseSessionManager):
             context
         )
         
-        # Build Gemini Live configuration - simplified format based on docs
+        # Build Gemini Live configuration - using dict format for now
+        # The google-genai library may expect a different config structure
         config = {
-            "response_modalities": ["AUDIO"],
-            "system_instruction": system_prompt
+            "generation_config": {
+                "response_modalities": ["AUDIO"],
+                "speech_config": {
+                    "voice_config": {
+                        "prebuilt_voice_config": {
+                            "voice_name": self.config.get('voice', 'Kore')
+                        }
+                    }
+                }
+            },
+            "system_instruction": {"parts": [{"text": system_prompt}]}
         }
         
         # Add video configuration if enabled
@@ -345,51 +318,11 @@ class GeminiSessionManager(BaseSessionManager):
             self.logger.error("No active session for audio")
             return False
         
-        # Check if connection is still alive
-        if not await self._check_connection_health():
-            self.logger.error("Session connection is dead, attempting reconnect...")
-            await self._handle_connection_loss()
-            return False
-        
         try:
-            # Use send_realtime_input for audio - it's the correct method for real-time audio
-            if hasattr(self.session, 'send_realtime_input'):
-                # Create the proper input format for real-time audio
-                from google.genai import types
-                
-                # Send as real-time audio input using 'audio' parameter (not 'media')
-                await self.session.send_realtime_input(
-                    audio=types.Blob(
-                        data=audio_data,
-                        mime_type="audio/pcm;rate=16000"
-                    )
-                )
-                self.logger.debug(f"Sent {len(audio_data)} bytes of audio via send_realtime_input")
-            elif hasattr(self.session, 'send'):
-                # Fallback to send() with keyword argument
-                # The signature shows it takes 'input' as a keyword argument
-                from google.genai import types
-                
-                # Try sending as a blob with the input keyword
-                await self.session.send(
-                    input=types.Blob(
-                        data=audio_data,
-                        mime_type="audio/pcm;rate=16000"
-                    )
-                )
-                self.logger.debug(f"Sent {len(audio_data)} bytes of audio via send(input=...)")
-            else:
-                self.logger.error(f"Cannot find send method. Available: {dir(self.session)}")
-                return False
-            
+            await self.session.send(audio_data)
             return True
         except Exception as e:
-            error_str = str(e)
-            if "keepalive" in error_str or "1011" in error_str or "close" in error_str:
-                self.logger.error(f"WebSocket connection lost: {e}")
-                await self._handle_connection_loss()
-            else:
-                self.logger.error(f"Failed to send audio: {e}")
+            self.logger.error(f"Failed to send audio: {e}")
             return False
     
     async def send_text(self, text: str) -> bool:
@@ -399,15 +332,7 @@ class GeminiSessionManager(BaseSessionManager):
             return False
         
         try:
-            # Use send_client_content with proper format
-            from google.genai import types
-            await self.session.send_client_content(
-                turns=types.Content(
-                    parts=[types.Part(text=text)]
-                ),
-                turn_complete=True
-            )
-            self.logger.debug(f"Sent text via send_client_content: {text[:50]}...")
+            await self.session.send(text)
             return True
         except Exception as e:
             self.logger.error(f"Failed to send text: {e}")
@@ -450,22 +375,15 @@ class GeminiSessionManager(BaseSessionManager):
             self.last_video_frame = frame_data
             self.video_frame_timestamp = time.time()
             
-            # Send video frame using the correct API
-            if hasattr(self.session, 'send_realtime_input'):
-                from google.genai import types
-                await self.session.send_realtime_input(
-                    media=types.Blob(data=frame_data, mime_type=mime_type)
-                )
-            else:
-                # Fallback to older API style
-                await self.session.send(
-                    genai.types.LiveClientContent(
-                        inline_data=genai.types.InlineData(
-                            mime_type=mime_type,
-                            data=frame_data
-                        )
+            # Send video frame - google-genai uses LiveClientContent
+            await self.session.send(
+                genai.types.LiveClientContent(
+                    inline_data=genai.types.InlineData(
+                        mime_type=mime_type,
+                        data=frame_data
                     )
                 )
+            )
             return True
         except Exception as e:
             self.logger.error(f"Failed to send video frame: {e}")
@@ -482,53 +400,3 @@ class GeminiSessionManager(BaseSessionManager):
             return age < 5.0
         
         return False
-    
-    async def _check_connection_health(self) -> bool:
-        """Check if the WebSocket connection is still alive"""
-        if not self.session:
-            return False
-        
-        # For now, just check if session exists and state is active
-        # The WebSocket state checking was too aggressive
-        if self.state != SessionState.ACTIVE:
-            return False
-        
-        # Only check WebSocket if we know it's actually closed
-        if hasattr(self.session, '_ws') and self.session._ws:
-            # Only return False if we're certain it's closed
-            if hasattr(self.session._ws, 'closed') and self.session._ws.closed:
-                self.logger.debug("WebSocket is closed")
-                return False
-            # Check for websockets library specific states
-            if hasattr(self.session._ws, 'state'):
-                import websockets
-                if hasattr(websockets, 'protocol') and hasattr(websockets.protocol, 'State'):
-                    # Only fail if explicitly CLOSED or CLOSING
-                    if self.session._ws.state in [websockets.protocol.State.CLOSED, 
-                                                   websockets.protocol.State.CLOSING]:
-                        self.logger.debug(f"WebSocket state is {self.session._ws.state}")
-                        return False
-        
-        return True
-    
-    async def _handle_connection_loss(self):
-        """Handle lost connection by cleaning up and marking session as idle"""
-        self.logger.warning("Handling connection loss - cleaning up session")
-        
-        # Clean up the dead session
-        if self.session:
-            try:
-                if hasattr(self, 'session_context'):
-                    await self.session_context.__aexit__(None, None, None)
-            except:
-                pass  # Ignore cleanup errors
-            
-            self.session = None
-            self.session_context = None
-        
-        # Reset state
-        self.state = SessionState.IDLE
-        self.connection_start_time = None
-        self.session_start_time = None
-        
-        self.logger.info("Session cleaned up after connection loss")

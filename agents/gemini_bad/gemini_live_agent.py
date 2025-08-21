@@ -105,9 +105,6 @@ class GeminiLiveAgent:
         self.logger = logging.getLogger(__name__)
         self.logger.setLevel(self.config.get('log_level', logging.INFO))
         
-        # Set session manager to DEBUG temporarily
-        logging.getLogger('GeminiSessionManager').setLevel(logging.DEBUG)
-        
         # Metrics
         self.metrics = {
             'messages_processed': 0,
@@ -247,16 +244,10 @@ class GeminiLiveAgent:
         if audio_bytes:
             chunk_id = envelope.raw_data.chunk_sequence if hasattr(envelope.raw_data, 'chunk_sequence') else 0
             
-            # Wait for session ready with timeout
+            # Wait for session ready
             if not self.session_ready.is_set():
                 self.logger.info(f"⏳ Waiting for session ready before sending chunk #{chunk_id}...")
-                try:
-                    await asyncio.wait_for(self.session_ready.wait(), timeout=60.0)
-                except asyncio.TimeoutError:
-                    self.logger.error(f"❌ Session not ready after 60s timeout for chunk #{chunk_id}")
-                    # Try to create session again
-                    await self._ensure_session_for_message()
-                    return
+                await self.session_ready.wait()
             
             # Send audio directly to Gemini
             if self.session_manager.is_ready_for_audio():
@@ -270,27 +261,12 @@ class GeminiLiveAgent:
                         self.expecting_response = True
                         self.response_timeout_start = time.time()
                         
-                        # Send end-of-turn signal to trigger response
-                        if hasattr(self.session_manager.session, 'send'):
-                            try:
-                                self.logger.info("📢 Sending end-of-turn signal to Gemini")
-                                await self.session_manager.session.send(end_of_turn=True)
-                            except Exception as e:
-                                self.logger.error(f"Failed to send end-of-turn: {e}")
-                        
                         # Store metadata for context
                         utterance_metadata = self.serializer.get_utterance_metadata()
                         if utterance_metadata:
                             self.serializer.add_utterance_context(utterance_metadata)
                     else:
                         self.logger.debug(f"🎤 Sent audio chunk #{chunk_id}")
-                else:
-                    # Send failed - session might be dead
-                    self.logger.error(f"Failed to send audio chunk #{chunk_id}")
-                    # Clear session ready flag to trigger reconnection
-                    self.session_ready.clear()
-                    # Try to ensure session for next message
-                    await self._ensure_session_for_message()
             else:
                 self.logger.warning(f"Session not ready for audio chunk #{chunk_id}")
                 
@@ -366,147 +342,48 @@ class GeminiLiveAgent:
                 
             self.session_creating = True
             try:
-                # Small delay on very first connection to ensure everything is initialized
-                if not hasattr(self, '_first_connection_done'):
-                    self.logger.info("⏳ Initial setup delay before first connection...")
-                    await asyncio.sleep(2.0)
-                    self._first_connection_done = True
-                
-                # Retry logic for connection failures
-                max_retries = 3
-                retry_delay = 5.0
-                
-                for attempt in range(1, max_retries + 1):
-                    self.logger.info(f"🔗 Creating Gemini session (attempt {attempt}/{max_retries})...")
-                    success = await self.session_manager.connect_session()
+                self.logger.info("🔗 Creating Gemini session for incoming message...")
+                success = await self.session_manager.connect_session()
+                if success:
+                    self.pause_detector.reset()
+                    self.session_ready.set()  # Gemini sessions are ready immediately
                     
-                    if success:
-                        self.pause_detector.reset()
-                        self.session_ready.set()  # Gemini sessions are ready immediately
-                        
-                        # Start response processor
-                        if self._response_processor_task is None or self._response_processor_task.done():
-                            self.logger.info("🚀 Starting response processor")
-                            self._response_processor_task = asyncio.create_task(self._continuous_response_processor())
-                        
-                        self.logger.info("✅ Session created for incoming message")
-                        break
-                    else:
-                        if attempt < max_retries:
-                            self.logger.warning(f"❌ Failed to create session, retrying in {retry_delay}s...")
-                            await asyncio.sleep(retry_delay)
-                            retry_delay *= 1.5  # Exponential backoff
-                        else:
-                            self.logger.error("❌ Failed to create session after all retries")
+                    # Start response processor
+                    if self._response_processor_task is None or self._response_processor_task.done():
+                        self.logger.info("🚀 Starting response processor")
+                        self._response_processor_task = asyncio.create_task(self._continuous_response_processor())
+                    
+                    self.logger.info("✅ Session created for incoming message")
+                else:
+                    self.logger.error("❌ Failed to create session")
             finally:
                 self.session_creating = False
                 
     async def _continuous_response_processor(self):
         """Process responses from Gemini Live session"""
-        self.logger.info("🎧 Gemini response processor started")
+        # For now, just keep it simple and non-blocking
+        # The Gemini receive() API seems problematic
+        self.logger.info("🎧 Gemini response processor started (simplified)")
         
         while self.running and self.session_manager.is_connected():
-            try:
-                # Get the session
-                session = self.session_manager.session
-                if not session:
-                    await asyncio.sleep(0.1)
-                    continue
-                
-                # The session has a receive() method
-                if hasattr(session, 'receive'):
-                    self.logger.debug("Starting to receive from session...")
-                    self.logger.debug(f"Session type: {type(session)}, receive method: {type(session.receive)}")
-                    
-                    # Create the receive generator
-                    receive_gen = session.receive()
-                    self.logger.debug(f"Receive generator created: {type(receive_gen)}")
-                    
-                    # Counter for debugging
-                    timeout_count = 0
-                    
-                    # Use wait_for to add a timeout to each iteration
-                    while self.running and self.session_manager.is_connected():
-                        try:
-                            # Try to get next response with timeout
-                            response = await asyncio.wait_for(
-                                receive_gen.__anext__(),
-                                timeout=0.5  # Short timeout to stay responsive
-                            )
-                            if response:
-                                self.logger.info(f"📨 Received response: {type(response)}")
-                                await self._process_gemini_response(response)
-                            else:
-                                self.logger.debug("Received None response")
-                        except asyncio.TimeoutError:
-                            # No response within timeout, yield control
-                            timeout_count += 1
-                            if timeout_count % 20 == 0:  # Log every 10 seconds
-                                self.logger.debug(f"No responses for {timeout_count * 0.5}s")
-                            await asyncio.sleep(0.01)
-                        except StopAsyncIteration:
-                            # Generator exhausted, session might be closed
-                            self.logger.info("Response stream ended - StopAsyncIteration")
-                            break
-                        except Exception as e:
-                            if "closed" in str(e).lower() or "1000" in str(e):
-                                self.logger.info("Response stream closed normally")
-                                break
-                            else:
-                                self.logger.error(f"Error receiving response: {e}")
-                                break
-                else:
-                    self.logger.warning("Session has no receive method")
-                    await asyncio.sleep(1.0)
-                    
-            except Exception as e:
-                self.logger.error(f"Error in response processor: {e}")
-                await asyncio.sleep(0.5)
+            # Just sleep and don't block
+            await asyncio.sleep(1.0)
             
         self.logger.info("🛑 Gemini response processor stopped")
             
     async def _process_gemini_response(self, response):
         """Process response from Gemini Live"""
         try:
-            # Log what we received
-            self.logger.info(f"Processing response type: {type(response).__name__}")
-            
-            # Check what attributes the response has
-            if hasattr(response, '__dict__'):
-                self.logger.debug(f"Response attributes: {response.__dict__.keys()}")
-            
-            # Gemini responses might be different types
-            # Check for specific response types from google-genai
-            if hasattr(response, 'audio'):
+            # Gemini responses can be audio, text, or tool calls
+            if isinstance(response, bytes):
                 # Audio response
-                self.logger.info("📢 Received audio response")
-                if response.audio and response.audio.data:
-                    await self._handle_audio_response(response.audio.data)
-            elif hasattr(response, 'text'):
-                # Text response
-                self.logger.info("💬 Received text response")
-                if response.text:
-                    await self._handle_text_response(response.text)
-            elif hasattr(response, 'media'):
-                # Media response (could be audio/video)
-                self.logger.info("🎵 Received media response")
-                if response.media and response.media.data:
-                    await self._handle_audio_response(response.media.data)
-            elif isinstance(response, bytes):
-                # Raw audio bytes
-                self.logger.info("🔊 Received raw audio bytes")
                 await self._handle_audio_response(response)
             elif isinstance(response, str):
                 # Text response
-                self.logger.info("📝 Received text string")
                 await self._handle_text_response(response)
             elif isinstance(response, dict):
-                # Structured response
-                self.logger.info(f"📦 Received structured response: {response.keys()}")
+                # Structured response (tool calls, etc.)
                 await self._handle_structured_response(response)
-            else:
-                self.logger.warning(f"Unknown response type: {type(response)}")
-                self.logger.debug(f"Response content: {str(response)[:200]}")
                 
             self.metrics['responses_received'] += 1
             self.expecting_response = False
@@ -514,8 +391,6 @@ class GeminiLiveAgent:
             
         except Exception as e:
             self.logger.error(f"Error processing Gemini response: {e}")
-            import traceback
-            self.logger.error(traceback.format_exc())
             
     async def _handle_audio_response(self, audio_data: bytes):
         """Handle audio response from Gemini"""
@@ -631,9 +506,9 @@ class GeminiLiveAgent:
         except Exception as e:
             self.logger.error(f"Error rotating session: {e}")
             
-    def _handle_conversation_change(self, old_id: str, new_id: str, is_external: bool):
+    def _handle_conversation_change(self, old_id: str, new_id: str):
         """Handle conversation ID change"""
-        self.logger.info(f"🔄 Conversation changed from {old_id} to {new_id} (external: {is_external})")
+        self.logger.info(f"🔄 Conversation changed from {old_id} to {new_id}")
         # Reset conversation context
         self.session_manager.reset_conversation_context()
         

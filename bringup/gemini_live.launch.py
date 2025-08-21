@@ -24,7 +24,7 @@ def generate_launch_description():
     pkg_dir = get_package_share_directory('by_your_command')
     
     # Configuration paths
-    bridge_config = os.path.join(pkg_dir, 'config', 'config.yaml')  # Standard bridge config
+    bridge_config = os.path.join(pkg_dir, 'config', 'bridge_dual_agent.yaml')  # Combined bridge config
     gemini_agent_config = os.path.join(pkg_dir, 'config', 'gemini_live_agent.yaml')
     # Keep command agent config for future use (commented out)
     # cmd_agent_config = os.path.join(pkg_dir, 'config', 'gemini_command_agent.yaml')
@@ -100,7 +100,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'topic': 'audio_out',  # Relative topic for namespacing
-            'sample_rate': 24000,  # Gemini outputs at 24kHz
+            'sample_rate': 16000,  # Gemini outputs at 16kHz PCM16
             'channels': 1,
             'device': -1    # Default output device
         }]
@@ -128,7 +128,7 @@ def generate_launch_description():
         parameters=[{
             'namespace': LaunchConfiguration('namespace'),
             'prefix': LaunchConfiguration('prefix'),
-            'config_file': gemini_agent_config,  # Use Gemini config
+            'config_file': bridge_config,  # Use bridge config for topics
             'websocket_server.enabled': True,
             'websocket_server.host': '0.0.0.0',
             'websocket_server.port': 8765,
@@ -144,8 +144,7 @@ def generate_launch_description():
         cmd=[
             '/home/karim/ros2_ws/install/by_your_command/lib/by_your_command/gemini_live_agent',
             '--config', gemini_agent_config,
-            '--pause-timeout', LaunchConfiguration('pause_timeout'),
-            '--agent-type', LaunchConfiguration('agent_type')
+            '--pause-timeout', LaunchConfiguration('pause_timeout')
         ],
         output='screen',
         additional_env={
@@ -177,7 +176,7 @@ def generate_launch_description():
             'output_dir': '/tmp/voice_chunks/assistant_output',
             'input_mode': 'audio_data',
             'input_topic': 'audio_out',  # Assistant voice
-            'input_sample_rate': 24000,  # Gemini outputs at 24kHz
+            'input_sample_rate': 16000,  # Gemini outputs at 16kHz
             'audio_timeout': 10.0
         }]
     )
@@ -222,7 +221,7 @@ def generate_launch_description():
         msg=[
             '🚀 Starting Gemini Live Agent System\n',
             '🤖 Agent Type: ', LaunchConfiguration('agent_type'), '\n',
-            '🎙️  Audio: 16kHz input, 24kHz output\n',
+            '🎙️  Audio: 16kHz input/output\n',
             '📷 Vision: Ready for camera input\n',
             '⏱️  Timeout: ', LaunchConfiguration('pause_timeout'), 's\n',
             '🔊 Listening for multimodal input...'
