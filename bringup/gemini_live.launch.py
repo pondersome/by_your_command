@@ -100,7 +100,7 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'topic': 'audio_out',  # Relative topic for namespacing
-            'sample_rate': 16000,  # Gemini outputs at 16kHz PCM16
+            'sample_rate': 24000,  # Gemini outputs at 24kHz PCM16 (confirmed by tests)
             'channels': 1,
             'device': -1    # Default output device
         }]

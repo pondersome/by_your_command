@@ -93,10 +93,10 @@ system_prompts:
 - Dynamic prompt composition
 
 ### API Keys
-Set your OpenAI API key either in `config/oai_realtime_agent.yaml` or as an environment variable:
+Set your API keys as environment variables:
 ```bash
-export OPENAI_API_KEY="your-api-key-here"
-export GEMINI_API_KEY="your-api-key-here"
+export OPENAI_API_KEY="your-openai-api-key-here"
+export GEMINI_API_KEY="your-gemini-api-key-here"
 ```
 
 ### VAD Settings
@@ -168,10 +168,13 @@ This approach:
 Launch all nodes:
 
 ```bash
-# OpenAI Realtime API integration (RECOMMENDED)
+# OpenAI Realtime API integration
 ros2 launch by_your_command oai_realtime.launch.py
 
-# Dual-agent mode: Conversation + Command extraction
+# Gemini Live API integration
+ros2 launch by_your_command gemini_live.launch.py
+
+# Dual-agent mode: Conversation + Command extraction (OpenAI)
 ros2 launch by_your_command oai_dual_agent.launch.py
 
 # Enable voice recording for debugging
@@ -225,16 +228,16 @@ ros2 topic pub /voice_active std_msgs/Bool "data: true"   # Unmute
 ```
 Microphone → audio_capturer → echo_suppressor → /audio_filtered → 
 silero_vad → /voice_chunks → ROS Bridge → WebSocket → 
-OpenAI Agent → OpenAI Realtime API
+Agent (OpenAI/Gemini) → LLM API
 ```
 
 #### Text Input Flow (Alternative Path)
 ```
 /text_input → ROS Bridge → WebSocket → 
-OpenAI Agent → OpenAI Realtime API
+Agent (OpenAI/Gemini) → LLM API
 ```
 
-#### Voice Output Flow
+#### Voice Output Flow (OpenAI)
 ```
 OpenAI API → response.audio.delta → OpenAI Agent → WebSocket → 
 ROS Bridge → /audio_out → simple_audio_player → Speakers
@@ -248,6 +251,17 @@ User Speech → VAD → /voice_chunks → Agent (while assistant speaking) →
   1. response.cancel → OpenAI API (stops generation)
   2. conversation.item.truncate → OpenAI API (cleans context)
   3. /interruption_signal → simple_audio_player → PyAudio abort() (immediate cutoff)
+```
+
+#### Voice Output Flow (Gemini)
+```
+Gemini API → response.data → ReceiveCoordinator → WebSocket → 
+ROS Bridge → /audio_out (24kHz) → simple_audio_player → Speakers
+         ↓                                              ↓
+         └──────────→ /llm_transcript ──────────────────┘
+
+Key Difference: Gemini uses a ReceiveCoordinator middleware to manage
+the receive generator lifecycle (must create AFTER sending input)
 ```
 
 #### Complete System Architecture
@@ -284,7 +298,7 @@ User Speech → VAD → /voice_chunks → Agent (while assistant speaking) →
 └─────────┘   └─────────┘      └────────┘    └────────┘
 ```
 
-#### Dual-Agent Architecture
+#### Multi-Agent Architecture
 ```
                         /voice_chunks
                               ↓
@@ -303,7 +317,8 @@ User Speech → VAD → /voice_chunks → Agent (while assistant speaking) →
         └───────┬───────┘         └────────┬─────────┘
                 ↓                           ↓
         ┌───────────────┐         ┌──────────────────┐
-        │OpenAI RT API  │         │ OpenAI RT API    │
+        │ OpenAI or     │         │ OpenAI or        │
+        │ Gemini API    │         │ Gemini API       │
         └───────┬───────┘         └────────┬─────────┘
                 ↓ WebSocket                 ↓ WebSocket
         ┌───────────────┐         ┌──────────────────┐
@@ -346,6 +361,10 @@ User Speech → VAD → /voice_chunks → Agent (while assistant speaking) →
     - `pause_detector.py`: Intelligent pause detection for session management
   - `graph.py`: Agent orchestration and workflow management
   - `oai_realtime/`: OpenAI Realtime API integration with prompt macros
+  - `gemini_live/`: Gemini Live API integration with hybrid architecture
+    - `gemini_live_agent.py`: Simplified agent based on OpenAI template
+    - `receive_coordinator.py`: Middleware for managing receive generator lifecycle
+    - `gemini_session_manager.py`: Gemini-specific session management
   - `tools/`: Command processing and ROS action tools
 - `interactions/`: Legacy Whisper → LLM interaction (being replaced by agents)
 - `tests/`: Test utilities and integration tests
@@ -370,6 +389,22 @@ The `agents/common/` module provides shared functionality across all agent imple
 **Components**:
 - **WebSocketBridgeInterface**: Manages agent-to-bridge WebSocket connections with automatic reconnection
 - **PromptLoader**: Handles dynamic prompt loading with recursive macro expansion
+
+### Agent Implementations
+
+#### OpenAI Realtime Agent
+- **Pattern**: Persistent WebSocket with continuous `recv()` loop
+- **Audio**: 24kHz input/output, resampled to 16kHz for ROS
+- **Responses**: Streaming with event-based handling
+- **Interruptions**: Direct API support with `response.cancel`
+
+#### Gemini Live Agent  
+- **Pattern**: Turn-based with receive generator per conversation
+- **Architecture**: Hybrid approach using OpenAI's bridge pattern with minimal middleware
+- **Key Innovation**: `ReceiveCoordinator` manages generator lifecycle
+- **Critical Rule**: Must create `session.receive()` AFTER sending input, not before
+- **Audio**: 16kHz input, 24kHz output (no resampling needed)
+- **Streaming**: Full support - audio chunks sent immediately without buffering
 - **ConversationContext**: Preserves conversation history across session boundaries
 - **ConversationMonitor**: Monitors conversation state and provides real-time insights
 - **PauseDetector**: Intelligent detection of conversation pauses for session cycling

@@ -134,33 +134,82 @@ Low-level WebSocket management:
 - Adapt for Gemini's conversation threading
 - Context summarization for reconnection scenarios
 
-## Implementation Plan - LIKELY OUTDATED
+## Implementation Approach - Hybrid Architecture
 
-### Phase 1: Core Infrastructure
-1. Create basic `GeminiLiveDirectAgent` class
-2. Implement `GeminiWebSocketClient` for API connection
-3. Port essential components from `oai_realtime`:
-   - WebSocketBridgeInterface integration
-   - Basic message routing
-   - Configuration loading
+### Overview
+After extensive testing and architectural exploration, we discovered that Gemini's receive generator pattern is fundamentally incompatible with a direct port of the OpenAI agent. The solution: a hybrid approach using OpenAI's proven bridge interface with a minimal middleware layer to handle Gemini's unique requirements.
 
-### Phase 2: Protocol Implementation
-1. Create `GeminiSerializer` for message format conversion
-2. Implement bidirectional audio streaming
-3. Add text message handling
-4. Basic conversation flow without advanced features
+### Key Architectural Discovery
+**The Critical Pattern**: Gemini's `session.receive()` generator MUST be created AFTER sending input, not before. This is fundamentally different from OpenAI's persistent WebSocket pattern and requires architectural adaptation.
 
-### Phase 3: Session Management
-1. Create `GeminiSessionManager` with time limit tracking
-2. Implement connection lifecycle management
-3. Add interruption support and proper state handling
-4. Context preservation across reconnections
+### Implementation Strategy
 
-### Phase 4: Multimodal & Production
-1. Add image/video frame processing
-2. Implement proactive audio configuration
-3. Error handling and recovery mechanisms
-4. Testing and configuration files
+#### Phase 1: Foundation (Start with What Works)
+1. **Copy OpenAI agent structure** as template
+   - Proven bridge interface pattern
+   - Established message flow
+   - Working metrics and monitoring
+2. **Strip OpenAI-specific code** (~60% removal)
+   - Remove WebSocket event handlers
+   - Remove response processor task management
+   - Remove OpenAI-specific response handling
+3. **Preserve bridge compatibility**
+   - Keep exact same bridge interface
+   - No changes to ROS integration
+   - Maintain topic structure
+
+#### Phase 2: Minimal Middleware Layer
+Create `ReceiveCoordinator` class to manage the architectural mismatch:
+```python
+class ReceiveCoordinator:
+    """Manages Gemini's receive generator lifecycle"""
+    
+    async def handle_audio_chunk(self, envelope):
+        # Stream audio immediately (no buffering!)
+        await session.send_realtime_input(audio_bytes)
+        
+        # Create receiver after FIRST chunk (critical!)
+        if not self.receiving:
+            self.receiving = True
+            self.receive_task = create_task(self._receive_responses())
+    
+    async def _receive_responses(self):
+        # One generator per conversation turn
+        async for response in session.receive():
+            if response.server_content?.turn_complete:
+                break
+        self.receiving = False
+```
+
+#### Phase 3: Integration
+1. **Simple agent class** (`gemini_live_agent.py`)
+   - Delegates to coordinator for message handling
+   - Manages session lifecycle
+   - Handles bridge communication
+2. **Reuse working components**
+   - Keep existing `GeminiSessionManager`
+   - Keep existing `GeminiSerializer`
+   - Keep configuration and launch files
+
+### Why This Approach Works
+
+| Challenge | Solution |
+|-----------|----------|
+| Receive generator timing | Coordinator creates after first send |
+| No persistent receiver | One generator per conversation turn |
+| Bridge compatibility | Identical interface to OpenAI |
+| Code complexity | Clean separation of concerns |
+| Streaming audio | Direct pass-through, no buffering |
+
+### File Structure
+```
+agents/gemini_live/
+├── gemini_live_agent.py       # Simplified from OpenAI template
+├── receive_coordinator.py     # NEW - Minimal middleware
+├── gemini_session_manager.py  # Existing (works well)
+├── gemini_serializer.py       # Existing (works well)
+└── main.py                     # Minimal changes
+```
 
 ## API Protocol Details
 
@@ -460,6 +509,47 @@ config = {
 - Simplified config structure works better than nested generation_config
 - Voice selection appears to be automatic for the model
 
+### Receive Generator Pattern
+
+#### Critical Timing Requirement
+The `session.receive()` generator MUST be created AFTER sending input, not before:
+
+```python
+# CORRECT - Create receiver after sending
+await session.send_realtime_input(audio=...)
+async for response in session.receive():  # Create AFTER sending
+    # Process responses
+    if response.server_content?.turn_complete:
+        break
+
+# WRONG - Creates before sending (will get StopAsyncIteration immediately)
+receive_gen = session.receive()  # Too early!
+await session.send_realtime_input(audio=...)
+# Generator is already exhausted!
+```
+
+This is fundamentally different from OpenAI's persistent WebSocket pattern where you can have a continuous `websocket.recv()` loop running before, during, and after sending input.
+
+#### Streaming Audio Support
+- **Gemini DOES support streaming audio input** - no buffering required
+- Can send audio chunks as they arrive via `send_realtime_input()`
+- Gemini auto-detects speech boundaries server-side
+- Create ONE receive generator per conversation turn (not persistent)
+
+Example of streaming audio chunks:
+```python
+# Send audio chunks as they arrive
+for chunk in audio_chunks:
+    await session.send_realtime_input(
+        audio=types.Blob(data=chunk, mime_type="audio/pcm;rate=16000")
+    )
+    
+    # Create receiver after first chunk
+    if not receiver_started:
+        receiver_task = asyncio.create_task(process_responses(session))
+        receiver_started = True
+```
+
 ### Common Pitfalls and Solutions
 
 #### Issue: Connection Hangs
@@ -474,9 +564,14 @@ config = {
 - **Cause**: Stopping reception too early
 - **Solution**: Continue receiving until `turn_complete=True` signal
 
-#### Issue: No Responses Received
+#### Issue: No Responses Received  
 - **Cause**: Using deprecated `send()` method
 - **Solution**: Use `send_client_content()` for text, `send_realtime_input()` for audio
+
+#### Issue: Receive Generator Returns No Responses
+- **Cause**: Creating `session.receive()` BEFORE sending any input
+- **Solution**: Create receive generator AFTER first send (audio or text)
+- **Note**: Generator exhausts immediately if no pending responses
 
 ### Performance Considerations
 
@@ -516,7 +611,7 @@ config = {
 ### Phase 2 Features (Future)
 - **Video Streaming**: Full video pipeline with frame throttling
 - **Advanced Tools**: MCP server integration for extended capabilities
-- **Performance Optimization**: Connection pooling and audio buffering
+- **Performance Optimization**: Connection pooling and response caching
 - **Monitoring**: Comprehensive metrics and health checks
 
 ### Common Module Refactoring

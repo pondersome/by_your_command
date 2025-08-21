@@ -15,6 +15,11 @@ This directory contains comprehensive tests for the Google Gemini Live API, docu
   - Receives 24kHz PCM16 audio output
   - Saves output to `../output/audio_to_audio_verified.wav`
 
+- **`test_streaming_audio.py`** - Streaming audio input test
+  - Demonstrates sending audio in chunks (streaming)
+  - Shows correct receive generator timing (create after first send)
+  - Proves no buffering needed for audio input
+
 - **`test_image_audio.py`** - Image input with audio description
   - Sends images and receives audio descriptions
   - Tests multimodal capabilities
@@ -72,6 +77,14 @@ These tests were crucial for understanding the API and debugging issues:
   - Tests when sessions are ready for input
   - Gemini sessions are ready immediately (unlike OpenAI)
 
+- **`test_receive_issue.py`** - Receive generator timing issue
+  - Demonstrates the problem with creating receiver before sending
+  - Critical for understanding the generator lifecycle
+
+- **`test_receive_after_send.py`** - Correct receive pattern
+  - Shows creating receiver AFTER sending works correctly
+  - Proves the timing requirement for receive generators
+
 ## Output Directory
 
 All test outputs are saved to `../output/`:
@@ -98,6 +111,11 @@ The output directory has a `.gitignore` to keep it clean in version control.
    - Draw larger boxes first for better visibility
    - Fine details detected well (e.g., small shells)
    - Bounding box accuracy varies with confidence level
+9. **Receive generator pattern**: 
+   - MUST create `session.receive()` AFTER sending input, not before
+   - Generator exhausts immediately if no pending responses
+   - One generator per conversation turn (not persistent like OpenAI)
+   - Supports streaming audio input (send chunks as they arrive)
 
 ## Running Tests
 
