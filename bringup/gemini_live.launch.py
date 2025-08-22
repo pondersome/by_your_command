@@ -56,7 +56,7 @@ def generate_launch_description():
     
     pause_timeout_arg = DeclareLaunchArgument(
         'pause_timeout',
-        default_value='10.0',
+        default_value='30.0',
         description='Session pause timeout in seconds'
     )
     
@@ -143,8 +143,8 @@ def generate_launch_description():
     gemini_agent = ExecuteProcess(
         cmd=[
             '/home/karim/ros2_ws/install/by_your_command/lib/by_your_command/gemini_live_agent',
-            '--config', gemini_agent_config,
-            '--pause-timeout', LaunchConfiguration('pause_timeout')
+            '--config', gemini_agent_config
+            # Don't pass pause-timeout so it uses config file value
         ],
         output='screen',
         additional_env={

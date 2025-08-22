@@ -392,6 +392,25 @@ class GeminiSessionManager(BaseSessionManager):
                 self.logger.error(f"Failed to send audio: {e}")
             return False
     
+    async def send_turn_complete(self) -> bool:
+        """Send explicit turn complete signal to Gemini"""
+        if not self.session:
+            self.logger.error("No active session for turn_complete")
+            return False
+            
+        try:
+            # Send empty content with turn_complete flag
+            from google.genai import types
+            await self.session.send_client_content(
+                turns=types.Content(parts=[]),
+                turn_complete=True
+            )
+            self.logger.debug("Sent turn_complete signal")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to send turn_complete: {e}")
+            return False
+    
     async def send_text(self, text: str) -> bool:
         """Send text to Gemini Live session"""
         if not self.session:

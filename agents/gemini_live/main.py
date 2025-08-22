@@ -147,17 +147,21 @@ async def main():
                        help='Enable video support (2-minute session limit)')
     parser.add_argument('--proactive', action='store_true',
                        help='Enable proactive audio (model decides when to speak)')
-    parser.add_argument('--pause-timeout', type=float, default=10.0,
+    parser.add_argument('--pause-timeout', type=float, default=None,
                        help='Session pause timeout in seconds')
     args = parser.parse_args()
     
     # Load configuration
     config = load_config(args.config)
+    print(f"📁 Config loaded from: {args.config}")
+    print(f"⏱️ Config pause timeout: {config.get('session_pause_timeout')}s")
     
-    # Apply command line overrides
-    if args.pause_timeout:
+    # Apply command line overrides (only if explicitly provided)
+    if args.pause_timeout is not None:
         config['session_pause_timeout'] = args.pause_timeout
-        print(f"⏱️ Pause timeout set to: {args.pause_timeout}s")
+        print(f"⏱️ Pause timeout OVERRIDE from CLI: {args.pause_timeout}s")
+    
+    print(f"⏱️ Final pause timeout: {config.get('session_pause_timeout')}s")
     
     if args.debug:
         config['log_level'] = logging.DEBUG

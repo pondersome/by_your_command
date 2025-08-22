@@ -34,7 +34,7 @@ gemini_live_agent:
   video_frame_interval: 1.0  # Send frame every N seconds
   
   # Session Management
-  session_pause_timeout: 10.0  # Seconds of silence before cycling session
+  session_pause_timeout: 30.0  # Seconds of silence before cycling session (increased for Gemini response time)
   max_context_tokens: 2000
   conversation_timeout: 600.0  # 10 minutes - reset context after this
   

@@ -98,6 +98,11 @@ class ReceiveCoordinator:
             await self._handle_interruption()
             # Continue to process the new audio
             
+        # Check if session exists
+        if not self.session_manager.session:
+            self.logger.warning("No active session - audio chunk dropped")
+            return
+            
         # Send audio chunk to Gemini (streaming, no buffering!)
         success = await self.session_manager.send_audio(audio_bytes)
         
@@ -105,18 +110,18 @@ class ReceiveCoordinator:
             self.metrics['audio_chunks_sent'] += 1
             chunk_id = envelope.raw_data.chunk_sequence if hasattr(envelope.raw_data, 'chunk_sequence') else 0
             
-            # Critical: Start receiver after FIRST chunk (not before!)
+            # Start receiver after FIRST chunk (as you correctly noted!)
             if not self.first_chunk_sent:
                 self.first_chunk_sent = True
                 self.logger.info(f"🎤 First audio chunk #{chunk_id} sent, starting receiver")
                 await self._start_receive_cycle()
             else:
                 self.logger.debug(f"🎤 Audio chunk #{chunk_id} sent")
-                
+            
             # Check if this is the last chunk
-            if hasattr(envelope.raw_data, 'is_end') and envelope.raw_data.is_end:
+            if hasattr(envelope.raw_data, 'is_utterance_end') and envelope.raw_data.is_utterance_end:
                 self.logger.info(f"🎤 Final chunk #{chunk_id} - Gemini will auto-detect end and respond")
-                self.first_chunk_sent = False  # Reset for next utterance
+                # Do NOT send turn_complete with audio - causes issues per PRD
         else:
             self.logger.error("Failed to send audio to Gemini")
             
@@ -175,29 +180,54 @@ class ReceiveCoordinator:
                 
             self.logger.info("🎧 Creating receive generator for this turn")
             
+            response_count = 0
+            self.logger.info(f"Starting to iterate receive generator for session {id(session)}")
+            
             # Process responses from this turn's generator
-            async for response in session.receive():
-                self.metrics['responses_received'] += 1
+            try:
+                # Add a timeout to detect if we're hanging
+                timeout_seconds = 5.0
+                self.logger.info(f"Waiting up to {timeout_seconds}s for first response...")
                 
-                # Handle audio data
-                if hasattr(response, 'data') and response.data:
-                    await self._handle_audio_response(response.data)
+                async for response in session.receive():
+                    response_count += 1
+                    self.metrics['responses_received'] += 1
+                    self.logger.debug(f"Response #{response_count}: {type(response)}")
                     
-                # Handle text
-                elif hasattr(response, 'text') and response.text:
-                    await self._handle_text_response(response.text)
+                    # Log what fields the response has
+                    if response:
+                        fields = [attr for attr in dir(response) if not attr.startswith('_')]
+                        self.logger.debug(f"Response fields: {fields}")
                     
-                # Check for completion signals
-                if hasattr(response, 'server_content') and response.server_content:
-                    server_content = response.server_content
-                    
-                    if hasattr(server_content, 'generation_complete') and server_content.generation_complete:
-                        self.logger.debug("Generation complete signal")
+                    # Handle audio data
+                    if hasattr(response, 'data') and response.data:
+                        self.logger.info(f"🔊 Audio response: {len(response.data)} bytes")
+                        await self._handle_audio_response(response.data)
                         
-                    if hasattr(server_content, 'turn_complete') and server_content.turn_complete:
-                        self.logger.info("✅ Turn complete - ending receive cycle")
-                        self.metrics['turns_completed'] += 1
-                        break
+                    # Handle text
+                    elif hasattr(response, 'text') and response.text:
+                        self.logger.info(f"📝 Text response: {response.text[:50]}...")
+                        await self._handle_text_response(response.text)
+                        
+                    # Check for server content
+                    if hasattr(response, 'server_content') and response.server_content:
+                        server_content = response.server_content
+                        self.logger.debug(f"Server content: {server_content}")
+                        
+                        if hasattr(server_content, 'generation_complete') and server_content.generation_complete:
+                            self.logger.info("✅ Generation complete signal")
+                            
+                        if hasattr(server_content, 'turn_complete') and server_content.turn_complete:
+                            self.logger.info("✅ Turn complete - ending receive cycle")
+                            self.metrics['turns_completed'] += 1
+                            break
+                        
+            except StopAsyncIteration:
+                self.logger.info(f"Receive generator completed normally (StopAsyncIteration) after {response_count} responses")
+            except Exception as e:
+                self.logger.error(f"Error iterating receive generator: {e}")
+            
+            self.logger.info(f"Exited receive loop - got {response_count} responses")
                         
         except asyncio.CancelledError:
             self.logger.info("Receive cycle cancelled")
@@ -205,6 +235,7 @@ class ReceiveCoordinator:
             self.logger.error(f"Error in receive cycle: {e}")
         finally:
             self.receiving = False
+            self.first_chunk_sent = False  # Reset for next utterance
             self.logger.info("📡 Receive cycle ended")
             
     async def _handle_audio_response(self, audio_data: bytes):

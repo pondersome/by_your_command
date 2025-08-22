@@ -58,8 +58,10 @@ class GeminiLiveAgent:
         )
         
         # Pause detection for session cycling
+        pause_timeout = config.get('session_pause_timeout', 10.0)
+        self.logger.info(f"Setting pause detector timeout to {pause_timeout}s")
         self.pause_detector = PauseDetector(
-            pause_timeout=config.get('session_pause_timeout', 10.0)
+            pause_timeout=pause_timeout
         )
         
         # NEW: Receive coordinator (the minimal middleware)
@@ -128,15 +130,10 @@ class GeminiLiveAgent:
             self.bridge_interface = WebSocketBridgeInterface(bridge_config)
             
             # Connect with initial attempt tracking
+            # Registration happens automatically during connect
             success = await self.bridge_interface.connect_with_retry()
             
             if success:
-                # Register agent with bridge
-                await self.bridge_interface.register_agent(
-                    agent_type="conversational",
-                    subscribed_topics=["voice_chunks", "text_input", "conversation_id"],
-                    published_topics=list(self.published_topics.values())
-                )
                 self.logger.info("✅ Connected to ROS AI Bridge")
             else:
                 raise ConnectionError("Failed to connect to bridge after retries")
