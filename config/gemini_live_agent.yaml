@@ -30,8 +30,10 @@ gemini_live_agent:
   # Video Support
   # WARNING: Enabling video reduces session limit to 2 MINUTES!
   enable_video: false
-  video_topic: "/camera/image_compressed"
-  video_frame_interval: 1.0  # Send frame every N seconds
+  max_image_age: 5.0  # Maximum age (seconds) for an image to be considered fresh
+  
+  # Note: Camera topic subscription is configured in the bridge config file
+  # The bridge handles rate limiting at the subscription level
   
   # Session Management
   session_pause_timeout: 30.0  # Seconds of silence before cycling session (increased for Gemini response time)

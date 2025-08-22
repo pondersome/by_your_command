@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Callable, Set
 import yaml
 import importlib
 from datetime import datetime
+from collections import defaultdict
 
 import rclpy
 from rclpy.node import Node
@@ -51,6 +52,72 @@ class MessageEnvelope:
     ros_msg_type: str      # ROS message type string for agent processing
     timestamp: float       # Unix timestamp
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+class FrameRateLimiter:
+    """Rate limiter for high-bandwidth topics like video streams
+    
+    Implements per-topic frame rate limiting as a safety net for
+    high-frequency data streams. Only the latest frame is kept
+    when rate limiting occurs.
+    """
+    
+    def __init__(self, max_fps: float = 5.0):
+        """Initialize frame rate limiter
+        
+        Args:
+            max_fps: Maximum frames per second to allow (default 5 fps)
+        """
+        self.max_fps = max_fps
+        self.min_interval = 1.0 / max_fps if max_fps > 0 else 0.0
+        self.last_pass_time = 0.0
+        self.dropped_count = 0
+        self.passed_count = 0
+        
+    def should_pass(self, current_time: Optional[float] = None) -> bool:
+        """Check if this frame should pass through based on rate limit
+        
+        Args:
+            current_time: Current timestamp (uses time.time() if not provided)
+            
+        Returns:
+            True if frame should pass, False if it should be dropped
+        """
+        if self.min_interval <= 0:
+            # No rate limiting
+            self.passed_count += 1
+            return True
+            
+        if current_time is None:
+            current_time = time.time()
+            
+        time_since_last = current_time - self.last_pass_time
+        
+        if time_since_last >= self.min_interval:
+            # Enough time has passed, allow this frame
+            self.last_pass_time = current_time
+            self.passed_count += 1
+            return True
+        else:
+            # Too soon, drop this frame
+            self.dropped_count += 1
+            return False
+            
+    def get_stats(self) -> Dict[str, Any]:
+        """Get rate limiter statistics"""
+        return {
+            'max_fps': self.max_fps,
+            'min_interval': self.min_interval,
+            'passed_count': self.passed_count,
+            'dropped_count': self.dropped_count,
+            'drop_rate': self.dropped_count / (self.passed_count + self.dropped_count) 
+                        if (self.passed_count + self.dropped_count) > 0 else 0.0
+        }
+        
+    def reset_stats(self):
+        """Reset statistics counters"""
+        self.dropped_count = 0
+        self.passed_count = 0
 
 
 class MessageQueues:
@@ -571,6 +638,7 @@ class ROSAIBridge(Node):
         self._agent_interfaces: List[AgentInterface] = []
         self._topic_subscriptions: Dict[str, Any] = {}  # Our tracking dict
         self._topic_publishers: Dict[str, Any] = {}     # Our tracking dict
+        self._topic_rate_limiters: Dict[str, FrameRateLimiter] = {}  # Per-topic rate limiters
         self.reconfigurer = BridgeReconfigurer(self)
         
         # WebSocket server
@@ -785,6 +853,12 @@ class ROSAIBridge(Node):
             msg_type = topic_config['msg_type']
             self.log_info(f"Processing subscription config: {topic_config}")
             
+            # Check if rate limiting is configured for this topic
+            max_fps = topic_config.get('max_fps', 0)  # 0 means no rate limiting
+            if max_fps > 0:
+                self._topic_rate_limiters[full_topic] = FrameRateLimiter(max_fps)
+                self.log_info(f"Rate limiting enabled for {full_topic}: max {max_fps} fps")
+            
             # Create QoS profile
             qos_profile = QoSProfile(
                 history=QoSHistoryPolicy.KEEP_LAST,
@@ -822,8 +896,17 @@ class ROSAIBridge(Node):
                 self.log_error(f"Full traceback: {traceback.format_exc()}")
                 
     def _ros_callback(self, msg: Any, topic_name: str, msg_type: str):
-        """ROS callback - broadcast message to all consumers"""
+        """ROS callback - broadcast message to all consumers with optional rate limiting"""
         try:
+            # Check if this topic has rate limiting
+            if topic_name in self._topic_rate_limiters:
+                limiter = self._topic_rate_limiters[topic_name]
+                if not limiter.should_pass():
+                    # Drop this frame due to rate limiting
+                    if limiter.dropped_count % 100 == 1:  # Log every 100th drop to avoid spam
+                        self.log_debug(f"Rate limiting {topic_name}: dropped {limiter.dropped_count} frames")
+                    return
+            
             # Create zero-copy envelope
             envelope = MessageEnvelope(
                 msg_type="topic",
@@ -899,6 +982,16 @@ class ROSAIBridge(Node):
                 connected_count = len(agent_status['connected_agents'])
                 if connected_count > 0:
                     self.log_info(f"WebSocket agents: {connected_count} connected")
+            
+            # Log rate limiter stats if any are active
+            for topic, limiter in self._topic_rate_limiters.items():
+                stats = limiter.get_stats()
+                if stats['passed_count'] > 0 or stats['dropped_count'] > 0:
+                    self.log_info(
+                        f"Rate limiter [{topic}]: {stats['max_fps']} fps max, "
+                        f"passed: {stats['passed_count']}, dropped: {stats['dropped_count']} "
+                        f"({stats['drop_rate']*100:.1f}% drop rate)"
+                    )
     
             
     def get_queues(self) -> MessageQueues:

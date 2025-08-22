@@ -1,5 +1,5 @@
-# ROS AI Bridge Configuration for Dual Agent Mode
-# This configuration includes all topics for both conversational and command agents
+# ROS AI Bridge Configuration for Gemini with Vision Support
+# Optimized for Gemini Live agent with video streaming capability
 
 ros_ai_bridge:
   ros__parameters:
@@ -33,21 +33,16 @@ ros_ai_bridge:
         msg_type: "std_msgs/String"
       - topic: "/grunt1/arm1/cam_live/color/image_raw"  # Camera feed for vision
         msg_type: "sensor_msgs/Image"
-        max_fps: 2  # Rate limit to 2 fps for video streaming (safety net)
+        max_fps: 1  # Rate limit to 1 fps for Gemini (conservative for 2-min session limit)
         
-    # Topics to publish (Agent → ROS) - Combined from both agents
+    # Topics to publish (Agent → ROS)
     published_topics:
-      # Conversational agent topics
       - topic: "audio_out"       # audio response from llm
         msg_type: "audio_common_msgs/AudioData"
       - topic: "llm_transcript"  # transcript of llm response
         msg_type: "std_msgs/String"
-      
-      # Command agent topics
-      - topic: "command_transcript"  # commands detected and formatted by command agent
+      - topic: "command_transcript"  # commands detected if using command mode
         msg_type: "std_msgs/String"
-      
-      # Shared topics
       - topic: "cmd_vel"         # motion commands from llm
         msg_type: "geometry_msgs/Twist"
       - topic: "conversation_id" # Bidirectional - agent conversation resets

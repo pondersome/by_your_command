@@ -72,11 +72,21 @@ class GeminiLiveAgent:
         self.session_creating = False
         self.start_time: Optional[float] = None
         
+        # Image/Video support
+        self.video_enabled = config.get('enable_video', False)
+        self.latest_image_frame = None  # Store latest image frame
+        self.latest_image_timestamp = None
+        self.image_frames_received = 0
+        self.image_frames_sent = 0
+        self.max_image_age = config.get('max_image_age', 5.0)  # Max age in seconds for image to be considered fresh
+        
         # Metrics
         self.metrics = {
             'messages_processed': 0,
             'audio_chunks_sent': 0,
             'text_messages_sent': 0,
+            'image_frames_received': 0,
+            'image_frames_sent': 0,
             'responses_received': 0,
             'sessions_created': 0,
             'errors': 0
@@ -190,8 +200,18 @@ class GeminiLiveAgent:
                 self.metrics['messages_processed'] += 1
                 self.logger.info(f"📨 Processing: {envelope.ros_msg_type}")
                 
-                # Ensure session exists
+                # Handle image frames separately (store latest, don't send immediately)
+                if envelope.ros_msg_type == "sensor_msgs/Image":
+                    await self._handle_image_frame(envelope)
+                    return
+                
+                # For audio/text messages, ensure session exists
                 await self._ensure_session()
+                
+                # If we have a stored image and video is enabled, include it with this interaction
+                if self.video_enabled and self.latest_image_frame and self.receive_coordinator:
+                    # Send the latest image frame before the audio/text
+                    await self._send_latest_image_to_session()
                 
                 # Delegate to receive coordinator (the middleware)
                 await self.receive_coordinator.handle_message(envelope)
@@ -247,6 +267,77 @@ class GeminiLiveAgent:
         self.logger.info(f"🔄 Conversation changed: {old_id} → {new_id}")
         # Reset conversation context
         self.session_manager.reset_conversation_context()
+    
+    async def _handle_image_frame(self, envelope):
+        """Handle incoming image frame from camera
+        
+        Store the latest frame for use when audio/text interaction occurs.
+        This implements the "latest frame" pattern to avoid overwhelming Gemini.
+        """
+        try:
+            self.image_frames_received += 1
+            
+            # Extract image data from ROS message
+            image_msg = envelope.raw_data
+            
+            # Convert ROS Image to bytes (handle different encodings)
+            if hasattr(image_msg, 'data'):
+                # Store the raw image data
+                self.latest_image_frame = bytes(image_msg.data)
+                self.latest_image_timestamp = envelope.timestamp
+                
+                # Log periodically to avoid spam
+                if self.image_frames_received % 10 == 1:
+                    self.logger.info(f"📷 Stored image frame #{self.image_frames_received} "
+                                   f"({image_msg.width}x{image_msg.height}, {image_msg.encoding})")
+            else:
+                self.logger.warning("Image message missing data field")
+                
+        except Exception as e:
+            self.logger.error(f"Error handling image frame: {e}")
+    
+    async def _send_latest_image_to_session(self):
+        """Send the latest stored image frame to Gemini session
+        
+        This is called when an audio/text interaction starts, providing
+        visual context for the conversation.
+        """
+        if not self.latest_image_frame or not self.session_manager.session:
+            return
+            
+        try:
+            # Check if image is recent enough (configurable max age)
+            if self.latest_image_timestamp:
+                age = time.time() - self.latest_image_timestamp
+                if age > self.max_image_age:
+                    self.logger.debug(f"Image frame too old ({age:.1f}s > {self.max_image_age}s), skipping")
+                    return
+            
+            # Send image to Gemini via session manager
+            # Gemini expects JPEG or PNG, may need conversion
+            from google.genai import types
+            
+            # For now, assume the image is already in a supported format
+            # In production, you'd convert based on encoding field
+            success = await self.session_manager.session.send_client_content(
+                turns=types.Content(
+                    parts=[
+                        types.Part.from_bytes(
+                            data=self.latest_image_frame,
+                            mime_type='image/jpeg'  # Adjust based on actual encoding
+                        ),
+                        types.Part(text="Current visual context")
+                    ]
+                ),
+                turn_complete=False  # Don't complete turn, audio/text will follow
+            )
+            
+            if success:
+                self.image_frames_sent += 1
+                self.logger.info(f"🖼️ Sent image frame to Gemini (frame #{self.image_frames_sent})")
+            
+        except Exception as e:
+            self.logger.error(f"Error sending image to session: {e}")
         
     async def cleanup(self):
         """Clean up resources"""
