@@ -29,7 +29,7 @@ gemini_live_agent:
   
   # Video Support
   # WARNING: Enabling video reduces session limit to 2 MINUTES!
-  enable_video: false
+  enable_video: true  # TEMPORARILY ENABLED FOR TESTING
   max_image_age: 5.0  # Maximum age (seconds) for an image to be considered fresh
   
   # Note: Camera topic subscription is configured in the bridge config file

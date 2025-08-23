@@ -267,6 +267,17 @@ class ReceiveCoordinator:
         """Handle text response from Gemini"""
         self.metrics['text_responses'] += 1
         
+        # Check if response mentions visual content (debugging for image recognition)
+        visual_keywords = ['see', 'image', 'photo', 'shows', 'appears', 'visible', 
+                          'wooden', 'sword', 'coin', 'hammer', 'book', 'table',
+                          'color', 'object', 'background', 'foreground']
+        mentions_visual = any(keyword in text.lower() for keyword in visual_keywords)
+        
+        if mentions_visual:
+            self.logger.warning(f"🎯 VISUAL RESPONSE DETECTED: {text[:200]}...")
+        else:
+            self.logger.info(f"🤖 Assistant: {text[:100]}...")
+        
         # Publish transcript to bridge
         if self.bridge:
             await self.bridge.put_outbound_message(
@@ -274,7 +285,6 @@ class ReceiveCoordinator:
                 msg_data={'data': f"Assistant: {text}"},
                 msg_type='std_msgs/String'
             )
-            self.logger.info(f"🤖 Assistant: {text[:100]}...")
             
         # Add to conversation context
         self.session_manager.add_conversation_turn("assistant", text)

@@ -314,8 +314,15 @@ class GeminiLiveAgent:
                     self.logger.debug(f"Skipping placeholder image data: {image_msg.data}")
                     return
                     
-                # Store the raw image data (JPEG bytes for CompressedImage)
-                self.latest_image_frame = bytes(image_msg.data)
+                # TEMPORARY TEST: Use known working JPEG instead of camera feed
+                test_image_path = "/home/karim/ros2_ws/src/by_your_command/tests/media/tablethings.jpg"
+                try:
+                    with open(test_image_path, 'rb') as f:
+                        self.latest_image_frame = f.read()
+                        self.logger.warning(f"🧪 TEST MODE: Substituted tablethings.jpg ({len(self.latest_image_frame)} bytes) for camera feed")
+                except:
+                    # Fall back to actual camera data if test image not found
+                    self.latest_image_frame = bytes(image_msg.data)
                 self.latest_image_timestamp = envelope.timestamp
                 
                 # Log periodically to avoid spam
@@ -357,28 +364,19 @@ class GeminiLiveAgent:
                 else:
                     self.logger.info(f"✅ Image age OK: {age:.1f}s")
             
-            # Send image to Gemini via session manager
-            # Gemini expects JPEG or PNG, may need conversion
-            from google import genai
-            
-            # For now, assume the image is already in a supported format
-            # In production, you'd convert based on encoding field
-            success = await self.session_manager.session.send_client_content(
-                turns=genai.types.Content(
-                    parts=[
-                        genai.types.Part.from_bytes(
-                            data=self.latest_image_frame,
-                            mime_type='image/jpeg'  # Adjust based on actual encoding
-                        ),
-                        genai.types.Part(text="Current visual context")
-                    ]
-                ),
-                turn_complete=False  # Don't complete turn, audio/text will follow
+            # Send image using the realtime input method (like audio)
+            # This is likely what Google AI Studio uses for webcam/image + audio
+            success = await self.session_manager.send_video(
+                frame_data=self.latest_image_frame,
+                mime_type='image/jpeg'  # TEST: using JPEG since we substituted tablethings.jpg
             )
             
             if success:
                 self.image_frames_sent += 1
-                self.logger.info(f"🖼️ Sent image frame to Gemini (frame #{self.image_frames_sent})")
+                self.logger.warning(f"🖼️ TEST: Sent tablethings.jpg via send_realtime_input (frame #{self.image_frames_sent})")
+                self.logger.warning("🔍 Image should show: wooden sword, coin in cube, karate book, hammer on concrete")
+            else:
+                self.logger.error("❌ Failed to send image via realtime input")
             
         except Exception as e:
             self.logger.error(f"Error sending image to session: {e}")

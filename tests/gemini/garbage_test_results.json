@@ -1,0 +1,218 @@
+[
+  {
+    "test_name": "valid_jpeg",
+    "description": "Valid JPEG image (tablethings.jpg)",
+    "data_size": 471832,
+    "mime_type": "image/jpeg",
+    "success": true,
+    "error": null,
+    "response_text": "Here is a detailed description of the image:\n\n**Overall Impression:**\n\nThe image presents a collection of items placed on a textured, light-gray surface. The lighting is bright, highlighting the various textures and colors of the objects.\n\n**Objects Present:**\n\n1.  **Wooden Sword:** A stylized wooden sword with a light-yellow color is positioned on the left side of the image. The hilt and blade are clearly visible.\n2.  **Collectible Coin:** A round, gold-colored coin is enclosed in a transparent plastic cube. The coin features intricate designs, possibly depicting characters or symbols.\n3.  **Karate Book:** A small paperback book titled \"MAS OYAMA'S KARATE\" is displayed. The book cover has a red and black color scheme and features images of martial arts practitioners in action.\n4.  **Hammer:** A black hammer with a traditional head and handle design lies on the right side of the image. The hammer appears to be well-used.\n\n**Surface:**\n\nThe objects are placed on a concrete countertop with a white and gray surface.\n\nIn summary, the image showcases a collection of varied objects\u2014a wooden sword, a collectible coin, a karate book, and a hammer\u2014arranged on a textured countertop.",
+    "response_metadata": [
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null
+      },
+      {
+        "turn_complete": true,
+        "interrupted": null
+      }
+    ],
+    "mentions_visual": true,
+    "generic_response": false
+  },
+  {
+    "test_name": "valid_png",
+    "description": "Valid PNG image (whatisthis1.png)",
+    "data_size": 163591,
+    "mime_type": "image/png",
+    "success": true,
+    "error": null,
+    "response_text": "Here is a description of the image:\n\n**Overview:**\n\nThe image shows two children, a boy and a girl, intently focused on building a sandcastle on a beach. They are positioned close to their creation, engaging with it closely.\n\n**Details:**\n\n*   **Children:** The boy has short, dark brown hair and wears a gray and white striped shirt. The girl has long, blonde hair and wears a light blue top.\n*   **Sandcastle:** A sandcastle is at the center of the image. It has a somewhat whimsical design with layers, turrets, and perhaps a seashell embedded in the side.\n*   **Beach:** The background is a sandy beach. The sand appears to be a light golden-brown color. A body of water is visible in the background with gentle ripples.\n*   **Lighting:** The lighting appears to be natural sunlight, with soft shadows and highlights on the children, the sandcastle, and the sand.\n\nOverall, the image evokes a sense of childhood, playfulness, and beach activities.",
+    "response_metadata": [
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null,
+        "has_model_turn": true
+      },
+      {
+        "turn_complete": null,
+        "interrupted": null
+      },
+      {
+        "turn_complete": true,
+        "interrupted": null
+      }
+    ],
+    "mentions_visual": true,
+    "generic_response": false
+  },
+  {
+    "test_name": "random_bytes",
+    "description": "Random 1KB garbage with image/jpeg MIME",
+    "data_size": 1024,
+    "mime_type": "image/jpeg",
+    "success": false,
+    "error": "Receive error: received 1007 (invalid frame payload data) Request contains an invalid argument.; then sent 1007 (invalid frame payload data) Request contains an invalid argument.",
+    "response_text": "",
+    "response_metadata": [],
+    "mentions_visual": false,
+    "generic_response": false
+  },
+  {
+    "test_name": "text_as_image",
+    "description": "Plain text with image/png MIME type",
+    "data_size": 49,
+    "mime_type": "image/png",
+    "success": false,
+    "error": "Receive error: received 1007 (invalid frame payload data) Request contains an invalid argument.; then sent 1007 (invalid frame payload data) Request contains an invalid argument.",
+    "response_text": "",
+    "response_metadata": [],
+    "mentions_visual": false,
+    "generic_response": false
+  },
+  {
+    "test_name": "wrong_mime",
+    "description": "Valid JPEG with text/plain MIME type",
+    "data_size": 471832,
+    "mime_type": "text/plain",
+    "success": false,
+    "error": "Receive error: received 1007 (invalid frame payload data) Request contains an invalid argument.; then sent 1007 (invalid frame payload data) Request contains an invalid argument.",
+    "response_text": "",
+    "response_metadata": [],
+    "mentions_visual": false,
+    "generic_response": false
+  },
+  {
+    "test_name": "truncated_image",
+    "description": "Truncated JPEG (first 100 bytes only)",
+    "data_size": 100,
+    "mime_type": "image/jpeg",
+    "success": false,
+    "error": "Receive error: received 1007 (invalid frame payload data) Request contains an invalid argument.; then sent 1007 (invalid frame payload data) Request contains an invalid argument.",
+    "response_text": "",
+    "response_metadata": [],
+    "mentions_visual": false,
+    "generic_response": false
+  },
+  {
+    "test_name": "empty_data",
+    "description": "Empty data with image/jpeg MIME",
+    "data_size": 0,
+    "mime_type": "image/jpeg",
+    "success": false,
+    "error": "Receive error: received 1007 (invalid frame payload data) Request contains an invalid argument.; then sent 1007 (invalid frame payload data) Request contains an invalid argument.",
+    "response_text": "",
+    "response_metadata": [],
+    "mentions_visual": false,
+    "generic_response": false
+  },
+  {
+    "test_name": "large_garbage",
+    "description": "1MB of random data with image/jpeg MIME",
+    "data_size": 1048576,
+    "mime_type": "image/jpeg",
+    "success": false,
+    "error": "Receive error: received 1007 (invalid frame payload data) Request contains an invalid argument.; then sent 1007 (invalid frame payload data) Request contains an invalid argument.",
+    "response_text": "",
+    "response_metadata": [],
+    "mentions_visual": false,
+    "generic_response": false
+  },
+  {
+    "test_name": "bad_jpeg_header",
+    "description": "Data with invalid JPEG header",
+    "data_size": 1024,
+    "mime_type": "image/jpeg",
+    "success": false,
+    "error": "Receive error: received 1007 (invalid frame payload data) Request contains an invalid argument.; then sent 1007 (invalid frame payload data) Request contains an invalid argument.",
+    "response_text": "",
+    "response_metadata": [],
+    "mentions_visual": false,
+    "generic_response": false
+  }
+]
