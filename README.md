@@ -12,7 +12,7 @@ by_your_command is a ROS 2 package for multimodal human-robot interaction suppor
 - **Distributed Architecture**: WebSocket-based agent deployment for flexibility
 - **Cost-Optimized Sessions**: Intelligent session cycling to manage API costs
 - **Multi-Agent Support**: Dual-agent mode for simultaneous conversation and command extraction
-- **Multiple Providers**: Support for multiple LLM providers (OpenAI, Gemini Live)
+- **Multiple Providers**: Support for multiple LLM providers (OpenAI, Gemini Live with vision)
 - **Command Processing**: Automatic robot command extraction and routing
 - **Namespace Support**: Full ROS2 namespace and prefix flexibility for multi-robot deployments
 - **Recursive Macro System**: Configurable prompts with nested macro expansion
@@ -405,6 +405,10 @@ The `agents/common/` module provides shared functionality across all agent imple
 - **Critical Rule**: Must create `session.receive()` AFTER sending input, not before
 - **Audio**: 16kHz input, 24kHz output (no resampling needed)
 - **Streaming**: Full support - audio chunks sent immediately without buffering
+- **Vision Support**: ✅ Full camera integration with real-time image processing
+  - Uses unified `session.send(input={...})` API for all inputs (audio, text, images)
+  - Images sent as base64-encoded JPEG with audio/text queries
+  - Latest frame pattern: Stores most recent camera frame, includes with interactions
 - **ConversationContext**: Preserves conversation history across session boundaries
 - **ConversationMonitor**: Monitors conversation state and provides real-time insights
 - **PauseDetector**: Intelligent detection of conversation pauses for session cycling
@@ -685,11 +689,28 @@ voice: "alloy"  # Options: alloy, echo, fable, onyx, nova, shimmer
 session_pause_timeout: 10.0  # Seconds before cycling session
 ```
 
-### Google Gemini Live API (Planned)
-Low-latency multimodal conversations:
-- Models: `gemini-2.0-flash-exp`
-- Features: Native audio support, 15-minute context window
-- Status: Architecture ready, implementation pending
+### Google Gemini Live API (✅ WORKING with Vision)
+Low-latency multimodal conversations with camera support:
+
+**Features**:
+- ✅ Bidirectional audio streaming (16kHz input, 24kHz output)
+- ✅ Real-time speech-to-text transcription
+- ✅ Natural voice responses with multiple voice options
+- ✅ **Camera vision support**: Can see and describe what's in view
+- ✅ Multimodal interactions: Responds to voice questions about visual scene
+- ✅ Latest frame pattern: Efficient image handling without overwhelming API
+
+**Models**: 
+- `models/gemini-live-2.5-flash-preview` (recommended for vision+audio)
+- `models/gemini-2.0-flash-live-001`
+
+**Configuration**:
+```yaml
+gemini_api_key: "AI..."  # Or set GEMINI_API_KEY env var
+model: "models/gemini-live-2.5-flash-preview"
+enable_video: true  # Enable camera support
+max_image_age: 5.0  # Max age for image frames (seconds)
+```
 
 ### Agent Architecture
 The system uses a distributed agent-based approach:

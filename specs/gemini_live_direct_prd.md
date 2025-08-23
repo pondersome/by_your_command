@@ -73,17 +73,47 @@ Per Gemini Live documentation:
 - **Images**: Base64-encoded image frames from ROS
 - **Video**: Optional frame-by-frame processing with specified frame rates
 
+## Current Status (August 2025)
+
+### ✅ WORKING: Full Multimodal Support
+The Gemini Live agent now successfully supports **audio + vision** multimodal interactions:
+- **Audio conversations**: Real-time voice input/output working
+- **Image recognition**: Can see and describe camera feed
+- **Synchronized processing**: Images sent with voice/text for context
+
+### Critical Implementation Discovery
+The breakthrough came from analyzing Google's official example code. The key finding:
+- **MUST use unified `session.send(input={...})` API for ALL inputs**
+- Images, audio, and text all go through the same realtime method
+- Previous `send_client_content()` approach was wrong for realtime context
+
+### Working Image Integration
+```python
+# The correct pattern (from Google's example)
+import base64
+
+# Convert JPEG bytes to base64 string
+image_b64 = base64.b64encode(image_bytes).decode()
+
+# Send via unified realtime API (same as audio)
+await session.send(
+    input={
+        "mime_type": "image/jpeg",
+        "data": image_b64
+    }
+)
+```
+
 ## Technical Architecture
 
-### Component Structure
+### Component Structure (Implemented)
 ```
 agents/gemini_live/
-├── gemini_live_direct_agent.py      # Main agent class
+├── gemini_live_agent.py             # Main agent class (hybrid architecture)
+├── receive_coordinator.py           # Minimal middleware for receive generators
 ├── gemini_session_manager.py        # Connection/session management
 ├── gemini_serializer.py             # Protocol serialization
-├── gemini_websocket_client.py       # Low-level WebSocket handling
-├── main.py                          # Entry point with arg parsing
-└── __init__.py
+└── main.py                          # Entry point with arg parsing
 ```
 
 ### Key Components
@@ -380,15 +410,16 @@ await session.send_client_content(
 - May arrive in multiple chunks for longer responses
 - Text responses trigger the same completion signals as audio
 
-### Image Input
+### Image Input (UPDATED: Critical Finding)
 
-#### Sending Images with Prompts
+#### ❌ OLD METHOD (Does NOT work for realtime context)
 ```python
+# This method sends images but they're not in the realtime conversation context
 content = types.Content(
     parts=[
         types.Part.from_bytes(
             data=image_bytes,
-            mime_type='image/png'  # or 'image/jpeg'
+            mime_type='image/png'
         ),
         types.Part(text="Describe this image")
     ]
@@ -396,11 +427,32 @@ content = types.Content(
 await session.send_client_content(turns=content, turn_complete=True)
 ```
 
+#### ✅ CORRECT METHOD (For realtime multimodal)
+```python
+# Images MUST go through session.send() for realtime context
+import base64
+
+# Convert image to base64 string
+image_b64 = base64.b64encode(image_bytes).decode()
+
+# Send via unified realtime API
+await session.send(
+    input={
+        "mime_type": "image/jpeg",
+        "data": image_b64
+    }
+)
+
+# Then send text/audio query about the image
+# The image is now in the realtime context and visible to the model
+```
+
 #### Image Support Notes
 - **Supported formats**: PNG, JPEG, WEBP, HEIC, HEIF
-- **Works with both modalities**: Can request TEXT or AUDIO descriptions
-- **No special configuration needed**: Same models support images
-- **Response quality**: Detailed and accurate scene descriptions
+- **Critical**: Use `session.send(input={...})` for realtime context
+- **Base64 encoding**: Required for the unified API
+- **Latest frame pattern**: Store most recent image, send with interactions
+- **Response quality**: Detailed and accurate scene descriptions when using correct API
 
 ### Object Detection
 

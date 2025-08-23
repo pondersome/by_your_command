@@ -4,6 +4,19 @@ This directory contains comprehensive tests for the Google Gemini Live API, docu
 
 ## Test Files
 
+### Integration Tests (ROS2)
+
+- **`test_gemini_with_image.py`** - Test Gemini agent with real camera integration
+  - Validates the agent can see through camera and respond to voice
+  - Uses unified `session.send(input={...})` API for images
+  - Confirms multimodal (audio + vision) processing works
+
+- **`test_gemini_garbage_images.py`** - Image validation testing
+  - Tests Gemini's response to various invalid image data
+  - Proves Gemini validates images (garbage causes errors)
+  - Confirms valid images work when sent correctly
+  - Critical for debugging image processing issues
+
 ### Core Functionality Tests
 
 - **`test_text_communication.py`** - Text input/output with Gemini Live
@@ -116,6 +129,11 @@ The output directory has a `.gitignore` to keep it clean in version control.
    - Generator exhausts immediately if no pending responses
    - One generator per conversation turn (not persistent like OpenAI)
    - Supports streaming audio input (send chunks as they arrive)
+10. **Image integration (CRITICAL FINDING)**:
+    - **MUST use `session.send(input={...})` for realtime context**
+    - Images need base64 encoding when sent via unified API
+    - `send_client_content()` doesn't work for realtime multimodal
+    - Latest frame pattern: Store most recent image, send with voice/text
 
 ## Running Tests
 

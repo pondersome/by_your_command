@@ -314,15 +314,8 @@ class GeminiLiveAgent:
                     self.logger.debug(f"Skipping placeholder image data: {image_msg.data}")
                     return
                     
-                # TEMPORARY TEST: Use known working JPEG instead of camera feed
-                test_image_path = "/home/karim/ros2_ws/src/by_your_command/tests/media/tablethings.jpg"
-                try:
-                    with open(test_image_path, 'rb') as f:
-                        self.latest_image_frame = f.read()
-                        self.logger.warning(f"🧪 TEST MODE: Substituted tablethings.jpg ({len(self.latest_image_frame)} bytes) for camera feed")
-                except:
-                    # Fall back to actual camera data if test image not found
-                    self.latest_image_frame = bytes(image_msg.data)
+                # Store the raw image data (JPEG bytes for CompressedImage)
+                self.latest_image_frame = bytes(image_msg.data)
                 self.latest_image_timestamp = envelope.timestamp
                 
                 # Log periodically to avoid spam
@@ -364,19 +357,22 @@ class GeminiLiveAgent:
                 else:
                     self.logger.info(f"✅ Image age OK: {age:.1f}s")
             
-            # Send image using the realtime input method (like audio)
-            # This is likely what Google AI Studio uses for webcam/image + audio
-            success = await self.session_manager.send_video(
-                frame_data=self.latest_image_frame,
-                mime_type='image/jpeg'  # TEST: using JPEG since we substituted tablethings.jpg
+            # Send image using session.send() exactly like Google's example
+            import base64
+            
+            # Convert raw JPEG bytes to base64 string (Google's example pattern)
+            image_b64 = base64.b64encode(self.latest_image_frame).decode()
+            
+            # Send using the unified realtime API (same as audio)
+            await self.session_manager.session.send(
+                input={
+                    "mime_type": "image/jpeg",
+                    "data": image_b64
+                }
             )
             
-            if success:
-                self.image_frames_sent += 1
-                self.logger.warning(f"🖼️ TEST: Sent tablethings.jpg via send_realtime_input (frame #{self.image_frames_sent})")
-                self.logger.warning("🔍 Image should show: wooden sword, coin in cube, karate book, hammer on concrete")
-            else:
-                self.logger.error("❌ Failed to send image via realtime input")
+            self.image_frames_sent += 1
+            self.logger.info(f"🖼️ Sent image frame to Gemini via session.send() (frame #{self.image_frames_sent})")
             
         except Exception as e:
             self.logger.error(f"Error sending image to session: {e}")
