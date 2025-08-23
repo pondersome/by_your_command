@@ -80,6 +80,11 @@ class GeminiLiveAgent:
         self.image_frames_sent = 0
         self.max_image_age = config.get('max_image_age', 5.0)  # Max age in seconds for image to be considered fresh
         
+        if self.video_enabled:
+            self.logger.info("📷 Video support ENABLED - will subscribe to camera topic")
+        else:
+            self.logger.info("📷 Video support DISABLED")
+        
         # Metrics
         self.metrics = {
             'messages_processed': 0,
@@ -128,6 +133,7 @@ class GeminiLiveAgent:
             # Create bridge config (matching OpenAI pattern)
             bridge_config = {
                 'agent_id': self.agent_id,
+                'enable_video': self.video_enabled,  # Pass video flag for subscription
                 'bridge_connection': {
                     'host': 'localhost',
                     'port': 8765,
@@ -161,6 +167,9 @@ class GeminiLiveAgent:
         
         try:
             while self.running:
+                # CRITICAL CHANGE: Ensure session is ready BEFORE processing messages (OpenAI pattern)
+                await self._ensure_session_ready()
+                
                 # Process incoming messages from bridge
                 await self._process_bridge_messages()
                 
@@ -198,20 +207,38 @@ class GeminiLiveAgent:
             if envelope:
                 self.pause_detector.record_message(envelope.ros_msg_type)
                 self.metrics['messages_processed'] += 1
-                self.logger.info(f"📨 Processing: {envelope.ros_msg_type}")
+                # Reduce spam - only log non-image messages at info level
+                if "Image" not in envelope.ros_msg_type:
+                    self.logger.info(f"📨 Processing: {envelope.ros_msg_type}")
+                else:
+                    self.logger.debug(f"📨 Processing: {envelope.ros_msg_type}")
                 
                 # Handle image frames separately (store latest, don't send immediately)
-                if envelope.ros_msg_type == "sensor_msgs/Image":
+                if envelope.ros_msg_type in ["sensor_msgs/Image", "sensor_msgs/CompressedImage"]:
+                    self.logger.debug(f"📷 Received compressed image frame from bridge!")
                     await self._handle_image_frame(envelope)
                     return
                 
-                # For audio/text messages, ensure session exists
-                await self._ensure_session()
+                # Session should already be ready from _ensure_session_ready() in main loop
+                if self.session_manager.state != SessionState.ACTIVE:
+                    self.logger.warning("⚠️ Message received but no active session - skipping")
+                    return
                 
                 # If we have a stored image and video is enabled, include it with this interaction
                 if self.video_enabled and self.latest_image_frame and self.receive_coordinator:
                     # Send the latest image frame before the audio/text
+                    self.logger.info(f"🎯 Sending image with {envelope.ros_msg_type} interaction ({len(self.latest_image_frame)} bytes)")
                     await self._send_latest_image_to_session()
+                else:
+                    # Debug why image wasn't sent
+                    if not self.video_enabled:
+                        self.logger.debug("❌ Video not enabled")
+                    elif not self.latest_image_frame:
+                        self.logger.warning("❌ No stored image frame available")
+                    elif not self.receive_coordinator:
+                        self.logger.error("❌ No receive coordinator")
+                    else:
+                        self.logger.error("❌ Unknown reason for not sending image")
                 
                 # Delegate to receive coordinator (the middleware)
                 await self.receive_coordinator.handle_message(envelope)
@@ -220,17 +247,17 @@ class GeminiLiveAgent:
             self.logger.error(f"Error processing bridge message: {e}")
             self.metrics['errors'] += 1
             
-    async def _ensure_session(self):
-        """Ensure we have an active session"""
+    async def _ensure_session_ready(self):
+        """Ensure we have an active session when needed (OpenAI pattern)"""
         if self.session_manager.state == SessionState.IDLE and not self.session_creating:
             self.session_creating = True
             try:
-                self.logger.info("🔗 Creating Gemini session...")
+                self.logger.info("🔗 Creating Gemini session proactively...")
                 success = await self.session_manager.connect_session()
                 if success:
                     self.pause_detector.reset()
                     self.metrics['sessions_created'] += 1
-                    self.logger.info("✅ Session created")
+                    self.logger.info("✅ Session ready for per-turn communication")
                 else:
                     self.logger.error("❌ Failed to create session")
             finally:
@@ -280,16 +307,27 @@ class GeminiLiveAgent:
             # Extract image data from ROS message
             image_msg = envelope.raw_data
             
-            # Convert ROS Image to bytes (handle different encodings)
+            # Handle CompressedImage (JPEG data) or regular Image
             if hasattr(image_msg, 'data'):
-                # Store the raw image data
+                # Check if data is placeholder string (temporary fix)
+                if isinstance(image_msg.data, str) and "skipped" in image_msg.data:
+                    self.logger.debug(f"Skipping placeholder image data: {image_msg.data}")
+                    return
+                    
+                # Store the raw image data (JPEG bytes for CompressedImage)
                 self.latest_image_frame = bytes(image_msg.data)
                 self.latest_image_timestamp = envelope.timestamp
                 
                 # Log periodically to avoid spam
                 if self.image_frames_received % 10 == 1:
-                    self.logger.info(f"📷 Stored image frame #{self.image_frames_received} "
-                                   f"({image_msg.width}x{image_msg.height}, {image_msg.encoding})")
+                    if hasattr(image_msg, 'format'):
+                        # CompressedImage
+                        self.logger.info(f"📷 Stored compressed frame #{self.image_frames_received} "
+                                       f"({image_msg.format}, {len(image_msg.data)} bytes)")
+                    else:
+                        # Regular Image
+                        self.logger.info(f"📷 Stored image frame #{self.image_frames_received} "
+                                       f"({image_msg.width}x{image_msg.height}, {image_msg.encoding})")
             else:
                 self.logger.warning("Image message missing data field")
                 
@@ -302,7 +340,11 @@ class GeminiLiveAgent:
         This is called when an audio/text interaction starts, providing
         visual context for the conversation.
         """
-        if not self.latest_image_frame or not self.session_manager.session:
+        if not self.latest_image_frame:
+            self.logger.warning("❌ No image frame to send")
+            return
+        if not self.session_manager.session:
+            self.logger.warning("❌ No active Gemini session for image")
             return
             
         try:
@@ -310,23 +352,25 @@ class GeminiLiveAgent:
             if self.latest_image_timestamp:
                 age = time.time() - self.latest_image_timestamp
                 if age > self.max_image_age:
-                    self.logger.debug(f"Image frame too old ({age:.1f}s > {self.max_image_age}s), skipping")
+                    self.logger.warning(f"⏰ Image frame too old ({age:.1f}s > {self.max_image_age}s), skipping")
                     return
+                else:
+                    self.logger.info(f"✅ Image age OK: {age:.1f}s")
             
             # Send image to Gemini via session manager
             # Gemini expects JPEG or PNG, may need conversion
-            from google.genai import types
+            from google import genai
             
             # For now, assume the image is already in a supported format
             # In production, you'd convert based on encoding field
             success = await self.session_manager.session.send_client_content(
-                turns=types.Content(
+                turns=genai.types.Content(
                     parts=[
-                        types.Part.from_bytes(
+                        genai.types.Part.from_bytes(
                             data=self.latest_image_frame,
                             mime_type='image/jpeg'  # Adjust based on actual encoding
                         ),
-                        types.Part(text="Current visual context")
+                        genai.types.Part(text="Current visual context")
                     ]
                 ),
                 turn_complete=False  # Don't complete turn, audio/text will follow

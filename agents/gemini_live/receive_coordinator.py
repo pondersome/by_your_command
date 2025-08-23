@@ -20,10 +20,10 @@ from google.genai import types
 
 class ReceiveCoordinator:
     """
-    Minimal middleware to coordinate Gemini's receive generator pattern.
+    Per-turn receive coordinator following Gemini's proven pattern.
     
-    The core issue: Gemini's receive() generator must be created AFTER
-    sending input, not before. This coordinator manages that lifecycle.
+    Creates receive generator AFTER sending input for each turn.
+    Ends generator on turn_complete, creates new one for next turn.
     """
     
     def __init__(self, bridge_interface, session_manager, published_topics: Dict[str, str]):
@@ -40,10 +40,9 @@ class ReceiveCoordinator:
         self.published_topics = published_topics
         self.logger = logging.getLogger(__name__)
         
-        # State tracking
+        # State tracking - per-turn approach
+        self.current_turn_task: Optional[asyncio.Task] = None
         self.receiving = False
-        self.receive_task: Optional[asyncio.Task] = None
-        self.first_chunk_sent = False  # Track if we've sent first audio chunk
         
         # Metrics
         self.metrics = {
@@ -52,15 +51,96 @@ class ReceiveCoordinator:
             'responses_received': 0,
             'audio_responses': 0,
             'text_responses': 0,
-            'turns_completed': 0
+            'turns_completed': 0,
+            'sessions_started': 0
         }
+        
+    async def start_turn_receive(self, session):
+        """
+        Start receive generator for current turn AFTER input is sent.
+        Only cancel previous task if it has already received responses.
+        """
+        # If previous task exists and hasn't finished, give it time to complete
+        if self.current_turn_task and not self.current_turn_task.done():
+            self.logger.info("⏳ Previous turn still active - giving it 2s to complete naturally")
+            try:
+                # Wait up to 2 seconds for natural completion
+                await asyncio.wait_for(self.current_turn_task, timeout=2.0)
+                self.logger.info("✅ Previous turn completed naturally")
+            except asyncio.TimeoutError:
+                self.logger.info("⏰ Previous turn timeout - cancelling to start new one")
+                self.current_turn_task.cancel()
+                try:
+                    await self.current_turn_task
+                except asyncio.CancelledError:
+                    pass
+            except Exception as e:
+                self.logger.error(f"Error waiting for previous turn: {e}")
+        
+        self.receiving = True
+        self.current_turn_task = asyncio.create_task(self._receive_turn_responses(session))
+        # Track responses on the task
+        self.current_turn_task._responses_received = 0
+        self.logger.info(f"🚀 Started receive generator for turn (session: {id(session)})")
+        
+    async def _receive_turn_responses(self, session):
+        """
+        Receive responses for current turn, ending on turn_complete.
+        This matches the pattern from test scripts.
+        """
+        session_id = id(session)
+        response_count = 0
+        
+        try:
+            self.logger.info(f"🎧 Creating turn receive generator (session: {session_id})")
+            
+            async for response in session.receive():
+                response_count += 1
+                self.metrics['responses_received'] += 1
+                
+                # Track responses on current task
+                if hasattr(self.current_turn_task, '_responses_received'):
+                    self.current_turn_task._responses_received = response_count
+                
+                self.logger.info(f"📥 DIAGNOSTIC: Turn response #{response_count}: {type(response)} (session: {session_id})")
+                
+                # Handle audio data
+                if hasattr(response, 'data') and response.data:
+                    self.logger.info(f"🔊 Audio response: {len(response.data)} bytes")
+                    await self._handle_audio_response(response.data)
+                    
+                # Handle text
+                elif hasattr(response, 'text') and response.text:
+                    self.logger.info(f"📝 Text response: {response.text[:50]}...")
+                    await self._handle_text_response(response.text)
+                    
+                # Check for turn completion (as per test scripts)
+                if hasattr(response, 'server_content') and response.server_content:
+                    server_content = response.server_content
+                    
+                    if hasattr(server_content, 'generation_complete') and server_content.generation_complete:
+                        self.logger.info("✅ Generation complete signal")
+                        
+                    if hasattr(server_content, 'turn_complete') and server_content.turn_complete:
+                        self.logger.info(f"✅ Turn complete - ending this generator (session: {session_id})")
+                        self.metrics['turns_completed'] += 1
+                        break  # END this generator, as per test scripts
+                        
+        except asyncio.CancelledError:
+            self.logger.info(f"📡 Turn receive cancelled (session: {session_id})")
+            raise
+        except Exception as e:
+            self.logger.error(f"❌ Error in turn receive (session: {session_id}): {e}")
+        finally:
+            self.receiving = False
+            self.logger.info(f"📡 Turn receive ended - got {response_count} responses (session: {session_id})")
         
     async def handle_message(self, envelope):
         """
         Handle incoming message from bridge.
         
-        This is the main entry point - routes messages and manages
-        the receive generator lifecycle.
+        Simplified - just routes messages to Gemini. Persistent receive loop
+        handles all responses automatically.
         """
         msg_type = envelope.ros_msg_type
         
@@ -80,8 +160,8 @@ class ReceiveCoordinator:
         """
         Handle audio chunk from bridge.
         
-        Key pattern: Stream audio directly to Gemini, create receiver
-        after FIRST chunk.
+        Simplified - just send audio to Gemini. Persistent receive loop
+        handles responses automatically.
         """
         # Extract audio data
         if hasattr(envelope.raw_data, 'int16_data'):
@@ -92,36 +172,29 @@ class ReceiveCoordinator:
             self.logger.error("No audio data in envelope")
             return
             
-        # Check for interruption (new audio while receiving)
-        if self.receiving and envelope.raw_data.chunk_sequence == 0:
-            self.logger.info("🛑 User interrupted - cancelling current response")
-            await self._handle_interruption()
-            # Continue to process the new audio
-            
         # Check if session exists
         if not self.session_manager.session:
             self.logger.warning("No active session - audio chunk dropped")
             return
             
-        # Send audio chunk to Gemini (streaming, no buffering!)
+        chunk_id = envelope.raw_data.chunk_sequence if hasattr(envelope.raw_data, 'chunk_sequence') else 0
+        
+        # Send audio chunk to Gemini first
         success = await self.session_manager.send_audio(audio_bytes)
         
         if success:
             self.metrics['audio_chunks_sent'] += 1
-            chunk_id = envelope.raw_data.chunk_sequence if hasattr(envelope.raw_data, 'chunk_sequence') else 0
+            self.logger.debug(f"🎤 Audio chunk #{chunk_id} sent")
             
-            # Start receiver after FIRST chunk (as you correctly noted!)
-            if not self.first_chunk_sent:
-                self.first_chunk_sent = True
-                self.logger.info(f"🎤 First audio chunk #{chunk_id} sent, starting receiver")
-                await self._start_receive_cycle()
-            else:
-                self.logger.debug(f"🎤 Audio chunk #{chunk_id} sent")
+            # Start receive generator AFTER sending first chunk (test pattern)
+            if chunk_id == 0:
+                self.logger.info(f"🚀 Starting receive generator after first audio chunk")
+                await self.start_turn_receive(self.session_manager.session)
             
-            # Check if this is the last chunk
+            # Log final chunk and add silence hack
             if hasattr(envelope.raw_data, 'is_utterance_end') and envelope.raw_data.is_utterance_end:
-                self.logger.info(f"🎤 Final chunk #{chunk_id} - Gemini will auto-detect end and respond")
-                # Do NOT send turn_complete with audio - causes issues per PRD
+                self.logger.info(f"🎤 Final chunk #{chunk_id} - adding 1s silence for Gemini VAD")
+                await self._send_silence_hack()
         else:
             self.logger.error("Failed to send audio to Gemini")
             
@@ -129,114 +202,50 @@ class ReceiveCoordinator:
         """
         Handle text message from bridge.
         
-        Text is atomic - send immediately and create receiver.
+        Simplified - just send text to Gemini. Persistent receive loop
+        handles responses automatically.
         """
         text = envelope.raw_data.data
         
-        # Send text to Gemini
+        # Send text to Gemini first
         success = await self.session_manager.send_text(text)
         
         if success:
             self.metrics['text_messages_sent'] += 1
             self.logger.info(f"💬 Sent text: {text[:50]}...")
             
-            # Cancel any existing receiver (text interrupts audio)
-            if self.receiving and self.receive_task:
-                self.logger.info("Cancelling audio receiver for text input")
-                self.receive_task.cancel()
-                self.receiving = False
-                
-            # Start new receiver for text response
-            await self._start_receive_cycle()
+            # Start receive generator AFTER sending text (test pattern)
+            self.logger.info(f"🚀 Starting receive generator after text")
+            await self.start_turn_receive(self.session_manager.session)
         else:
             self.logger.error("Failed to send text to Gemini")
             
-    async def _start_receive_cycle(self):
+    async def _send_silence_hack(self):
         """
-        Start a new receive cycle for the current input.
-        
-        Critical: This creates a NEW receive generator for this turn.
-        One generator per conversation turn, not persistent.
+        Send 1 second of silence to trigger Gemini's server-side VAD.
+        This is a hack to work around Gemini Live's apparent need for 
+        silence to detect utterance completion.
         """
-        if self.receiving:
-            self.logger.debug("Already receiving, skipping start")
+        if not self.session_manager.session:
             return
             
-        self.receiving = True
-        self.receive_task = asyncio.create_task(self._receive_responses())
-        self.logger.info("📡 Started receive cycle")
-        
-    async def _receive_responses(self):
-        """
-        Process responses for the current conversation turn.
-        
-        Receives until turn_complete signal, then stops.
-        """
         try:
-            session = self.session_manager.session
-            if not session:
-                self.logger.error("No active session for receiving")
-                return
+            # Create 1 second of silence at 16kHz, 16-bit PCM
+            sample_rate = 16000
+            duration = 1.0
+            num_samples = int(sample_rate * duration)
+            silence_bytes = bytes([0, 0] * num_samples)  # PCM16 silence
+            
+            self.logger.info(f"🔇 Sending {len(silence_bytes)} bytes of silence to trigger Gemini VAD")
+            success = await self.session_manager.send_audio(silence_bytes)
+            
+            if success:
+                self.logger.info("✅ Silence hack sent successfully")
+            else:
+                self.logger.warning("❌ Failed to send silence hack")
                 
-            self.logger.info("🎧 Creating receive generator for this turn")
-            
-            response_count = 0
-            self.logger.info(f"Starting to iterate receive generator for session {id(session)}")
-            
-            # Process responses from this turn's generator
-            try:
-                # Add a timeout to detect if we're hanging
-                timeout_seconds = 5.0
-                self.logger.info(f"Waiting up to {timeout_seconds}s for first response...")
-                
-                async for response in session.receive():
-                    response_count += 1
-                    self.metrics['responses_received'] += 1
-                    self.logger.debug(f"Response #{response_count}: {type(response)}")
-                    
-                    # Log what fields the response has
-                    if response:
-                        fields = [attr for attr in dir(response) if not attr.startswith('_')]
-                        self.logger.debug(f"Response fields: {fields}")
-                    
-                    # Handle audio data
-                    if hasattr(response, 'data') and response.data:
-                        self.logger.info(f"🔊 Audio response: {len(response.data)} bytes")
-                        await self._handle_audio_response(response.data)
-                        
-                    # Handle text
-                    elif hasattr(response, 'text') and response.text:
-                        self.logger.info(f"📝 Text response: {response.text[:50]}...")
-                        await self._handle_text_response(response.text)
-                        
-                    # Check for server content
-                    if hasattr(response, 'server_content') and response.server_content:
-                        server_content = response.server_content
-                        self.logger.debug(f"Server content: {server_content}")
-                        
-                        if hasattr(server_content, 'generation_complete') and server_content.generation_complete:
-                            self.logger.info("✅ Generation complete signal")
-                            
-                        if hasattr(server_content, 'turn_complete') and server_content.turn_complete:
-                            self.logger.info("✅ Turn complete - ending receive cycle")
-                            self.metrics['turns_completed'] += 1
-                            break
-                        
-            except StopAsyncIteration:
-                self.logger.info(f"Receive generator completed normally (StopAsyncIteration) after {response_count} responses")
-            except Exception as e:
-                self.logger.error(f"Error iterating receive generator: {e}")
-            
-            self.logger.info(f"Exited receive loop - got {response_count} responses")
-                        
-        except asyncio.CancelledError:
-            self.logger.info("Receive cycle cancelled")
         except Exception as e:
-            self.logger.error(f"Error in receive cycle: {e}")
-        finally:
-            self.receiving = False
-            self.first_chunk_sent = False  # Reset for next utterance
-            self.logger.info("📡 Receive cycle ended")
+            self.logger.error(f"Error in silence hack: {e}")
             
     async def _handle_audio_response(self, audio_data: bytes):
         """Handle audio response from Gemini"""
@@ -270,36 +279,14 @@ class ReceiveCoordinator:
         # Add to conversation context
         self.session_manager.add_conversation_turn("assistant", text)
         
-    async def _handle_interruption(self):
-        """Handle user interruption during response"""
-        # Cancel receive task
-        if self.receive_task and not self.receive_task.done():
-            self.receive_task.cancel()
-            
-        # Send interrupt to Gemini
-        await self.session_manager.interrupt_response()
-        
-        # Send interruption signal to audio player
-        if self.bridge:
-            await self.bridge.put_outbound_message(
-                topic=self.published_topics.get('interruption_signal', 'interruption_signal'),
-                msg_data={'data': True},
-                msg_type='std_msgs/Bool'
-            )
-            
-        # Reset state
-        self.receiving = False
-        self.first_chunk_sent = False
-        
     async def cleanup(self):
         """Clean up resources"""
-        if self.receive_task and not self.receive_task.done():
-            self.receive_task.cancel()
+        if self.current_turn_task and not self.current_turn_task.done():
+            self.current_turn_task.cancel()
             try:
-                await self.receive_task
+                await self.current_turn_task
             except asyncio.CancelledError:
                 pass
-                
         self.logger.info("Receive coordinator cleaned up")
         
     def get_metrics(self) -> Dict[str, Any]:

@@ -780,3 +780,122 @@ async def main():
 ```
 
 This WebSocket-based architecture enables true distributed deployment while maintaining the minimal transport layer design and zero-copy efficiency within the bridge itself.
+
+## 11. Planned Enhancements
+
+### 11.1 Topic Aliasing System
+
+**TODO**: Implement a topic aliasing mechanism to decouple agents from hardware-specific topic names.
+
+#### Problem
+Agents currently need to know exact ROS topic names (e.g., `/grunt1/arm1/cam_live/color/image_raw`), creating tight coupling between agent code and robot hardware configuration. This is particularly problematic for camera/video feeds where different robots have different camera mount points and naming conventions.
+
+#### Proposed Solution
+Add a topic aliasing layer in the bridge that maps logical topic names to physical topics:
+
+**Configuration:**
+```yaml
+ros_ai_bridge:
+  ros__parameters:
+    # Topic alias mappings
+    topic_aliases:
+      # Camera feeds - agents just request "camera/image_raw"
+      "camera/image_raw": "/grunt1/arm1/cam_live/color/image_raw"
+      "camera/depth": "/grunt1/arm1/cam_live/depth/image_rect_raw"
+      "camera/compressed": "/grunt1/arm1/cam_live/color/image_raw/compressed"
+      
+      # Other sensor mappings
+      "lidar/scan": "/velodyne/scan"
+      "audio/input": "/microphone/audio"
+      
+    # Subscribed topics can use aliases
+    subscribed_topics:
+      - topic: "camera/image_raw"  # Uses alias
+        msg_type: "sensor_msgs/Image"
+```
+
+**Implementation:**
+```python
+class ROSAIBridge(Node):
+    def __init__(self):
+        super().__init__('ros_ai_bridge')
+        self.topic_aliases = {}  # Logical -> Physical mapping
+        self.reverse_aliases = {}  # Physical -> Logical mapping
+        
+    def _resolve_topic_alias(self, topic: str) -> str:
+        """Resolve logical topic name to physical topic"""
+        return self.topic_aliases.get(topic, topic)
+        
+    def _setup_configured_topics(self):
+        """Set up topics with alias resolution"""
+        for topic_config in self._config.get('subscribed_topics', []):
+            logical_topic = topic_config['topic']
+            physical_topic = self._resolve_topic_alias(logical_topic)
+            
+            # Subscribe to physical topic
+            subscription = self.create_subscription(
+                msg_class, physical_topic, callback, qos
+            )
+            
+            # Store both mappings for agent registration
+            self.reverse_aliases[physical_topic] = logical_topic
+```
+
+**Agent Registration Enhancement:**
+```python
+async def register_agent(self, websocket, data):
+    """Register agent with topic alias resolution"""
+    agent_id = data["agent_id"]
+    subscriptions = data.get("subscriptions", [])
+    
+    # Resolve aliases in agent subscriptions
+    resolved_subs = []
+    for sub in subscriptions:
+        logical_topic = sub["topic"]
+        physical_topic = self._resolve_topic_alias(logical_topic)
+        resolved_subs.append(physical_topic)
+        
+        # Also store logical name for matching
+        if physical_topic != logical_topic:
+            self.agent_logical_topics[agent_id][physical_topic] = logical_topic
+    
+    self.agent_subscriptions[agent_id] = resolved_subs
+```
+
+**Message Routing with Aliases:**
+```python
+async def broadcast_to_agents(self, envelope: MessageEnvelope):
+    """Route messages considering both physical and logical names"""
+    for agent_id, websocket in self.connected_agents.items():
+        agent_subs = self.agent_subscriptions.get(agent_id, [])
+        
+        # Check both physical and logical topic names
+        physical_topic = envelope.topic_name
+        logical_topic = self.reverse_aliases.get(physical_topic, physical_topic)
+        
+        if physical_topic in agent_subs or logical_topic in agent_subs:
+            # Send with logical name if agent used alias
+            if logical_topic in self.agent_logical_topics.get(agent_id, {}):
+                envelope.topic_name = logical_topic
+            
+            await self.send_to_agent(websocket, envelope)
+```
+
+#### Benefits
+1. **Hardware Abstraction**: Agents use semantic names like "camera/image_raw" instead of hardware-specific paths
+2. **Portability**: Same agent code works across different robot configurations
+3. **Centralized Management**: All topic mappings in one configuration file
+4. **Easy Migration**: Change hardware topics without modifying agent code
+5. **Multi-Robot Support**: Different robots can map same logical topics to their hardware
+6. **Video/Camera Flexibility**: Vision-enabled agents (like Gemini with video support) can request generic "camera/image_raw" and automatically get the correct camera feed for any robot
+
+#### Implementation Priority
+**Priority: Medium** - Current hardcoded solution works for demos, but aliasing needed for production deployment across multiple robot platforms.
+
+### 11.2 Other Planned Enhancements
+
+1. **Message Compression**: Add optional gzip compression for large messages over WebSocket
+2. **Authentication**: Implement agent authentication and authorization
+3. **Message Replay**: Record and replay message streams for debugging
+4. **Dynamic Rate Limiting**: Adjust rate limits based on system load
+5. **Priority Queuing**: Priority-based message routing for critical messages

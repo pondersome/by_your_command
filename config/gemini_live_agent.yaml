@@ -16,7 +16,7 @@ gemini_live_agent:
   # - gemini-2.0-flash-live-001 (Gemini 2.0 Flash Live - high quota)
   # - gemini-live-2.5-flash-preview (Gemini 2.5 Flash Live Preview)
   # - models/gemini-2.0-flash-exp (experimental - limited quota)
-  model: "models/gemini-2.0-flash-live-001"
+  model: "models/gemini-live-2.5-flash-preview"
   
   # Voice Selection
   # Available voices: Aoede, Charon, Fenrir, Kore, Puck

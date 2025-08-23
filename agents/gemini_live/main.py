@@ -76,6 +76,7 @@ If video is enabled, you can describe what you see and help with visual tasks.""
         'GEMINI_VOICE': 'voice',
         'GEMINI_PROACTIVE_AUDIO': 'proactive_audio',
         'GEMINI_ENABLE_VIDEO': 'enable_video',
+        'ENABLE_VIDEO': 'enable_video',  # Also accept without prefix for launch file compatibility
         'PAUSE_TIMEOUT': 'session_pause_timeout',
         'VIDEO_TOPIC': 'video_topic',
         'VIDEO_FRAME_INTERVAL': 'video_frame_interval'

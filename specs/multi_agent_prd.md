@@ -266,6 +266,13 @@ class BaseAgent:
 
 ## Future Enhancements
 
+### ROS AI Bridge Improvements
+1. **Topic Aliasing System**: 
+   - Allow agents to subscribe to logical topic names (e.g., `camera/image_raw`)
+   - Bridge maintains alias mapping in configuration (e.g., `camera/image_raw` → `/grunt1/arm1/cam_live/color/image_raw`)
+   - Agents remain hardware-agnostic and portable across different robot configurations
+   - Benefits: Easier multi-robot deployment, simplified agent development, centralized topic management
+
 ### Planned Provider Integrations
 1. **Anthropic Claude**: Constitutional AI and safety-focused responses
 2. **Cohere Command**: Specialized for command and control applications

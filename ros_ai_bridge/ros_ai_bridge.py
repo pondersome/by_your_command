@@ -130,6 +130,9 @@ class MessageQueues:
         self.inbound_topics: asyncio.Queue = None
         self.inbound_service_requests: asyncio.Queue = None
         
+        # Lock for queue manipulation during frame replacement
+        self.queue_lock = asyncio.Lock()
+        
         # Agent → ROS (thread-safe queues for ROS publishers)
         self.outbound_topics = queue.Queue(maxsize=max_size)
         self.outbound_service_responses = queue.Queue(maxsize=max_size)
@@ -144,16 +147,65 @@ class MessageQueues:
         self.inbound_service_requests = asyncio.Queue(maxsize=self.max_size)
         
     def put_inbound_topic(self, envelope: MessageEnvelope) -> bool:
-        """Put message into inbound topic queue (called from ROS callback)"""
+        """Put message into inbound topic queue (called from ROS callback)
+        
+        For image topics, removes old frames from same topic before adding new one.
+        """
         try:
             if self.inbound_topics is None:
                 return False
-            self.inbound_topics.put_nowait(envelope)
-            self.total_messages += 1
-            return True
+                
+            # For image topics, we need to remove old frames from same topic
+            if "Image" in envelope.ros_msg_type:  # Handles both Image and CompressedImage
+                # Since we're in a sync context (ROS callback), we can't directly
+                # manipulate the async queue. Instead, we'll use a simple approach:
+                # Try to add the new frame. If queue is full, clear it and retry.
+                try:
+                    self.inbound_topics.put_nowait(envelope)
+                    self.total_messages += 1
+                    return True
+                except asyncio.QueueFull:
+                    # Queue is full - for images, clear old messages and retry
+                    # This is aggressive but ensures fresh frames
+                    cleared = self._clear_old_messages_sync()
+                    if cleared > 0:
+                        # Log only occasionally to avoid spam
+                        if self.total_messages % 100 == 0:
+                            print(f"[MessageQueues] Cleared {cleared} old messages for new image frame")
+                    try:
+                        self.inbound_topics.put_nowait(envelope)
+                        self.total_messages += 1
+                        return True
+                    except asyncio.QueueFull:
+                        self.dropped_messages += 1
+                        return False
+            else:
+                # Regular messages go into queue normally
+                self.inbound_topics.put_nowait(envelope)
+                self.total_messages += 1
+                return True
         except asyncio.QueueFull:
             self.dropped_messages += 1
             return False
+            
+    def _clear_old_messages_sync(self):
+        """Clear old messages from queue (called from sync context)
+        
+        This is a simple approach that removes older messages to make room.
+        Returns the number of messages cleared.
+        """
+        # Remove up to half the queue to make room
+        cleared = 0
+        max_to_clear = self.max_size // 2
+        while cleared < max_to_clear:
+            try:
+                self.inbound_topics.get_nowait()
+                cleared += 1
+            except asyncio.QueueEmpty:
+                break
+        if cleared > 0:
+            self.dropped_messages += cleared
+        return cleared
             
     def put_inbound_topic_broadcast(self, envelope: MessageEnvelope) -> bool:
         """Put message into inbound queue for broadcasting to all consumers"""
@@ -451,10 +503,17 @@ class WebSocketAgentServer:
         
     async def unregister_agent(self, agent_id: str):
         """Unregister agent and clean up resources"""
+        # Check if already unregistered to avoid spam
+        if agent_id not in self.connected_agents:
+            return  # Already unregistered
+            
         if agent_id in self.connected_agents:
             try:
                 websocket = self.connected_agents[agent_id]
-                if not websocket.closed:
+                # Check if websocket has closed attribute (websockets library compatibility)
+                if hasattr(websocket, 'closed') and not websocket.closed:
+                    await websocket.close()
+                elif hasattr(websocket, 'state') and websocket.state.value <= 1:  # CONNECTING=0, OPEN=1
                     await websocket.close()
             except Exception as e:
                 self.logger.log_error(f"Error closing WebSocket for {agent_id}: {e}")
@@ -527,15 +586,21 @@ class WebSocketAgentServer:
             
     async def broadcast_to_agents(self, envelope: MessageEnvelope):
         """Send ROS message to subscribed agents via WebSocket"""
-        self.logger.log_info(f"🔊 Broadcasting {envelope.ros_msg_type} from {envelope.topic_name} to {len(self.connected_agents)} agents")
+        # Only log non-image broadcasts to reduce spam
+        if "Image" not in envelope.ros_msg_type:
+            self.logger.log_info(f"🔊 Broadcasting {envelope.ros_msg_type} from {envelope.topic_name} to {len(self.connected_agents)} agents")
         
         if not self.connected_agents:
-            self.logger.log_warning("No connected agents to broadcast to")
+            # Silent return for images, warn for other messages
+            if "Image" not in envelope.ros_msg_type:
+                self.logger.log_warning("No connected agents to broadcast to")
             return
             
         disconnected_agents = []
         
-        for agent_id, websocket in self.connected_agents.items():
+        # Create a copy to avoid concurrent modification
+        agents_copy = dict(self.connected_agents)
+        for agent_id, websocket in agents_copy.items():
             # Check if agent subscribed to this topic
             agent_subscriptions = self.agent_subscriptions.get(agent_id, [])
             
@@ -546,15 +611,24 @@ class WebSocketAgentServer:
             # Also check if agent subscribed with the base topic name
             matched = False
             for sub_topic in agent_subscriptions:
-                # Match either full topic or base topic
-                if envelope.topic_name == sub_topic or base_topic == sub_topic.lstrip('/'):
+                # Match either:
+                # 1. Exact match (including absolute paths)
+                # 2. Base topic match
+                # 3. Relative topic match (agent sub without /, topic with /)
+                if (envelope.topic_name == sub_topic or 
+                    base_topic == sub_topic.lstrip('/') or
+                    envelope.topic_name.endswith('/' + sub_topic)):
                     matched = True
                     break
                     
-            self.logger.log_info(f"Agent {agent_id} subscriptions: {agent_subscriptions}, checking {envelope.topic_name} (base: {base_topic})")
+            # Only log details for non-images to reduce spam
+            if "Image" not in envelope.ros_msg_type:
+                self.logger.log_info(f"Agent {agent_id} subscriptions: {agent_subscriptions}, checking {envelope.topic_name} (base: {base_topic})")
             
             if matched:
-                self.logger.log_info(f"📤 Sending to agent {agent_id}: {envelope.topic_name}")
+                # Only log sending for non-images
+                if "Image" not in envelope.ros_msg_type:
+                    self.logger.log_info(f"📤 Sending to agent {agent_id}: {envelope.topic_name}")
                 try:
                     # Serialize ROS message for WebSocket transport
                     message = {
@@ -575,6 +649,8 @@ class WebSocketAgentServer:
                     disconnected_agents.append(agent_id)
                 except Exception as e:
                     self.logger.log_error(f"Error sending message to agent {agent_id}: {e}")
+            else:
+                self.logger.log_warning(f"❌ NOT sending to agent {agent_id} - no subscription match for {envelope.topic_name}")
                     
         # Clean up disconnected agents
         for agent_id in disconnected_agents:
@@ -594,9 +670,26 @@ class WebSocketAgentServer:
                         self.logger.log_info(f"🎧 Bridge serializing int16_data: type={type(value)}, length={len(value) if hasattr(value, '__len__') else 'N/A'}")
                     
                     # Handle special types that need conversion
-                    if hasattr(value, '__iter__') and not isinstance(value, (str, bytes)):
+                    if value is None:
+                        result[field_name] = None
+                    elif field_name == 'data' and ros_msg.__class__.__name__ in ['Image', 'CompressedImage']:
+                        # Use base64 for compressed images to avoid huge JSON arrays
+                        if ros_msg.__class__.__name__ == 'CompressedImage':
+                            import base64
+                            # Convert bytes to base64 string (much more efficient than JSON array)
+                            result[field_name] = base64.b64encode(value).decode('utf-8')
+                        else:
+                            # Skip large raw image data
+                            result[field_name] = f"<image_data_{len(value)}_bytes>"
+                    elif hasattr(value, 'get_fields_and_field_types'):
+                        # Nested ROS message (like Header, Time) - recursively serialize
+                        result[field_name] = self.serialize_ros_message(value)
+                    elif hasattr(value, '__iter__') and not isinstance(value, (str, bytes)):
                         # Convert lists/arrays to regular Python lists
                         result[field_name] = list(value)
+                    elif hasattr(value, 'sec') and hasattr(value, 'nanosec'):
+                        # Handle Time objects specifically
+                        result[field_name] = {'sec': value.sec, 'nanosec': value.nanosec}
                     else:
                         result[field_name] = value
                 return result
@@ -681,6 +774,9 @@ class ROSAIBridge(Node):
         self.declare_parameter('queue_timeout_ms', 1000)
         self.declare_parameter('drop_policy', 'oldest')
         
+        # Video frame rate limiting
+        self.declare_parameter('max_video_fps', 2.0)  # Global rate limit for video topics
+        
         # WebSocket server configuration
         self.declare_parameter('websocket_server.enabled', False)
         self.declare_parameter('websocket_server.host', '0.0.0.0')
@@ -707,9 +803,11 @@ class ROSAIBridge(Node):
             'max_queue_size': self.get_parameter('max_queue_size').value,
             'queue_timeout_ms': self.get_parameter('queue_timeout_ms').value,
             'drop_policy': self.get_parameter('drop_policy').value,
+            'max_video_fps': self.get_parameter('max_video_fps').value,
             'subscribed_topics': [],
             'published_topics': [],
             'services': [],
+            'rate_limits': {},
             
             # WebSocket server configuration
             'websocket_server': {
@@ -759,8 +857,8 @@ class ROSAIBridge(Node):
         
     def _construct_topic_name(self, base_topic: str) -> str:
         """Construct full topic name with namespace and prefix handling empty values"""
-        # If already absolute and no namespace/prefix, return as-is
-        if base_topic.startswith('/') and not self._config.get('namespace') and not self._config.get('prefix'):
+        # If already absolute (starts with /), return as-is - absolute topics override namespace/prefix
+        if base_topic.startswith('/'):
             return base_topic
             
         # Build topic parts
@@ -844,6 +942,10 @@ class ROSAIBridge(Node):
     def _setup_configured_topics(self):
         """Set up topic subscriptions and publishers from configuration"""
         self.log_info(f"Setting up topics: subscribed_topics type={type(self._config.get('subscribed_topics'))}, value={self._config.get('subscribed_topics')}")
+        
+        # Load rate limits from separate configuration section
+        rate_limits = self._config.get('rate_limits', {})
+        
         # Set up subscriptions
         subscribed_topics = self._config.get('subscribed_topics', [])
         self.log_info(f"Setting up {len(subscribed_topics)} subscriptions")
@@ -854,7 +956,16 @@ class ROSAIBridge(Node):
             self.log_info(f"Processing subscription config: {topic_config}")
             
             # Check if rate limiting is configured for this topic
-            max_fps = topic_config.get('max_fps', 0)  # 0 means no rate limiting
+            # First check inline max_fps for backwards compatibility
+            max_fps = topic_config.get('max_fps', 0)
+            # Then check the separate rate_limits section
+            if max_fps == 0 and full_topic in rate_limits:
+                max_fps = rate_limits[full_topic]
+            # Apply global video rate limit to Image topics (both regular and compressed)
+            if max_fps == 0 and "Image" in msg_type:
+                max_fps = self._config.get('max_video_fps', 2.0)
+                self.log_info(f"Applying global video rate limit to {full_topic}: {max_fps} fps")
+            
             if max_fps > 0:
                 self._topic_rate_limiters[full_topic] = FrameRateLimiter(max_fps)
                 self.log_info(f"Rate limiting enabled for {full_topic}: max {max_fps} fps")
@@ -898,14 +1009,12 @@ class ROSAIBridge(Node):
     def _ros_callback(self, msg: Any, topic_name: str, msg_type: str):
         """ROS callback - broadcast message to all consumers with optional rate limiting"""
         try:
-            # Check if this topic has rate limiting
+            # Check if this topic has rate limiting (BEFORE any logging)
             if topic_name in self._topic_rate_limiters:
                 limiter = self._topic_rate_limiters[topic_name]
                 if not limiter.should_pass():
                     # Drop this frame due to rate limiting
-                    if limiter.dropped_count % 100 == 1:  # Log every 100th drop to avoid spam
-                        self.log_debug(f"Rate limiting {topic_name}: dropped {limiter.dropped_count} frames")
-                    return
+                    return  # Silent drop to reduce log spam
             
             # Create zero-copy envelope
             envelope = MessageEnvelope(
@@ -919,11 +1028,16 @@ class ROSAIBridge(Node):
             
             # Put into inbound queue for direct agent interfaces
             success = self.queues.put_inbound_topic(envelope)
+            if not success and "Image" not in msg_type:
+                # Only warn for non-images to reduce spam
+                self.log_warning(f"Inbound queue full, dropped message from {topic_name}")
             
             # Also broadcast to WebSocket agents directly (non-blocking)
             if self.websocket_server and self.asyncio_loop:
                 # Schedule WebSocket broadcast in the asyncio thread (thread-safe)
-                self.log_info(f"📡 Broadcasting message to WebSocket agents: {envelope.ros_msg_type}")
+                # Only log non-image broadcasts to reduce spam
+                if "Image" not in envelope.ros_msg_type:
+                    self.log_info(f"📡 Broadcasting message to WebSocket agents: {envelope.ros_msg_type}")
                 self.asyncio_loop.call_soon_threadsafe(
                     asyncio.create_task, 
                     self.websocket_server.broadcast_to_agents(envelope)
@@ -933,7 +1047,8 @@ class ROSAIBridge(Node):
             else:
                 self.log_warning("No WebSocket server - cannot broadcast")
             
-            if not success:
+            if not success and "Image" not in msg_type:
+                # Only warn for non-images to reduce spam
                 self.log_warning(f"Inbound queue full, dropped message from {topic_name}")
                 
         except Exception as e:

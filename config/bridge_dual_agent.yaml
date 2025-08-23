@@ -31,9 +31,8 @@ ros_ai_bridge:
         msg_type: "std_msgs/String"
       - topic: "conversation_id" # Bidirectional - external conversation resets
         msg_type: "std_msgs/String"
-      - topic: "/grunt1/arm1/cam_live/color/image_raw"  # Camera feed for vision
-        msg_type: "sensor_msgs/Image"
-        max_fps: 2  # Rate limit to 2 fps for video streaming (safety net)
+      - topic: "/grunt1/arm1/cam_live/color/image_raw/compressed"  # Compressed camera feed for vision
+        msg_type: "sensor_msgs/CompressedImage"
         
     # Topics to publish (Agent → ROS) - Combined from both agents
     published_topics:

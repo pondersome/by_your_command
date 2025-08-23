@@ -39,6 +39,8 @@ class WebSocketMessageEnvelope:
             return StringProxy(data)
         elif self.ros_msg_type == "audio_common_msgs/AudioData":
             return AudioDataProxy(data)
+        elif self.ros_msg_type == "sensor_msgs/CompressedImage":
+            return CompressedImageProxy(data)
         else:
             return DataProxy(data)
 
@@ -74,6 +76,37 @@ class AudioDataProxy:
         self.int16_data = data.get("int16_data", [])
 
 
+class CompressedImageProxy:
+    """Proxy object for sensor_msgs/CompressedImage from WebSocket"""
+    
+    def __init__(self, data: Dict):
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            # Header fields
+            self.header = data.get("header", {})
+            # Image format (e.g., "rgb8; jpeg compressed bgr8")
+            self.format = data.get("format", "")
+            # JPEG data - handle both base64 string (new) and list (legacy) formats
+            data_field = data.get("data", [])
+            
+            if isinstance(data_field, str):
+                # New base64 format - much more efficient!
+                import base64
+                self.data = base64.b64decode(data_field)
+            elif isinstance(data_field, list):
+                # Legacy JSON array format (fallback)
+                self.data = bytes(data_field)
+            else:
+                self.data = data_field
+        except Exception as e:
+            logger.error(f"❌ CompressedImageProxy init failed: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
+
+
 class DataProxy:
     """Generic proxy object for unknown message types"""
     
@@ -85,6 +118,7 @@ class WebSocketBridgeInterface:
     """WebSocket client for bridge communication"""
     
     def __init__(self, config: Dict):
+        self.config = config  # Store the full config for access in other methods
         self.host = config.get('bridge_connection', {}).get('host', 'localhost')
         self.port = config.get('bridge_connection', {}).get('port', 8765)
         self.agent_id = config.get('agent_id', 'openai_realtime')
@@ -161,15 +195,26 @@ class WebSocketBridgeInterface:
     async def _register_agent(self) -> bool:
         """Register agent with bridge"""
         try:
+            # Build subscription list based on configuration
+            subscriptions = [
+                {"topic": "voice_chunks", "msg_type": "by_your_command/AudioDataUtterance"},
+                {"topic": "text_input", "msg_type": "std_msgs/String"},
+                {"topic": "conversation_id", "msg_type": "std_msgs/String"}
+            ]
+            
+            # Add camera subscription if video is enabled
+            if self.config.get('enable_video', False):
+                subscriptions.append({
+                    "topic": "/grunt1/arm1/cam_live/color/image_raw/compressed",  # JPEG compressed - ready for Gemini
+                    "msg_type": "sensor_msgs/CompressedImage"
+                })
+                self.logger.info("Video enabled - subscribing to compressed camera topic")
+            
             registration = {
                 "type": "register",
                 "agent_id": self.agent_id,
                 "capabilities": ["audio_processing", "realtime_api"],
-                "subscriptions": [
-                    {"topic": "voice_chunks", "msg_type": "by_your_command/AudioDataUtterance"},
-                    {"topic": "text_input", "msg_type": "std_msgs/String"},
-                    {"topic": "conversation_id", "msg_type": "std_msgs/String"}
-                ]
+                "subscriptions": subscriptions
             }
             
             await self.websocket.send(json.dumps(registration))
@@ -211,9 +256,14 @@ class WebSocketBridgeInterface:
                     
                     if message_type == "message":
                         # Queue message for agent processing
+                        msg_type = data["envelope"].get('ros_msg_type', 'unknown')
                         await self.message_queue.put(data["envelope"])
                         self.messages_received += 1
-                        self.logger.info(f"📥 Queued message: {data['envelope'].get('ros_msg_type', 'unknown')} (queue size: {self.message_queue.qsize()})")
+                        if "Image" in msg_type:
+                            # Reduce image message spam
+                            self.logger.debug(f"📥 IMAGE queued: {msg_type}")
+                        else:
+                            self.logger.info(f"📥 Queued message: {msg_type} (queue size: {self.message_queue.qsize()})")
                         
                     elif message_type == "heartbeat":
                         # Respond to heartbeat
@@ -266,7 +316,11 @@ class WebSocketBridgeInterface:
             
         try:
             envelope_data = await asyncio.wait_for(self.message_queue.get(), timeout)
-            self.logger.info(f"📤 Retrieved message: {envelope_data.get('ros_msg_type', 'unknown')}")
+            msg_type = envelope_data.get('ros_msg_type', 'unknown')
+            if "Image" in msg_type:
+                self.logger.debug(f"📤 Retrieved image: {msg_type}")
+            else:
+                self.logger.info(f"📤 Retrieved message: {msg_type}")
             
             # Debug: Check int16_data in the envelope  
             if envelope_data.get('ros_msg_type') == 'by_your_command/AudioDataUtterance':

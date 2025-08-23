@@ -237,7 +237,8 @@ class GeminiSessionManager(BaseSessionManager):
         
         # Add video configuration if enabled
         if self.video_enabled:
-            config.response_modalities.append("text")  # Can add text with video
+            # Video is an input modality, not a response modality
+            # Response stays as AUDIO only
             self.logger.info("Video mode enabled - 2 minute session limit applies")
         
         # Enable proactive audio if configured
