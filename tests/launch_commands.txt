@@ -1,0 +1,22 @@
+launch realsense:
+ros2 launch grunt_bringup rs_launch.py #defaults to /grunt1/arm1 namespace
+
+launch grunt chassis and arm:
+ros2 launch grunt_bringup grunt_quiet.launch.py prefix:=grunt1
+
+launch arm preset publisher:
+ros2 launch grunt_util arm_preset.launch.py namespace:=/grunt1 prefix:=/arm1/
+
+launch agent:
+ros2 launch by_your_command oai_dual_agent.launch.py namespace:=grunt1 prefix:=agent
+
+ros2 launch by_your_command gemini_live.launch.py verbose:=true namespace:=grunt1 prefix:=agent
+
+ros2 launch by_your_command gemini_vision.launch.py verbose:=true namespace:=grunt1 prefix:=agent
+
+ros2 launch by_your_command gemini_dual_agent.launch.py namespace:=grunt1 prefix:=agent
+
+verify system functions:
+ros2 topic pub --once /grunt1/arm_preset std_msgs/msg/String "data: bumper"  #or tenhut, or lookout
+ros2 topic pub --once /grunt1/agent/text_input std_msgs/msg/String "data: wake"  #wake up silero after sleep
+ros2 topic pub /grunt1/agent/voice_active std_msgs/Bool "data: false" --once #force silero to sleep

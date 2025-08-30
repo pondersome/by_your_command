@@ -1,14 +1,14 @@
-# Gemini Command Extractor Agent Configuration
+# Gemini Conversational Agent Configuration
 # 
-# This agent extracts movement commands and provides JSON scene descriptions.
-# It outputs to command_transcript for the command processor to parse.
+# This agent handles natural dialogue with vision-based descriptions.
+# It provides voice and text responses to user queries.
 #
 # Author: Karim Virani
 # Date: August 2025
 
 gemini_live_agent:
   # Agent Identification
-  agent_id: "gemini_command_extractor"
+  agent_id: "gemini_conversational"
   
   # API Configuration
   # Set GEMINI_API_KEY environment variable for security
@@ -16,29 +16,29 @@ gemini_live_agent:
   # Model Selection
   model: "models/gemini-live-2.5-flash-preview"
   
-  # Voice Selection (not used since audio output is disabled)
+  # Voice Selection
   voice: "Kore"
   
   # Proactive Audio
   proactive_audio: false
   
-  # Video Support - ENABLED for visual command mode (JSON scene descriptions)
+  # Video Support - ENABLED for visual descriptions
   enable_video: true
   max_image_age: 5.0  # Maximum age (seconds) for an image to be considered fresh
   
   # Session Management
   session_pause_timeout: 30.0  # Seconds of silence before cycling session
-  max_context_tokens: 1000  # Smaller context for command extraction
+  max_context_tokens: 2000
   conversation_timeout: 600.0  # 10 minutes - reset context after this
   
   # Published Topics (relative paths for namespacing)
-  audio_out_topic: ""  # DISABLED - no audio output for command agent
-  transcript_topic: "command_transcript"  # Movement commands and JSON scene data
-  command_detected_topic: "command_detected"  # Signal when command extracted
-  interruption_signal_topic: ""  # Not needed without audio
+  audio_out_topic: "audio_out"  # Audio responses enabled
+  transcript_topic: "llm_transcript"  # Natural language transcript
+  command_detected_topic: ""  # Not used by conversational agent
+  interruption_signal_topic: "interruption_signal"
   
-  # Prompt Selection - Use visual command prompt for both movement and scene extraction
-  prompt_id: "barney_command_visual"
+  # Prompt Selection - Use conversational Gemini prompt
+  prompt_id: "barney_conversational_gemini"
   
   # Logging
   log_level: 20  # INFO level (10=DEBUG, 20=INFO, 30=WARNING, 40=ERROR)

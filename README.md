@@ -103,17 +103,17 @@ export GEMINI_API_KEY="your-gemini-api-key-here"
 Edit `config/config.yaml` to tune voice detection and clap detection parameters:
 
 ```yaml
+clap_detector_node:
+  ros__parameters:
+    enabled: true
+    zcr_threshold: 0.28  # Adjust for your environment
+    peak_threshold: 0.03
+
 silero_vad_node:
   ros__parameters:
     # VAD parameters
     threshold: 0.5
     min_silence_duration_ms: 250
-    
-    # Clap detection parameters
-    clap_detection_enabled: true
-    clap_spike_ratio: 4.0
-    clap_min_gap_ms: 300
-    clap_max_gap_ms: 800
 ```
 
 ### Acoustic Echo Cancellation (AEC)
@@ -187,6 +187,7 @@ ros2 launch by_your_command oai_realtime.launch.py save_mic:=true
 ros2 launch by_your_command byc.launch.py
 
 # Individual nodes
+ros2 run by_your_command clap_detector_node
 ros2 run by_your_command silero_vad_node
 ros2 run by_your_command voice_chunk_recorder
 ros2 run by_your_command simple_audio_player
@@ -471,11 +472,40 @@ published_topics:
 
 ## Nodes
 
+### clap_detector_node
+A dedicated node for detecting double-clap patterns using Zero Crossing Rate (ZCR) as the primary discriminator. Developed through data-driven analysis for reverberant environments.
+
+**Subscribed Topics**:
+- `/audio` (audio_common_msgs/AudioStamped): Input audio stream
+
+**Published Topics**:
+- `/wake_cmd` (std_msgs/Bool): Wake command signal on double-clap detection
+
+**Parameters**:
+- `audio_topic` (string, default "audio"): Input audio topic
+- `wake_cmd_topic` (string, default "wake_cmd"): Output wake command topic
+- `enabled` (bool, default true): Enable/disable clap detection
+- `sample_rate` (int, default 16000): Audio sampling rate
+- `zcr_threshold` (float, default 0.28): Zero Crossing Rate threshold (primary discriminator)
+- `peak_threshold` (float, default 0.03): Peak amplitude threshold
+- `min_spectral_centroid` (int, default 1500): Minimum frequency centroid in Hz
+- `max_rise_time_ms` (int, default 60): Maximum rise time in milliseconds
+- `double_clap_min_gap_ms` (int, default 160): Minimum gap between claps (avoids reverb)
+- `double_clap_max_gap_ms` (int, default 1200): Maximum gap between claps
+
+**Features**:
+- **Data-driven approach**: Based on measured acoustic characteristics, not theoretical models
+- **ZCR-based detection**: Uses Zero Crossing Rate as primary discriminator (claps ~0.33, speech ~0.16)
+- **Reverb-aware timing**: Avoids false positives from room reverb (300-400ms range)
+- **Consistency checking**: Verifies both claps have similar ZCR values
+- **Low false positive rate**: Tuned to reject speech while detecting deliberate claps
+
 ### silero_vad_node
 A node that performs voice activity detection using the Silero VAD model and publishes enhanced voice chunks with utterance metadata.
 
 **Subscribed Topics**:
 - `/audio` (audio_common_msgs/AudioStamped): Input audio stream
+- `/wake_cmd` (std_msgs/Bool): Wake command from external sources (e.g., clap detector)
 - `/voice_active` (std_msgs/Bool): Remote mute/unmute control (default: true/active)
 - `/text_input` (std_msgs/String): Text-based wake commands when muted
 
@@ -490,19 +520,14 @@ A node that performs voice activity detection using the Silero VAD model and pub
 - `utterance_chunk_frames` (int, default 100): Frames per chunk (0 = full utterance mode)
 - `threshold` (float, default 0.5): VAD sensitivity threshold
 - `min_silence_duration_ms` (int, default 200): Silence duration to end utterance
-- `clap_detection_enabled` (bool, default true): Enable adaptive clap detection for wake-up
-- `clap_spike_ratio` (float, default 4.0): Clap must be this many times louder than background
-- `clap_min_gap_ms` (int, default 300): Minimum gap between claps for double-clap detection
-- `clap_max_gap_ms` (int, default 800): Maximum gap between claps for double-clap detection
 
 **Features**:
 - Utterance ID stamping using first frame timestamp
 - One-frame delay end-of-utterance detection
 - Configurable chunking with pre-roll support
+- **Sleep/wake control**: Responds to wake_cmd topic for external wake sources
 - **Remote mute/unmute control**: Stops all audio processing and forwarding when muted
-- **Adaptive clap detection**: When muted, listens for double-clap pattern to wake up
 - **Text-based wake commands**: Responds to "wake", "awaken", "wake up" in text_input messages
-- **Background noise adaptation**: Clap threshold automatically adjusts to environment noise level
 
 ### voice_chunk_recorder
 A node that subscribes to enhanced voice chunks and writes them to WAV files with utterance-aware naming.

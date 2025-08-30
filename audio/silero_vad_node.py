@@ -30,171 +30,7 @@ def get_timestamp():
     now = datetime.now()
     return now.strftime("%H:%M:%S.%f")[:-3]
 
-class AdaptiveClapDetector:
-    """
-    Adaptive clap detection that monitors background noise levels
-    and detects sharp spikes that indicate clapping
-    """
-    def __init__(self, sample_rate=16000):
-        self.sample_rate = sample_rate
-        
-        # Background noise tracking
-        self.background_rms = 0.01  # Initialize with small non-zero value
-        self.background_update_rate = 0.02  # Exponential moving average rate (slower to prevent over-adaptation)
-        
-        # Clap detection parameters (more selective to avoid false positives)
-        self.spike_threshold_ratio = 8.0  # Spike must be 8x background (increased from 4.0)
-        self.min_clap_duration_ms = 50
-        self.max_clap_duration_ms = 200
-        self.min_gap_ms = 300
-        self.max_gap_ms = 800
-        
-        # State tracking
-        self.first_clap_time = None
-        self.in_potential_clap = False
-        self.clap_start_time = None
-        
-        # Recent audio buffer for analysis
-        self.audio_buffer = deque(maxlen=int(sample_rate * 1.0))  # 1 second buffer
-        
-    def update_background_noise(self, audio_chunk):
-        """Update background noise level using exponential moving average"""
-        # Calculate RMS of current chunk (normalize int16 to float)
-        audio_float = audio_chunk.astype(np.float32) / 32768.0  # Normalize int16 to [-1, 1]
-        current_rms = np.sqrt(np.mean(audio_float**2))
-        
-        # Prevent clap corruption: only adapt to quieter sounds
-        if current_rms <= self.background_rms * 1.5 or self.background_rms < 0.0005:
-            # Update background level (slow adaptation) - only for quiet/similar sounds
-            self.background_rms = (1 - self.background_update_rate) * self.background_rms + \
-                                  self.background_update_rate * current_rms
-        # If current sound is much louder, it's likely a clap - don't contaminate background
-        
-        # Ensure background doesn't go too low (prevent false triggers from silence)
-        self.background_rms = max(self.background_rms, 0.001)  # Higher floor to prevent speech false positives
-    
-    def is_sharp_transient(self, audio_chunk):
-        """Check if chunk contains a sharp transient (like a clap)"""
-        if len(audio_chunk) < 10:
-            return False
-            
-        # Convert to float for calculations (normalize int16 to [-1, 1])
-        audio_float = audio_chunk.astype(np.float32) / 32768.0
-        
-        # Calculate RMS energy
-        rms = np.sqrt(np.mean(audio_float**2))
-        
-        # Check if significantly above background
-        threshold = self.background_rms * self.spike_threshold_ratio
-        if rms < threshold:
-            return False
-        
-        # Log potential clap detection for debugging
-        print(f"[CLAP DEBUG] Potential clap: rms={rms:.6f}, bg={self.background_rms:.6f}, "
-              f"threshold={threshold:.6f}, ratio={rms/self.background_rms:.1f}x")
-        
-        # Check for sharp attack (rapid onset) - more selective
-        # Look for sudden energy spike at beginning of chunk
-        quarter = len(audio_float) // 4
-        if quarter > 0:
-            start_rms = np.sqrt(np.mean(audio_float[:quarter]**2))
-            end_rms = np.sqrt(np.mean(audio_float[-quarter:]**2))
-            
-            # For a clap, we want sharp attack (high start) and decay (lower end)
-            # Also check the peak is significantly higher than both ends
-            peak_rms = np.max(np.abs(audio_float))
-            
-            # More stringent criteria for clap detection
-            sharp_attack = start_rms > end_rms * 1.8  # Attack much higher than decay (increased selectivity)
-            high_peak = peak_rms > rms * 2.5  # Peak significantly higher than average (increased selectivity)
-            transient_ratio = rms / self.background_rms > 15.0  # Must be MUCH louder than background
-            
-            # Additional check: claps have very short duration and high frequency content
-            # Check zero-crossing rate for high frequency content
-            zero_crossings = np.sum(np.diff(np.sign(audio_float)) != 0)
-            zc_rate = zero_crossings / len(audio_float)
-            high_frequency = zc_rate > 0.2  # Claps have high frequency content
-            
-            if sharp_attack and high_peak and transient_ratio and high_frequency:
-                print(f"[CLAP DEBUG] Sharp transient confirmed: attack={start_rms:.4f}, decay={end_rms:.4f}, peak={peak_rms:.4f}, zc_rate={zc_rate:.3f}")
-                return True
-        
-        return False
-    
-    def process_audio_chunk(self, audio_chunk):
-        """
-        Process audio chunk and return True if double clap detected
-        
-        Args:
-            audio_chunk: numpy array of int16 audio samples
-            
-        Returns:
-            bool: True if double clap pattern detected
-        """
-        current_time = time.time()
-        
-        # Add to buffer for analysis
-        self.audio_buffer.extend(audio_chunk)
-        
-        # Update background noise level
-        self.update_background_noise(audio_chunk)
-        
-        # Check for sharp transient
-        if self.is_sharp_transient(audio_chunk):
-            if self.first_clap_time is None:
-                # First potential clap
-                self.first_clap_time = current_time
-                self.clap_start_time = current_time
-                self.in_potential_clap = True
-                print(f"[CLAP DEBUG] First clap detected, waiting for second...")
-                return False
-            else:
-                # Check timing for second clap
-                gap_ms = (current_time - self.first_clap_time) * 1000
-                
-                # Ignore if we're still within the same clap event (too soon)
-                if gap_ms < self.min_gap_ms:
-                    print(f"[CLAP DEBUG] Still in first clap (gap={gap_ms:.0f}ms < {self.min_gap_ms}ms), ignoring")
-                    return False
-                
-                print(f"[CLAP DEBUG] Second clap candidate, gap={gap_ms:.0f}ms (need {self.min_gap_ms}-{self.max_gap_ms}ms)")
-                
-                if gap_ms <= self.max_gap_ms:
-                    # Valid double clap detected!
-                    print(f"[CLAP DEBUG] ✅ DOUBLE CLAP DETECTED! Gap={gap_ms:.0f}ms")
-                    self.first_clap_time = None
-                    self.in_potential_clap = False
-                    return True
-                else:
-                    # Gap too long, reset and treat as new first clap
-                    print(f"[CLAP DEBUG] Gap too long ({gap_ms:.0f}ms), treating as new first clap")
-                    self.first_clap_time = current_time
-                    self.clap_start_time = current_time
-                    self.in_potential_clap = True
-                    return False
-        
-        # Check for timeouts
-        if self.first_clap_time and (current_time - self.first_clap_time) * 1000 > self.max_gap_ms:
-            # Reset if too much time has passed
-            self.first_clap_time = None
-            self.in_potential_clap = False
-        
-        return False
-    
-    def get_debug_info(self):
-        """Get current state for debugging"""
-        return {
-            'background_rms': self.background_rms,
-            'spike_threshold': self.background_rms * self.spike_threshold_ratio,
-            'waiting_for_second_clap': self.first_clap_time is not None
-        }
-    
-    def reset_state(self):
-        """Reset clap detection state for fresh detection cycle"""
-        self.first_clap_time = None
-        self.in_potential_clap = False
-        self.clap_start_time = None
-        # Don't reset background_rms as it should adapt continuously
+# Clap detector removed - now using dedicated clap_detector_node
 
 class SileroVADNode(Node):
     def __init__(self):
@@ -210,11 +46,6 @@ class SileroVADNode(Node):
         self.declare_parameter('threshold', DEFAULT_THRESHOLD)
         self.declare_parameter('min_silence_duration_ms', DEFAULT_MIN_SILENCE_DURATION_MS)
         
-        # Clap detection parameters
-        self.declare_parameter('clap_detection_enabled', True)
-        self.declare_parameter('clap_spike_ratio', 4.0)
-        self.declare_parameter('clap_min_gap_ms', 300)
-        self.declare_parameter('clap_max_gap_ms', 800)
         # Fetch parameter values
         self.sample_rate = self.get_parameter('sample_rate').get_parameter_value().integer_value
         self.max_buffer_frames = self.get_parameter('max_buffer_frames').get_parameter_value().integer_value
@@ -222,12 +53,6 @@ class SileroVADNode(Node):
         self.utterance_chunk_frames = self.get_parameter('utterance_chunk_frames').get_parameter_value().integer_value
         self.threshold = self.get_parameter('threshold').get_parameter_value().double_value
         self.min_silence_duration_ms = self.get_parameter('min_silence_duration_ms').get_parameter_value().integer_value
-        
-        # Clap detection parameters
-        self.clap_detection_enabled = self.get_parameter('clap_detection_enabled').get_parameter_value().bool_value
-        clap_spike_ratio = self.get_parameter('clap_spike_ratio').get_parameter_value().double_value
-        clap_min_gap_ms = self.get_parameter('clap_min_gap_ms').get_parameter_value().integer_value
-        clap_max_gap_ms = self.get_parameter('clap_max_gap_ms').get_parameter_value().integer_value
         # QoS and topics
         qos = QoSProfile(
             history=QoSHistoryPolicy.KEEP_LAST,
@@ -238,14 +63,11 @@ class SileroVADNode(Node):
         self.voice_pub = self.create_publisher(Bool, 'voice_activity', qos_profile=qos)
         self.chunk_pub = self.create_publisher(AudioDataUtterance, 'voice_chunks', qos_profile=qos)
         
-        # Subscribe to voice_active topic for remote mute/unmute control
-        self.create_subscription(Bool, 'voice_active', self.voice_active_callback, qos_profile=qos)
+        # Subscribe to wake_cmd topic for remote sleep/wake control
+        self.create_subscription(Bool, 'wake_cmd', self.wake_cmd_callback, qos_profile=qos)
         
-        # Subscribe to text_input topic for text-based wake commands
+        # Subscribe to text_input topic for text-based wake commands (backup mechanism)
         self.create_subscription(String, 'text_input', self.text_input_callback, qos_profile=qos)
-        
-        # Publisher for voice_active (for clap detection wake-up)
-        self.voice_active_pub = self.create_publisher(Bool, 'voice_active', qos_profile=qos)
         # Load and instantiate VADIterator with tuning
         self.model = load_silero_vad()
         self.vad_iterator = VADIterator(
@@ -275,22 +97,8 @@ class SileroVADNode(Node):
         self.vad_sample_buffer = np.array([], dtype=np.float32)
         self.log_info("Silero VAD requires exactly 512 samples at 16kHz")
         
-        # Voice active state for remote mute/unmute control (default active)
-        self.is_voice_active = True
-        self.self_triggered_wake = False  # Flag to prevent feedback loops
-        self.clap_debug_counter = 0  # For periodic debug logging
-        
-        # Initialize clap detector if enabled
-        if self.clap_detection_enabled:
-            self.clap_detector = AdaptiveClapDetector(sample_rate=self.sample_rate)
-            # Configure clap detector with parameters
-            self.clap_detector.spike_threshold_ratio = clap_spike_ratio
-            self.clap_detector.min_gap_ms = clap_min_gap_ms
-            self.clap_detector.max_gap_ms = clap_max_gap_ms
-            self.log_info(f"Clap detection enabled (spike ratio: {clap_spike_ratio}x, gap: {clap_min_gap_ms}-{clap_max_gap_ms}ms)")
-        else:
-            self.clap_detector = None
-            self.log_info("Clap detection disabled")
+        # Sleep/wake state for controlling whether VAD is active (default awake)
+        self.is_awake = True
         
     def log_info(self, msg):
         """Log with custom format"""
@@ -309,54 +117,51 @@ class SileroVADNode(Node):
         """Error log with custom format"""
         self.get_logger().error(f"[{get_timestamp()}] [vad] ERROR: {msg}")
 
-    def voice_active_callback(self, msg: Bool):
-        """Handle voice_active topic for remote mute/unmute control"""
-        # Check if this is our own self-triggered wake message
-        if self.self_triggered_wake and msg.data:
-            self.log_debug("Ignoring self-triggered wake message")
-            self.self_triggered_wake = False
-            return
-            
-        previous_state = self.is_voice_active
-        self.is_voice_active = msg.data
+    def wake_cmd_callback(self, msg: Bool):
+        """Handle wake_cmd topic for remote sleep/wake control"""
+        previous_state = self.is_awake
+        self.is_awake = msg.data
         
-        if previous_state != self.is_voice_active:
-            state_str = "ACTIVE" if self.is_voice_active else "MUTED"
-            self.log_info(f"Voice state changed to: {state_str} (external command)")
-            
-            # Reset clap detector when transitioning to muted state
-            if not self.is_voice_active and self.clap_detector:
-                self.log_info("Resetting clap detector for fresh detection cycle")
-                self.clap_detector.reset_state()
+        if previous_state != self.is_awake:
+            state_str = "AWAKE" if self.is_awake else "SLEEPING"
+            self.log_info(f"⚠️ Sleep/wake state changed to: {state_str} (external command)")
+        else:
+            # Log redundant state changes for debugging
+            self.log_debug(f"Received wake_cmd={msg.data} but already in that state")
 
     def text_input_callback(self, msg: String):
-        """Handle text_input messages for text-based wake commands"""
+        """Handle text_input messages for text-based sleep/wake commands (backup mechanism)"""
         text_content = msg.data.lower().strip()
         
         # Check for wake commands
         wake_commands = ['wake', 'awaken', 'wake up', 'wakeup']
+        sleep_commands = ['sleep', 'go to sleep', 'sleeptime']
         
         if any(wake_cmd in text_content for wake_cmd in wake_commands):
-            if not self.is_voice_active:
+            if not self.is_awake:
                 self.log_info(f"📝 Text wake command received: '{msg.data}' - waking up")
-                self.is_voice_active = True
-                
-                # Publish wake signal to voice_active topic
-                wake_msg = Bool()
-                wake_msg.data = True
-                self.voice_active_pub.publish(wake_msg)
-                self.log_info("Published wake signal via text command")
-                
-                # Reset clap detector since we're now active
-                if self.clap_detector:
-                    self.clap_detector.reset_state()
+                self.is_awake = True
             else:
-                self.log_info(f"📝 Text wake command received but already active: '{msg.data}'")
+                self.log_info(f"📝 Text wake command received but already awake: '{msg.data}'")
+        elif any(sleep_cmd in text_content for sleep_cmd in sleep_commands):
+            if self.is_awake:
+                self.log_info(f"📝 Text sleep command received: '{msg.data}' - going to sleep")
+                self.is_awake = False
+            else:
+                self.log_info(f"📝 Text sleep command received but already sleeping: '{msg.data}'")
         else:
             # Log other text input but don't act on it
-            self.log_debug(f"📝 Text input received (no wake command): '{msg.data}'")
+            self.log_debug(f"📝 Text input received (no sleep/wake command): '{msg.data}'")
 
     def audio_callback(self, msg: AudioStamped):
+        # Debug: Track audio callback frequency
+        if not hasattr(self, '_audio_callback_count'):
+            self._audio_callback_count = 0
+        self._audio_callback_count += 1
+        
+        if self._audio_callback_count % 100 == 0:  # Every 100 callbacks
+            print(f"[AUDIO DEBUG] Received {self._audio_callback_count} audio callbacks, is_awake={self.is_awake}")
+        
         # Convert incoming AudioStamped to numpy int16
         audio_list = msg.audio.audio_data.int16_data
         
@@ -365,42 +170,10 @@ class SileroVADNode(Node):
             self.log_warning("Received empty audio chunk, skipping")
             return
         
-        # Check if voice is active (mute/unmute control)
-        if not self.is_voice_active:
-            # When muted, check for clap detection to wake up
-            if self.clap_detector and self.clap_detection_enabled:
-                audio_int16 = np.array(audio_list, dtype=np.int16)
-                
-                # Periodic debug logging for clap detection state
-                self.clap_debug_counter += 1
-                if self.clap_debug_counter % 50 == 0:  # Every 50 audio chunks (~3.2 seconds)
-                    debug_info = self.clap_detector.get_debug_info()
-                    self.log_info(f"👂 Clap detector: bg_rms={debug_info['background_rms']:.6f}, "
-                                 f"threshold={debug_info['spike_threshold']:.6f}, "
-                                 f"waiting={debug_info['waiting_for_second_clap']}")
-                
-                # Check for double clap pattern
-                if self.clap_detector.process_audio_chunk(audio_int16):
-                    self.log_info("👏👏 Double clap detected! Waking up...")
-                    # Log clap detector debug info
-                    debug_info = self.clap_detector.get_debug_info()
-                    self.log_info(f"Clap detection state: {debug_info}")
-                    
-                    self.is_voice_active = True
-                    # Set flag to prevent feedback loop
-                    self.self_triggered_wake = True
-                    # Publish wake signal
-                    wake_msg = Bool()
-                    wake_msg.data = True
-                    self.voice_active_pub.publish(wake_msg)
-                    self.log_info("Published wake signal to voice_active topic")
-                    # Continue processing this chunk since we just woke up
-                else:
-                    # Still muted, dump audio without processing
-                    return
-            else:
-                # No clap detection, just dump audio
-                return
+        # Check if node is awake (sleep/wake state)
+        if not self.is_awake:
+            # When sleeping, do not process audio
+            return
         
         # Log chunk size to debug Silero requirements
         if not hasattr(self, '_chunk_count'):

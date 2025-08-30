@@ -59,10 +59,10 @@ class CommandProcessor(Node):
             10
         )
         
-        # Publisher for voice_active control (sleep command)
-        self.voice_active_pub = self.create_publisher(
+        # Publisher for wake_cmd control (sleep/wake commands)
+        self.wake_cmd_pub = self.create_publisher(
             Bool,
-            'voice_active',  # Relative topic name for namespacing
+            'wake_cmd',  # Relative topic name for namespacing
             10
         )
         
@@ -186,13 +186,19 @@ class CommandProcessor(Node):
     
     def handle_behavior_command(self, command: str, modifier: Optional[str]):
         """Publish behavior commands."""
-        # Handle special sleep command for voice control
+        # Handle special sleep/wake commands for VAD control
         if command == 'sleep':
-            # Send voice_active false to mute VAD
-            voice_msg = Bool()
-            voice_msg.data = False
-            self.voice_active_pub.publish(voice_msg)
-            self.get_logger().info("Sleep command - muting voice detection")
+            # Send wake_cmd false to put VAD to sleep
+            wake_msg = Bool()
+            wake_msg.data = False
+            self.wake_cmd_pub.publish(wake_msg)
+            self.get_logger().info("Sleep command - putting voice detection to sleep")
+        elif command == 'wake':
+            # Send wake_cmd true to wake up VAD
+            wake_msg = Bool()
+            wake_msg.data = True
+            self.wake_cmd_pub.publish(wake_msg)
+            self.get_logger().info("Wake command - waking up voice detection")
         
         # Also publish the behavior command normally for other systems
         if modifier:

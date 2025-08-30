@@ -83,6 +83,12 @@ install(PROGRAMS
 )
 
 install(PROGRAMS
+  audio/clap_detector_node.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME clap_detector_node
+)
+
+install(PROGRAMS
   nodes/command_processor.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME command_processor
@@ -98,6 +104,60 @@ install(PROGRAMS
   tests/publish_command.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME publish_command
+)
+
+install(PROGRAMS
+  tests/test_external_clap.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME test_external_clap
+)
+
+install(PROGRAMS
+  tests/test_external_clap_tuned.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME test_external_clap_tuned
+)
+
+install(PROGRAMS
+  tests/test_clap_frequency_analysis.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME test_clap_frequency_analysis
+)
+
+install(PROGRAMS
+  tests/test_simple_energy_clap.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME test_simple_energy_clap
+)
+
+install(PROGRAMS
+  tests/test_sliding_window_clap.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME test_sliding_window_clap
+)
+
+install(PROGRAMS
+  tests/test_spectral_clap.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME test_spectral_clap
+)
+
+install(PROGRAMS
+  tests/test_transient_clap.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME test_transient_clap
+)
+
+install(PROGRAMS
+  tests/audio_recorder.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME audio_recorder
+)
+
+install(PROGRAMS
+  tests/test_data_driven_clap.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME test_data_driven_clap
 )
 
 # Install configuration, launch files, and other resources

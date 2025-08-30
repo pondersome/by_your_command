@@ -121,7 +121,19 @@ def generate_launch_description():
         }]
     )
     
-    
+    # Clap detector node for wake-up detection
+    clap_detector = Node(
+        package='by_your_command',
+        executable='clap_detector_node',
+        name='clap_detector_node',
+        output='screen',
+        parameters=[{
+            'audio_topic': 'audio',
+            'wake_cmd_topic': 'wake_cmd',
+            'enabled': True
+        }]
+    )
+
     # Silero VAD node for speech detection
     silero_vad = Node(
         package='by_your_command',
@@ -256,6 +268,7 @@ def generate_launch_description():
         PushRosNamespace(LaunchConfiguration('prefix')),
         audio_capturer,
         audio_player,
+        clap_detector,
         silero_vad,
         ros_ai_bridge,
         command_processor,

@@ -3,11 +3,10 @@
 Gemini Dual Agent Launch File
 
 Runs both conversational and command extraction agents simultaneously:
-- Conversational agent: Natural dialogue with multimodal understanding
-- Command agent: Dedicated robot command extraction
+- Conversational agent: Natural dialogue with vision-based descriptions
+- Command agent: Movement commands and JSON scene extraction
 
-Both agents process the same voice input but with different purposes.
-Based on the OpenAI dual agent architecture.
+Both agents process the same voice and camera input with different outputs.
 
 Author: Karim Virani
 Version: 1.0
@@ -29,7 +28,7 @@ def generate_launch_description():
     
     # Configuration paths
     bridge_config = os.path.join(pkg_dir, 'config', 'bridge_dual_agent.yaml')  # Shared bridge config
-    conv_agent_config = os.path.join(pkg_dir, 'config', 'gemini_conversation_agent.yaml')
+    conv_agent_config = os.path.join(pkg_dir, 'config', 'gemini_conversational_agent.yaml')
     cmd_agent_config = os.path.join(pkg_dir, 'config', 'gemini_command_agent.yaml')
     
     # Namespace and prefix arguments
@@ -53,26 +52,26 @@ def generate_launch_description():
     
     pause_timeout_arg = DeclareLaunchArgument(
         'pause_timeout',
-        default_value='10.0',
+        default_value='30.0',
         description='Session pause timeout in seconds'
     )
     
     conv_model_arg = DeclareLaunchArgument(
         'conv_model',
-        default_value='models/gemini-2.0-flash-exp',
+        default_value='models/gemini-live-2.5-flash-preview',
         description='Gemini model for conversation'
     )
     
     cmd_model_arg = DeclareLaunchArgument(
         'cmd_model',
-        default_value='models/gemini-2.0-flash-exp',
+        default_value='models/gemini-live-2.5-flash-preview',
         description='Gemini model for command extraction'
     )
     
     voice_arg = DeclareLaunchArgument(
         'voice',
         default_value='Kore',
-        description='Gemini voice ID'
+        description='Gemini voice (Aoede, Charon, Fenrir, Kore, Puck)'
     )
     
     video_fps_arg = DeclareLaunchArgument(
@@ -126,7 +125,18 @@ def generate_launch_description():
             'device': -1    # Default output device
         }]
     )
-    
+    # Clap detector node for wake-up detection
+    clap_detector = Node(
+        package='by_your_command',
+        executable='clap_detector_node',
+        name='clap_detector_node',
+        output='screen',
+        parameters=[{
+            'audio_topic': 'audio',
+            'wake_cmd_topic': 'wake_cmd',
+            'enabled': True
+        }]
+    )
     
     # Silero VAD node for speech detection
     silero_vad = Node(
@@ -183,7 +193,7 @@ def generate_launch_description():
             '/home/karim/ros2_ws/install/by_your_command/lib/by_your_command/gemini_live_agent',
             '--config', cmd_agent_config,
             '--pause-timeout', LaunchConfiguration('pause_timeout'),
-            '--prompt-id', 'barney_command_extractor_gemini'
+            '--prompt-id', 'barney_command_visual'
         ],
         output='screen',
         additional_env={
@@ -240,19 +250,23 @@ def generate_launch_description():
     
     # Command transcript monitor (optional debug tool)
     command_monitor = LogInfo(
-        msg=['Command processor will route commands from /command_transcript to robot subsystems']
+        msg=['Command extractor will publish movement commands and visual JSON to /command_transcript']
     )
     
     # Startup message
     startup_message = LogInfo(
         msg=[
             '🚀 Starting Gemini Dual Agent System\n',
-            '🤖 Conversation Agent: ', LaunchConfiguration('conv_model'), '\n',
-            '🎯 Command Agent: ', LaunchConfiguration('cmd_model'), '\n',
-            '🎙️  Audio: 16kHz input, 24kHz output\n',
-            '📷 Vision: ', LaunchConfiguration('video_fps'), ' fps\n',
-            '⏱️  Timeout: ', LaunchConfiguration('pause_timeout'), 's\n',
-            '🔊 Listening for multimodal input...'
+            '🗣️  Conversational Agent:\n',
+            '    Model: ', LaunchConfiguration('conv_model'), '\n',
+            '    Voice: ', LaunchConfiguration('voice'), '\n',
+            '    Vision: Enabled\n',
+            '🤖 Command Extraction Agent:\n',
+            '    Model: ', LaunchConfiguration('cmd_model'), '\n',
+            '    Vision: Enabled\n',
+            '    Output: Movement commands + JSON scene descriptions\n',
+            '⏱️  Pause timeout: ', LaunchConfiguration('pause_timeout'), 's\n',
+            '📷 Both agents processing voice and camera input...'
         ]
     )
     
@@ -262,6 +276,7 @@ def generate_launch_description():
         PushRosNamespace(LaunchConfiguration('prefix')),
         audio_capturer,
         audio_player,
+        clap_detector,
         silero_vad,
         ros_ai_bridge,
         command_processor,
