@@ -1,0 +1,68 @@
+digraph SystemIntegrationOverview {
+    rankdir=LR;
+    compound=true;
+    fontname="Arial";
+    node [shape=box, style="rounded,filled", fontname="Arial"];
+    edge [fontname="Arial", fontsize=10];
+    
+    // Launch Configuration
+    subgraph cluster_launch {
+        label="Launch Configuration";
+        style=filled;
+        fillcolor="#e3f2fd";
+        
+        L1 [label="oai_dual_agent.launch.py", fillcolor="#00bcd4", fontcolor="white"];
+        L2 [label="gemini_dual_agent.launch.py", fillcolor="#ff5722", fontcolor="white"];
+    }
+    
+    // Configuration Files
+    subgraph cluster_config {
+        label="Configuration Files";
+        style=filled;
+        fillcolor="#fff9c4";
+        
+        C1 [label="prompts.yaml\nMacro definitions", fillcolor="#ff9800", fontcolor="black"];
+        C2 [label="bridge_dual_agent.yaml\nTopic mappings", fillcolor="#ffa726", fontcolor="black"];
+        C3 [label="agent configs\nModel settings", fillcolor="#ffb74d", fontcolor="black"];
+    }
+    
+    // Shared Components
+    subgraph cluster_shared {
+        label="Shared Components";
+        style=filled;
+        fillcolor="#f3e5f5";
+        
+        S1 [label="PromptLoader\nMacro expansion", fillcolor="#9c27b0", fontcolor="white"];
+        S2 [label="WebSocketBridge\nCommunication", fillcolor="#ab47bc", fontcolor="white"];
+        S3 [label="ConversationMonitor\nContext tracking", fillcolor="#ba68c8", fontcolor="white"];
+    }
+    
+    // Active Agents
+    subgraph cluster_agents {
+        label="Active Agents";
+        style=filled;
+        fillcolor="#e8f5e9";
+        
+        A1 [label="Conversational Agent", fillcolor="#2196f3", fontcolor="white"];
+        A2 [label="Command Agent", fillcolor="#4caf50", fontcolor="white"];
+    }
+    
+    // Connections
+    L1 -> C1;
+    L1 -> C2;
+    L1 -> C3;
+    L2 -> C1;
+    L2 -> C2;
+    L2 -> C3;
+    
+    C1 -> S1;
+    S1 -> A1;
+    S1 -> A2;
+    
+    C2 -> S2;
+    S2 -> A1;
+    S2 -> A2;
+    
+    S3 -> A1;
+    S3 -> A2;
+}

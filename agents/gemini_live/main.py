@@ -150,6 +150,8 @@ async def main():
                        help='Enable proactive audio (model decides when to speak)')
     parser.add_argument('--pause-timeout', type=float, default=None,
                        help='Session pause timeout in seconds')
+    parser.add_argument('--prompt-id', type=str, 
+                       help='Named prompt ID from prompts.yaml (overrides config file)')
     args = parser.parse_args()
     
     # Load configuration
@@ -161,6 +163,10 @@ async def main():
     if args.pause_timeout is not None:
         config['session_pause_timeout'] = args.pause_timeout
         print(f"⏱️ Pause timeout OVERRIDE from CLI: {args.pause_timeout}s")
+    
+    if args.prompt_id:
+        config['prompt_id'] = args.prompt_id
+        print(f"📝 Prompt ID OVERRIDE from CLI: {args.prompt_id}")
     
     print(f"⏱️ Final pause timeout: {config.get('session_pause_timeout')}s")
     

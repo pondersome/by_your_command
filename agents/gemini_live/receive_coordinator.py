@@ -251,13 +251,19 @@ class ReceiveCoordinator:
         """Handle audio response from Gemini"""
         self.metrics['audio_responses'] += 1
         
+        # Check if audio output is configured (not empty)
+        audio_topic = self.published_topics.get('audio_out', '')
+        if not audio_topic:
+            self.logger.debug("🔇 Audio output disabled - skipping audio response")
+            return
+        
         # Convert PCM bytes to int16 array for ROS
         audio_array = np.frombuffer(audio_data, dtype=np.int16)
         
         # Publish to bridge
         if self.bridge:
             await self.bridge.put_outbound_message(
-                topic=self.published_topics['audio_out'],
+                topic=audio_topic,
                 msg_data={'int16_data': audio_array.tolist()},
                 msg_type='audio_common_msgs/AudioData'
             )

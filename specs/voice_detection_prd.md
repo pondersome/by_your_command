@@ -3,8 +3,8 @@
 **Author**: Karim Virani  
 **Package**: by_your_command  
 **Subsystem**: voice_detection  
-**Version**: 2.1  
-**Last Updated**: July 2025
+**Version**: 2.2  
+**Last Updated**: August 2025
 
 ## Overview
 
@@ -70,6 +70,57 @@ Audio Input → [silero_vad_node] → Voice Chunks → [downstream processors]
 - Automatic file closing on end-of-utterance detection
 - Chunk sequence tracking for debugging
 - Quality validation through playback testing
+
+### Wake-Up Mechanisms
+
+The voice detection system includes multiple wake-up mechanisms for reactivating the VAD when muted, providing flexible control options for different interaction scenarios.
+
+#### 1. Adaptive Clap Detection
+**Purpose**: Enable hands-free wake-up through acoustic pattern recognition
+
+**Architecture**:
+- **AdaptiveClapDetector Class**: Continuously monitors background noise and detects sharp acoustic transients
+- **Double-Clap Pattern**: Requires two distinct claps within a timing window to prevent false positives
+- **Adaptive Thresholding**: Dynamically adjusts to ambient noise levels for consistent detection across environments
+
+**Key Design Decisions**:
+- **Background RMS Tracking**: Uses exponential moving average (α=0.02) for gradual adaptation
+- **Contamination Prevention**: Excludes loud sounds (>2x background) from background calculation to prevent clap sounds from raising threshold
+- **Multi-Stage Validation**: Combines configurable spike ratio with hardcoded transient characteristics
+- **State Machine**: Tracks first clap timing and validates second clap within acceptable gap window
+
+**Detection Algorithm**:
+1. Monitor audio RMS against adaptive background threshold
+2. Initial spike detection when RMS exceeds `background_rms * spike_ratio` (configurable)
+3. Validate transient characteristics (ALL must pass):
+   - **Attack/Decay Ratio**: Start RMS > End RMS × 1.8 (sharp attack) - hardcoded
+   - **Peak Detection**: Peak > Average RMS × 2.5 (impulsive spike) - hardcoded
+   - **Frequency Content**: Zero-crossing rate > 0.2 (high frequency) - hardcoded
+4. Track timing between claps for double-clap pattern recognition
+5. Reset state if gap exceeds maximum threshold
+
+**Fixed (v2.2)**: Previously, a hardcoded loudness check (15x background) invalidated the configurable `clap_spike_ratio`. This has been removed, making the parameter actually effective for tuning sensitivity.
+
+#### 2. Text-Based Wake Commands
+**Purpose**: Provide programmatic wake-up via text messages
+
+**Supported Commands**:
+- "wake", "awaken", "wake up", "wakeup" (case-insensitive, partial matching)
+- Publishes to `/voice_active` topic for system-wide activation
+- Includes feedback loop prevention with `self_triggered_wake` flag
+
+**Use Cases**:
+- Remote wake-up via network messages
+- Integration with other system components
+- Fallback when acoustic wake-up is unavailable
+
+#### 3. Voice Active Control
+**Purpose**: Direct mute/unmute control via ROS topic
+
+**Interface**:
+- Subscribe to `/voice_active` (Bool) for external control
+- Publish to `/voice_active` (Bool) for wake events
+- Bidirectional control enables system-wide coordination
 
 ## Technical Architecture
 
@@ -148,6 +199,87 @@ silero_vad_node:
                                           # 10 frames = ~0.32s streaming chunks
 ```
 
+### Clap Detection Parameters
+```yaml
+    clap_detection_enabled: true          # Enable adaptive clap detection
+    clap_spike_ratio: 4.0                 # Clap must be Nx louder than background
+    clap_min_gap_ms: 300                  # Minimum gap between claps (ms)
+    clap_max_gap_ms: 800                  # Maximum gap between claps (ms)
+```
+
+## Environment Tuning Guide
+
+### Clap Detection Tuning
+
+The clap detection system uses adaptive thresholding to work across different environments, but fine-tuning can improve reliability:
+
+#### Room Acoustics Considerations
+
+**Quiet Environments (Office/Bedroom)**:
+- Lower `clap_spike_ratio` to 3.0-3.5 for more sensitive detection
+- Tighter gap window: `min_gap_ms: 250`, `max_gap_ms: 700`
+- Background adapts quickly to minimal ambient noise
+
+**Noisy Environments (Kitchen/Living Room)**:
+- Higher `clap_spike_ratio` to 4.5-5.0 to reduce false positives
+- Standard gap window: `min_gap_ms: 300`, `max_gap_ms: 800`
+- Background adaptation filters out consistent noise (fans, appliances)
+
+**Large/Echoey Rooms**:
+- Keep standard `clap_spike_ratio` (4.0)
+- Wider gap window: `min_gap_ms: 350`, `max_gap_ms: 1000`
+- Accounts for echo delay between claps
+
+**Small/Dampened Rooms**:
+- Standard `clap_spike_ratio` (4.0)
+- Tighter gap window: `min_gap_ms: 200`, `max_gap_ms: 600`
+- Quick response due to minimal acoustic delay
+
+#### Common Issues and Solutions
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Missing first clap | Spike threshold too high | Decrease `clap_spike_ratio` by 0.5 |
+| False positives from speech | Ratio too low | Increase `clap_spike_ratio` by 0.5 |
+| Second clap not detected | Gap timing too restrictive | Increase `max_gap_ms` by 100-200 |
+| Random noise triggers | Background contamination | Ensure robot is stationary during calibration |
+| Location-dependent sensitivity | Different acoustic zones | Create per-location config profiles |
+| Claps still missed after tuning | Hardcoded thresholds too strict | See limitations below |
+
+#### Current Limitations
+
+The clap detection system has several **hardcoded thresholds** that cannot be tuned via configuration:
+- **Attack/Decay ratio (1.8x)** - may be too strict for soft claps
+- **Peak-to-average ratio (2.5x)** - may miss claps with less pronounced peaks  
+- **Zero-crossing rate (>0.2)** - may exclude lower-frequency claps
+
+~~**Fixed in v2.2**: Previously, a hardcoded 15x loudness threshold invalidated the configurable parameter. This has been removed.~~
+
+**Impact**: These remaining hardcoded values may still cause detection issues in certain scenarios. Consider exposing them as parameters if problems persist after tuning `clap_spike_ratio`.
+
+#### Calibration Procedure
+
+1. **Initial Setup**: Place robot in typical operating position
+2. **Background Calibration**: Allow 5-10 seconds of ambient noise monitoring
+3. **Test Claps**: Perform test claps from various distances (1m, 2m, 3m)
+4. **Adjust Sensitivity**: 
+   - If claps missed at desired range: decrease `clap_spike_ratio`
+   - If false triggers occur: increase `clap_spike_ratio`
+5. **Validate Timing**: Test natural clapping rhythm and adjust gap parameters
+6. **Environment Testing**: Test with typical background noise (TV, conversation)
+
+### VAD Tuning
+
+**Speech Detection Sensitivity**:
+- Lower `threshold` (0.3-0.4): More sensitive, may pick up breathing
+- Standard `threshold` (0.5): Balanced for normal conversation
+- Higher `threshold` (0.6-0.7): Less sensitive, requires louder speech
+
+**Utterance Boundaries**:
+- Short `min_silence_duration_ms` (150-200): Quick response, may fragment sentences
+- Standard `min_silence_duration_ms` (250): Natural sentence boundaries
+- Long `min_silence_duration_ms` (300-500): Groups multiple sentences together
+
 ## Quality Assurance
 
 ### Testing Strategy
@@ -183,6 +315,16 @@ silero_vad_node:
 - **audio_common**: AudioStamped message input from audio_capturer_node
 - **silero-vad**: PyPI package for VAD model and iterator
 
+### Subscribed Topics
+- `/audio` (AudioStamped): Raw audio input stream
+- `/voice_active` (Bool): Remote mute/unmute control
+- `/text_input` (String): Text-based wake commands
+
+### Published Topics
+- `/voice_chunks` (AudioDataUtterance): Enhanced voice segments with metadata
+- `/voice_activity` (Bool): Binary voice detection state
+- `/voice_active` (Bool): Wake signals from clap/text detection
+
 ### Downstream Interfaces
 - **ROS AI Bridge**: Voice chunk transport to external agents
 - **Whisper Transcription**: Speech-to-text processing
@@ -211,6 +353,19 @@ QoS:
 
 ## Architecture Lessons Learned
 
+### Major Enhancements (August 2025)
+1. **Adaptive Clap Detection**: Implemented hands-free wake-up mechanism with double-clap pattern recognition
+   - **Architecture**: AdaptiveClapDetector class with background RMS tracking and spike detection
+   - **Key Decision**: Double-clap pattern to prevent false positives from single transients
+   - **Adaptive Design**: Dynamic threshold adjustment based on ambient noise levels
+   - **State Machine**: Tracks timing between claps for pattern validation
+   - **Bug Fix**: Removed hardcoded 15x loudness check that invalidated configurable spike_ratio
+
+2. **Text-Based Wake Commands**: Added programmatic wake-up via text_input topic
+   - **Commands**: "wake", "awaken", "wake up" with case-insensitive partial matching
+   - **Integration**: Publishes to voice_active for system-wide coordination
+   - **Safety**: Self-triggered wake flag prevents feedback loops
+
 ### Major Enhancements (July 2025)
 1. **Utterance Enhancement Implementation**: Added comprehensive utterance tracking with ID stamping, end-detection, and chunk sequencing
    - **Implementation**: One-frame delay boundary detection with timestamp-based unique IDs
@@ -236,6 +391,7 @@ QoS:
 - **Event-Driven Processing**: Avoid timeout-based state management where possible  
 - **Separate Buffer Concerns**: Dedicated buffers for different processing modes
 - **Streaming-First Architecture**: BEST_EFFORT QoS with increased depth for real-time audio
+- **Avoid Redundant Thresholds**: Don't combine configurable and hardcoded thresholds for the same check (antipattern from clap detection)
 
 ## Future Enhancements
 
@@ -250,6 +406,12 @@ QoS:
 2. **Adaptive Thresholding**: Dynamic VAD sensitivity based on environment
 3. **Advanced Chunking**: Semantic boundary detection for chunk breaks
 4. **Performance Optimization**: GPU acceleration for VAD processing
+5. **Configurable Clap Detection Thresholds**: Expose hardcoded parameters
+   - Attack/decay ratio parameter
+   - Peak-to-average ratio parameter
+   - Loudness multiplier parameter
+   - Zero-crossing rate threshold
+   - Background update rate (alpha) parameter
 
 ### Integration Roadmap
 1. **LangSmith Instrumentation**: Observability and performance monitoring
@@ -275,7 +437,7 @@ QoS:
 - Consistent utterance boundary detection for improved transcription accuracy
 - Robust chunk reassembly in downstream processors through sequence metadata
 
-## Implementation Status (v2.1)
+## Implementation Status (v2.2)
 
 ### ✅ Completed Features
 - ✅ Core VAD processing with Silero integration
@@ -286,12 +448,19 @@ QoS:
 - ✅ Utterance-aware voice chunk recorder with automatic file management
 - ✅ Comprehensive test utilities for validation and integration testing
 - ✅ Speech→voice terminology standardization across the codebase
+- ✅ **Adaptive clap detection with double-clap pattern recognition**
+- ✅ **Text-based wake commands via text_input topic**
+- ✅ **Remote mute/unmute control via voice_active topic**
+- ✅ **Background noise adaptation for consistent detection**
 
 ### 📋 Current Architecture
 - **Message Types**: by_your_command/AudioDataUtterance, by_your_command/AudioDataUtteranceStamped
-- **Topics**: /voice_chunks (enhanced metadata), /voice_activity (status)  
-- **Nodes**: silero_vad_node (enhanced), voice_chunk_recorder (utterance-aware)
-- **Test Utilities**: test_utterance_chunks, test_recorder_integration
-- **Documentation**: Complete PRD with utterance enhancement summary
+- **Topics**: 
+  - Input: /audio, /voice_active, /text_input
+  - Output: /voice_chunks, /voice_activity, /voice_active
+- **Nodes**: silero_vad_node (with wake-up mechanisms), voice_chunk_recorder (utterance-aware)
+- **Classes**: AdaptiveClapDetector (background tracking and spike detection)
+- **Test Utilities**: test_utterance_chunks, test_recorder_integration, test_clap_detection
+- **Documentation**: Complete PRD with wake-up mechanisms and environment tuning guide
 
-The voice detection system has successfully evolved from basic audio chunking to a comprehensive utterance tracking system that provides downstream processors with rich metadata for optimal processing and reconstruction.
+The voice detection system now provides comprehensive voice processing with multiple wake-up mechanisms, making it suitable for hands-free robot interaction across diverse environments. The adaptive clap detection and text-based wake commands ensure reliable reactivation when muted, while maintaining the core VAD functionality for high-quality voice extraction.

@@ -19,7 +19,7 @@ from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo, Group
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, EnvironmentVariable, PythonExpression
 from launch_ros.actions import Node, PushRosNamespace
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_share_directory, get_package_prefix
 
 
 def generate_launch_description():
@@ -171,35 +171,32 @@ def generate_launch_description():
     )
     
     # Conversational Gemini Agent
+    pkg_prefix = get_package_prefix('by_your_command')
+    gemini_agent_path = os.path.join(pkg_prefix, 'lib', 'by_your_command', 'gemini_live_agent')
     conversational_agent = ExecuteProcess(
         cmd=[
-            '/home/karim/ros2_ws/install/by_your_command/lib/by_your_command/gemini_live_agent',
+            gemini_agent_path,
             '--config', conv_agent_config,
             '--pause-timeout', LaunchConfiguration('pause_timeout'),
             '--prompt-id', 'barney_conversational_gemini'
         ],
         output='screen',
         additional_env={
-            'GEMINI_API_KEY': LaunchConfiguration('gemini_api_key'),
-            'GEMINI_MODEL': LaunchConfiguration('conv_model'),
-            'PAUSE_TIMEOUT': LaunchConfiguration('pause_timeout'),
-            'VIDEO_FPS': LaunchConfiguration('video_fps')
+            'GEMINI_API_KEY': LaunchConfiguration('gemini_api_key')
         }
     )
     
     # Command Extraction Gemini Agent
     command_agent = ExecuteProcess(
         cmd=[
-            '/home/karim/ros2_ws/install/by_your_command/lib/by_your_command/gemini_live_agent',
+            gemini_agent_path,
             '--config', cmd_agent_config,
             '--pause-timeout', LaunchConfiguration('pause_timeout'),
             '--prompt-id', 'barney_command_visual'
         ],
         output='screen',
         additional_env={
-            'GEMINI_API_KEY': LaunchConfiguration('gemini_api_key'),
-            'GEMINI_MODEL': LaunchConfiguration('cmd_model'),
-            'PAUSE_TIMEOUT': LaunchConfiguration('pause_timeout')
+            'GEMINI_API_KEY': LaunchConfiguration('gemini_api_key')
         }
     )
     

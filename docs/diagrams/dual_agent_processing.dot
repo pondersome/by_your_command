@@ -1,0 +1,106 @@
+digraph DualAgentProcessing {
+    rankdir=TB;
+    compound=true;
+    fontname="Arial";
+    node [shape=box, style="rounded,filled", fontname="Arial"];
+    edge [fontname="Arial", fontsize=10];
+    
+    // Input Sources
+    subgraph cluster_input {
+        label="Input Sources";
+        style=filled;
+        fillcolor="#f5f5f5";
+        
+        A [label="🎤 Microphone", fillcolor="#2196f3", fontcolor="white"];
+        B [label="Audio Capturer", fillcolor="#37474f", fontcolor="white"];
+        C [label="📷 Camera", fillcolor="#2196f3", fontcolor="white"];
+        D [label="Image Compression", fillcolor="#37474f", fontcolor="white"];
+        
+        A -> B;
+        C -> D;
+    }
+    
+    // Processing Pipeline
+    subgraph cluster_processing {
+        label="Processing Pipeline";
+        style=filled;
+        fillcolor="#f5f5f5";
+        
+        E [label="Silero VAD", fillcolor="#37474f", fontcolor="white"];
+        F [label="Voice Chunks", fillcolor="#37474f", fontcolor="white"];
+        G [label="Compressed Images", fillcolor="#37474f", fontcolor="white"];
+        
+        B -> E [ltail=cluster_input];
+        E -> F;
+        D -> G [ltail=cluster_input];
+    }
+    
+    // ROS AI Bridge
+    subgraph cluster_bridge {
+        label="ROS AI Bridge";
+        style=filled;
+        fillcolor="#eeeeee";
+        
+        H [label="WebSocket Server\nPort 8765", fillcolor="#616161", fontcolor="white"];
+        I [label="Text Input", fillcolor="#37474f", fontcolor="white"];
+        
+        I -> H;
+    }
+    
+    F -> H [ltail=cluster_processing];
+    G -> H [ltail=cluster_processing];
+    
+    // Parallel Agent Processing
+    subgraph cluster_agents {
+        label="Parallel Agent Processing";
+        style=filled;
+        fillcolor="#f5f5f5";
+        
+        J [label="Conversational Agent\nbarney_conversational", fillcolor="#00bcd4", fontcolor="white"];
+        K [label="Command Agent\nbarney_command_extractor", fillcolor="#ff5722", fontcolor="white"];
+        
+        L [label="Process for Dialogue", fillcolor="#37474f", fontcolor="white"];
+        M [label="Detect but Don't Execute\nCommands", fillcolor="#37474f", fontcolor="white"];
+        N [label="Extract Commands", fillcolor="#37474f", fontcolor="white"];
+        O [label="Generate Scene JSON", fillcolor="#37474f", fontcolor="white"];
+        
+        J -> L;
+        J -> M;
+        K -> N;
+        K -> O;
+    }
+    
+    H -> J [lhead=cluster_agents];
+    H -> K;
+    
+    // Output Topics
+    subgraph cluster_output {
+        label="Output Topics";
+        style=filled;
+        fillcolor="#f5f5f5";
+        
+        P [label="audio_out\nVoice Response", fillcolor="#4caf50", fontcolor="white"];
+        Q [label="llm_transcript\nConversation Text", fillcolor="#4caf50", fontcolor="white"];
+        R [label="Brief Acknowledgment\n'OK - moving forward'", fillcolor="#757575", fontcolor="white"];
+        S [label="command_transcript\nMovement Commands", fillcolor="#ff9800", fontcolor="black"];
+        
+        L -> P;
+        L -> Q;
+        M -> R;
+        N -> S;
+        O -> S;
+    }
+    
+    // Robot Control
+    subgraph cluster_robot {
+        label="Robot Control";
+        style=filled;
+        fillcolor="#e8f5e9";
+        
+        T [label="Command Processor", fillcolor="#388e3c", fontcolor="white"];
+        U [label="Robot Actuators", fillcolor="#2e7d32", fontcolor="white"];
+        
+        S -> T [ltail=cluster_output];
+        T -> U;
+    }
+}

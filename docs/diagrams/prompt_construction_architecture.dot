@@ -1,0 +1,78 @@
+digraph PromptConstructionArchitecture {
+    rankdir=LR;
+    compound=true;
+    fontname="Arial";
+    node [shape=box, style="rounded,filled", fontname="Arial"];
+    edge [fontname="Arial", fontsize=10];
+    
+    // Macro Components subgraph
+    subgraph cluster_macros {
+        label="Macro Components (Reusable Building Blocks)";
+        style=filled;
+        fillcolor="#f5f5f5";
+        
+        M1 [label="robot_name: 'Barney'", fillcolor="#2196f3", fontcolor="white"];
+        M2 [label="robot_capabilities\n- Skid-steer base\n- 4DOF arm with camera\n- Vision capabilities", fillcolor="#2196f3", fontcolor="white"];
+        M3 [label="arm_presets\n- bumper, tenhut\n- lookup, lookout, reach", fillcolor="#4caf50", fontcolor="white"];
+        M4 [label="bearing_presets\n- left, right, forward\n- back, full-left, etc.", fillcolor="#4caf50", fontcolor="white"];
+        M5 [label="motion_commands\n- stop, follow, track\n- move, turn, pan", fillcolor="#4caf50", fontcolor="white"];
+        M6 [label="compound_commands\n- move@forward\n- pan@left\n- follow@person", fillcolor="#4caf50", fontcolor="white"];
+        M7 [label="cmd_response\nRules for mapping\nuser requests to commands", fillcolor="#9c27b0", fontcolor="white"];
+        M8 [label="visual_cmd_response\nJSON format for\nscene descriptions", fillcolor="#ff9800", fontcolor="black"];
+        M9 [label="visual_convo_response\nNatural language\nscene descriptions", fillcolor="#ff9800", fontcolor="black"];
+        M10 [label="personality_traits\n- Friendly but concise\n- First-person references", fillcolor="#e91e63", fontcolor="white"];
+    }
+    
+    // OpenAI Agent Prompts subgraph
+    subgraph cluster_openai {
+        label="OpenAI Agent Prompts";
+        style=filled;
+        fillcolor="#e0f7fa";
+        
+        OP1 [label="barney_conversational\nNatural dialogue focus", fillcolor="#00bcd4", fontcolor="white"];
+        OP2 [label="barney_command_extractor\nCommand extraction only", fillcolor="#00bcd4", fontcolor="white"];
+    }
+    
+    // Gemini Agent Prompts subgraph
+    subgraph cluster_gemini {
+        label="Gemini Agent Prompts";
+        style=filled;
+        fillcolor="#ffebee";
+        
+        GP1 [label="barney_conversational_gemini\nConversation + vision", fillcolor="#ff5722", fontcolor="white"];
+        GP2 [label="barney_command_visual\nCombined mode agent", fillcolor="#ff5722", fontcolor="white"];
+    }
+    
+    // Connections from macros to prompts
+    M1 -> OP1;
+    M1 -> OP2;
+    M1 -> GP1;
+    M1 -> GP2;
+    
+    M2 -> OP1;
+    M2 -> OP2;
+    M2 -> GP1;
+    M2 -> GP2;
+    
+    M7 -> OP1;
+    M7 -> OP2;
+    
+    M10 -> OP1;
+    M10 -> GP1;
+    
+    M3 -> OP2;
+    M3 -> GP2;
+    
+    M4 -> OP2;
+    M4 -> GP2;
+    
+    M5 -> OP2;
+    M5 -> GP2;
+    
+    M6 -> OP2;
+    M6 -> GP2;
+    
+    M8 -> GP2;
+    
+    M9 -> GP1;
+}

@@ -1,0 +1,73 @@
+digraph PromptMacroExpansion {
+    rankdir=TD;
+    compound=true;
+    fontname="Arial";
+    node [shape=box, style="rounded,filled", fontname="Arial"];
+    edge [fontname="Arial", fontsize=10];
+    
+    // Original Template
+    subgraph cluster_template {
+        label="Original Template";
+        style=filled;
+        fillcolor="#f3e5f5";
+        
+        T [label="barney_conversational prompt template", fillcolor="#9c27b0", fontcolor="white"];
+        T1 [label="Your name is {{robot_name}}", fillcolor="#2196f3", fontcolor="white"];
+        T2 [label="{{robot_capabilities}}", fillcolor="#2196f3", fontcolor="white"];
+        T3 [label="{{cmd_response}}", fillcolor="#2196f3", fontcolor="white"];
+        T4 [label="{{personality_traits}}", fillcolor="#2196f3", fontcolor="white"];
+        
+        T -> T1;
+        T -> T2;
+        T -> T3;
+        T -> T4;
+    }
+    
+    // First Level Expansion
+    subgraph cluster_first_expansion {
+        label="First Level Expansion";
+        style=filled;
+        fillcolor="#fff3e0";
+        
+        E1 [label="Your name is Barney", fillcolor="#37474f", fontcolor="white"];
+        E2 [label="You are a real skid-steer robot\nthat can move around and you have\none 4dof arm that can move a camera...", fillcolor="#37474f", fontcolor="white"];
+        E3 [label="Infer or use synonyms to map user\nrequests to valid COMMANDS...\n{{arm_presets}}\n{{bearing_presets}}\n{{motion_commands}}", fillcolor="#ff9800", fontcolor="black"];
+        E4 [label="You are friendly but concise.\nProvide information and assistance.", fillcolor="#37474f", fontcolor="white"];
+        
+        T1 -> E1;
+        T2 -> E2;
+        T3 -> E3;
+        T4 -> E4;
+    }
+    
+    // Second Level Expansion (Recursive)
+    subgraph cluster_second_expansion {
+        label="Second Level Expansion (Recursive)";
+        style=filled;
+        fillcolor="#e8f5e9";
+        
+        F1 [label="Arm Positions:\nbumper - arm folded low\ntenhut - vertical stance\nlookup - raised to face person\nlookout - elevated forward\nreach - extended forward", fillcolor="#4caf50", fontcolor="white"];
+        F2 [label="Bearing Presets:\nleft: -45°\nright: 45°\nforward: 0°\nback: 180°\nfull-left: -90°", fillcolor="#4caf50", fontcolor="white"];
+        F3 [label="Motion Commands:\nstop, follow, track\nsleep, wake, move\nturn, pan", fillcolor="#4caf50", fontcolor="white"];
+        
+        E3 -> F1;
+        E3 -> F2;
+        E3 -> F3;
+    }
+    
+    // Final Expanded Prompt
+    subgraph cluster_final {
+        label="Final Expanded Prompt";
+        style=filled;
+        fillcolor="#e0f2f1";
+        
+        G [label="Complete system prompt with\nall macros fully expanded\n~2000 tokens", fillcolor="#00bcd4", fontcolor="white", shape=ellipse];
+        
+        E1 -> G;
+        E2 -> G;
+        E4 -> G;
+        F1 -> G;
+        F2 -> G;
+        F3 -> G;
+    }
+}
