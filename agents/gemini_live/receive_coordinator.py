@@ -44,6 +44,9 @@ class ReceiveCoordinator:
         self.current_turn_task: Optional[asyncio.Task] = None
         self.receiving = False
         
+        # Buffer for accumulating text fragments (command agent)
+        self.text_buffer = ""
+        
         # Metrics
         self.metrics = {
             'audio_chunks_sent': 0,
@@ -102,7 +105,13 @@ class ReceiveCoordinator:
                 if hasattr(self.current_turn_task, '_responses_received'):
                     self.current_turn_task._responses_received = response_count
                 
+                # Log ALL attributes of the response for debugging
                 self.logger.info(f"📥 DIAGNOSTIC: Turn response #{response_count}: {type(response)} (session: {session_id})")
+                
+                # Debug: Show all attributes
+                if hasattr(response, '__dict__'):
+                    attrs = {k: type(v).__name__ for k, v in response.__dict__.items() if not k.startswith('_')}
+                    self.logger.info(f"  Response attributes: {attrs}")
                 
                 # Handle audio data
                 if hasattr(response, 'data') and response.data:
@@ -111,12 +120,45 @@ class ReceiveCoordinator:
                     
                 # Handle text
                 elif hasattr(response, 'text') and response.text:
-                    self.logger.info(f"📝 Text response: {response.text[:50]}...")
+                    self.logger.info(f"📝 Text response: {response.text[:100]}...")
                     await self._handle_text_response(response.text)
                     
-                # Check for turn completion (as per test scripts)
+                # Handle tool calls (Gemini uses these for function execution)
+                elif hasattr(response, 'tool_call') and response.tool_call:
+                    self.logger.info(f"🔧 Tool call response: {response.tool_call}")
+                    # Tool calls might contain transcripts or commands
+                    
+                # Handle user content (potential transcript source)
+                elif hasattr(response, 'user_content') and response.user_content:
+                    self.logger.info(f"👤 User content: {response.user_content}")
+                    # This might be where user transcripts come from
+                    
+                # Check for server content (transcriptions and turn signals)
                 if hasattr(response, 'server_content') and response.server_content:
                     server_content = response.server_content
+                    
+                    # Handle input transcription (user's speech)
+                    if hasattr(server_content, 'input_transcription') and server_content.input_transcription:
+                        transcription = server_content.input_transcription
+                        # Extract text from transcription object
+                        if hasattr(transcription, 'text'):
+                            user_text = transcription.text
+                        else:
+                            user_text = str(transcription)
+                        self.logger.info(f"👤 User transcript: {user_text}")
+                        if user_text and user_text.strip() and user_text.strip() != '.':
+                            await self._handle_user_transcript(user_text)
+                    
+                    # Handle output transcription (assistant's speech)
+                    if hasattr(server_content, 'output_transcription') and server_content.output_transcription:
+                        transcription = server_content.output_transcription
+                        # Extract text from transcription object
+                        if hasattr(transcription, 'text'):
+                            assistant_text = transcription.text
+                        else:
+                            assistant_text = str(transcription)
+                        self.logger.info(f"🤖 Assistant transcript: {assistant_text}")
+                        # We already handle text responses, this is just for logging
                     
                     if hasattr(server_content, 'generation_complete') and server_content.generation_complete:
                         self.logger.info("✅ Generation complete signal")
@@ -124,6 +166,10 @@ class ReceiveCoordinator:
                     if hasattr(server_content, 'turn_complete') and server_content.turn_complete:
                         self.logger.info(f"✅ Turn complete - ending this generator (session: {session_id})")
                         self.metrics['turns_completed'] += 1
+                        
+                        # Process buffered text for command agents
+                        await self._process_command_buffer()
+                        
                         break  # END this generator, as per test scripts
                         
         except asyncio.CancelledError:
@@ -269,32 +315,119 @@ class ReceiveCoordinator:
             )
             self.logger.debug(f"🔊 Published audio ({len(audio_array)} samples)")
             
+    async def _handle_user_transcript(self, text: str):
+        """Handle user transcript from Gemini STT"""
+        # Determine agent type
+        agent_id = self.session_manager.config.get('agent_id', '')
+        
+        # Command agents should NOT publish user transcripts to command_transcript
+        # Only conversational agents should publish user transcripts
+        if 'command' not in agent_id.lower():
+            # Publish user transcript to ROS (similar to OAI agent)
+            transcript_topic = self.published_topics.get('transcript', 'llm_transcript')
+            
+            if self.bridge and transcript_topic:
+                output_text = f"User: {text}"
+                await self.bridge.put_outbound_message(
+                    topic=transcript_topic,
+                    msg_data={'data': output_text},
+                    msg_type='std_msgs/String'
+                )
+                self.logger.info(f"📤 Published user transcript: {text}")
+            
+            # Add to conversation context for conversational agents
+            self.session_manager.add_conversation_turn("user", text)
+        else:
+            # Command agents just log but don't publish user transcripts
+            self.logger.info(f"📝 Command agent received user input: {text}")
+    
     async def _handle_text_response(self, text: str):
         """Handle text response from Gemini"""
         self.metrics['text_responses'] += 1
         
-        # Check if response mentions visual content (debugging for image recognition)
-        visual_keywords = ['see', 'image', 'photo', 'shows', 'appears', 'visible', 
-                          'wooden', 'sword', 'coin', 'hammer', 'book', 'table',
-                          'color', 'object', 'background', 'foreground']
-        mentions_visual = any(keyword in text.lower() for keyword in visual_keywords)
+        # Always log the full text for debugging
+        self.logger.info(f"📝 RAW TEXT fragment from Gemini: '{text}'")
         
-        if mentions_visual:
-            self.logger.warning(f"🎯 VISUAL RESPONSE DETECTED: {text[:200]}...")
+        # Determine which topic to use based on agent type
+        agent_id = self.session_manager.config.get('agent_id', '')
+        
+        # Command extractors need special handling for fragments
+        if 'command' in agent_id.lower():
+            # Accumulate text fragments
+            self.text_buffer += text
+            self.logger.info(f"📝 Buffer now: '{self.text_buffer}'")
+            
+            # Don't publish fragments - wait for complete response
+            return
         else:
-            self.logger.info(f"🤖 Assistant: {text[:100]}...")
+            # Conversational agent - use transcript topic from config
+            topic = self.published_topics.get('transcript', 'llm_transcript')
+            output_text = f"Assistant: {text}"
+            
+            # Check for command acknowledgment pattern
+            if text.startswith("OK - ") or text.startswith("OK-"):
+                self.logger.warning(f"🎯 COMMAND ACK DETECTED: {text}")
+            
+            # Check if response mentions visual content (debugging for image recognition)
+            visual_keywords = ['see', 'image', 'photo', 'shows', 'appears', 'visible', 
+                              'wooden', 'sword', 'coin', 'hammer', 'book', 'table',
+                              'color', 'object', 'background', 'foreground']
+            mentions_visual = any(keyword in text.lower() for keyword in visual_keywords)
+            
+            if mentions_visual:
+                self.logger.warning(f"🎯 VISUAL RESPONSE DETECTED: {text[:200]}...")
+            else:
+                self.logger.info(f"🤖 Assistant: {text[:100]}...")
         
-        # Publish transcript to bridge
-        if self.bridge:
+        # Publish to bridge
+        if self.bridge and topic:
             await self.bridge.put_outbound_message(
-                topic=self.published_topics['transcript'],
-                msg_data={'data': f"Assistant: {text}"},
+                topic=topic,
+                msg_data={'data': output_text},
                 msg_type='std_msgs/String'
             )
             
-        # Add to conversation context
-        self.session_manager.add_conversation_turn("assistant", text)
+        # Add to conversation context (only for conversational agents)
+        if 'command' not in agent_id.lower():
+            self.session_manager.add_conversation_turn("assistant", text)
         
+    async def _process_command_buffer(self):
+        """Process accumulated text buffer for command agents"""
+        agent_id = self.session_manager.config.get('agent_id', '')
+        
+        # Only process for command agents
+        if 'command' not in agent_id.lower() or not self.text_buffer:
+            return
+            
+        # Full response is now in buffer
+        full_text = self.text_buffer.strip()
+        self.text_buffer = ""  # Clear buffer for next turn
+        
+        if not full_text:
+            return
+            
+        # Clean up markdown JSON wrapper if present
+        if full_text.startswith('```json') and full_text.endswith('```'):
+            # Extract JSON from markdown code block
+            lines = full_text.split('\n')
+            # Remove first line (```json) and last line (```)
+            json_lines = lines[1:-1] if len(lines) > 2 else lines
+            full_text = '\n'.join(json_lines).strip()
+            self.logger.info(f"📝 Cleaned markdown wrapper from JSON response")
+            
+        self.logger.info(f"📝 Complete response: '{full_text}'")
+        
+        # Publish whatever the command agent generated - let command_processor decide
+        topic = 'command_transcript'
+        
+        if self.bridge:
+            await self.bridge.put_outbound_message(
+                topic=topic,
+                msg_data={'data': full_text},
+                msg_type='std_msgs/String'
+            )
+            self.logger.info(f"🎯 Published to command_transcript: {full_text[:100]}...")
+    
     async def cleanup(self):
         """Clean up resources"""
         if self.current_turn_task and not self.current_turn_task.done():

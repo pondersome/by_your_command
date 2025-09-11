@@ -178,7 +178,7 @@ def generate_launch_description():
             gemini_agent_path,
             '--config', conv_agent_config,
             '--pause-timeout', LaunchConfiguration('pause_timeout'),
-            '--prompt-id', 'barney_conversational_gemini'
+            '--prompt-id', 'barney_conversational'
         ],
         output='screen',
         additional_env={
@@ -192,7 +192,7 @@ def generate_launch_description():
             gemini_agent_path,
             '--config', cmd_agent_config,
             '--pause-timeout', LaunchConfiguration('pause_timeout'),
-            '--prompt-id', 'barney_command_visual'
+            '--prompt-id', 'barney_command_extractor'
         ],
         output='screen',
         additional_env={

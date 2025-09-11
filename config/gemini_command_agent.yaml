@@ -16,10 +16,10 @@ gemini_live_agent:
   # Model Selection
   model: "models/gemini-live-2.5-flash-preview"
   
-  # Voice Selection (not used since audio output is disabled)
-  voice: "Kore"
+  # Voice Selection - Explicitly disable for command agent
+  voice: ""  # Empty string disables voice in Gemini
   
-  # Proactive Audio
+  # Proactive Audio - Must be false for command agent
   proactive_audio: false
   
   # Video Support - ENABLED for visual command mode (JSON scene descriptions)
@@ -37,8 +37,8 @@ gemini_live_agent:
   command_detected_topic: "command_detected"  # Signal when command extracted
   interruption_signal_topic: ""  # Not needed without audio
   
-  # Prompt Selection - Use visual command prompt for both movement and scene extraction
-  prompt_id: "barney_command_visual"
+  # Prompt Selection - Use command extractor prompt (silent except for commands)
+  prompt_id: "barney_command_extractor_gemini"
   
   # Logging
   log_level: 20  # INFO level (10=DEBUG, 20=INFO, 30=WARNING, 40=ERROR)

@@ -214,14 +214,23 @@ class GeminiSessionManager(BaseSessionManager):
         
         # Try to get specific prompt by ID, or use context-based selection
         if prompt_id:
+            self.logger.info(f"Looking for prompt ID: {prompt_id}")
             prompt_info = self.prompt_loader.get_prompt_info(prompt_id)
-            selected_prompt = prompt_info.system_prompt if prompt_info else None
+            if prompt_info:
+                selected_prompt = prompt_info.system_prompt
+                self.logger.info(f"✅ Found prompt: {prompt_info.name}")
+            else:
+                selected_prompt = None
+                self.logger.warning(f"❌ Prompt ID '{prompt_id}' not found in prompts.yaml")
+                # List available prompts for debugging
+                available = self.prompt_loader.list_prompts()
+                self.logger.warning(f"Available prompts: {available[:5]}...")  # Show first 5
         else:
             selected_prompt = self.prompt_loader.select_prompt({})
             
         if not selected_prompt:
             selected_prompt = "You are a helpful assistant."
-            self.logger.warning("No prompt found, using default")
+            self.logger.warning("Using fallback default prompt")
             
         # Build prompt with context if available
         system_prompt = self.context_manager.build_system_prompt(
@@ -229,11 +238,42 @@ class GeminiSessionManager(BaseSessionManager):
             context
         )
         
+        # Log the prompt for debugging
+        self.logger.info(f"📝 Using prompt ID: {prompt_id}")
+        self.logger.info(f"📝 System prompt (first 500 chars): {system_prompt[:500]}...")
+        
+        # Check if command-related content is in the expanded prompt
+        command_indicators = ['bumper', 'tenhut', 'lookup', 'pan@', 'move@', 'Arm Positions', 'Motion Commands']
+        has_command_content = any(indicator in system_prompt for indicator in command_indicators)
+        
+        if has_command_content:
+            self.logger.info("✅ Prompt contains command recognition content")
+        else:
+            self.logger.info("ℹ️ Prompt does not contain movement commands (OK for non-command agents)")
+        
         # Build Gemini Live configuration - simplified format based on docs
+        # Determine response modality based on agent type
+        agent_id = self.config.get('agent_id', '')
+        voice_setting = self.config.get('voice', '')
+        if 'command' in agent_id.lower() or not voice_setting:
+            # Command agents or agents with no voice should use TEXT only
+            response_modalities = ["TEXT"]
+            self.logger.info("📝 Command agent detected or no voice - using TEXT response modality")
+        else:
+            # Conversational agents use AUDIO
+            response_modalities = ["AUDIO"]
+            self.logger.info("🔊 Conversational agent - using AUDIO response modality")
+        
         config = {
-            "response_modalities": ["AUDIO"],
-            "system_instruction": system_prompt
+            "response_modalities": response_modalities,
+            "system_instruction": system_prompt,
+            "input_audio_transcription": {}  # Enable transcription of user audio
         }
+        
+        # Add output transcription for conversational agents with audio
+        if "AUDIO" in response_modalities:
+            config["output_audio_transcription"] = {}
+            self.logger.info("🎤 Enabled input and output audio transcription")
         
         # Add video configuration if enabled
         if self.video_enabled:
