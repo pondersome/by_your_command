@@ -621,13 +621,14 @@ class WebSocketAgentServer:
                     matched = True
                     break
                     
-            # Only log details for non-images to reduce spam
-            if "Image" not in envelope.ros_msg_type:
+            # Log subscription checking (including images when triggered)
+            triggered = envelope.metadata and envelope.metadata.get('triggered_by') == 'voice_detection'
+            if "Image" not in envelope.ros_msg_type or triggered:
                 self.logger.log_info(f"Agent {agent_id} subscriptions: {agent_subscriptions}, checking {envelope.topic_name} (base: {base_topic})")
             
             if matched:
-                # Only log sending for non-images
-                if "Image" not in envelope.ros_msg_type:
+                # Log sending (including triggered images)
+                if "Image" not in envelope.ros_msg_type or triggered:
                     self.logger.log_info(f"📤 Sending to agent {agent_id}: {envelope.topic_name}")
                 try:
                     # Serialize ROS message for WebSocket transport
@@ -643,7 +644,14 @@ class WebSocketAgentServer:
                         }
                     }
                     
+                    # Log when sending triggered images
+                    if triggered:
+                        self.logger.log_info(f"📨 Sending triggered frame to {agent_id} via WebSocket")
+                    
                     await websocket.send(json.dumps(message))
+                    
+                    if triggered:
+                        self.logger.log_info(f"✅ Successfully sent triggered frame to {agent_id}")
                     
                 except websockets.exceptions.ConnectionClosed:
                     disconnected_agents.append(agent_id)
@@ -732,6 +740,8 @@ class ROSAIBridge(Node):
         self._topic_subscriptions: Dict[str, Any] = {}  # Our tracking dict
         self._topic_publishers: Dict[str, Any] = {}     # Our tracking dict
         self._topic_rate_limiters: Dict[str, FrameRateLimiter] = {}  # Per-topic rate limiters
+        self._latest_frames: Dict[str, Tuple[Any, float]] = {}  # Store latest frame per topic
+        self._voice_chunk_counter = 0  # Track voice chunks for continuous forwarding
         self.reconfigurer = BridgeReconfigurer(self)
         
         # WebSocket server
@@ -774,8 +784,15 @@ class ROSAIBridge(Node):
         self.declare_parameter('queue_timeout_ms', 1000)
         self.declare_parameter('drop_policy', 'oldest')
         
-        # Video frame rate limiting
+        # Video frame rate limiting (legacy - can be disabled by setting to 0)
         self.declare_parameter('max_video_fps', 2.0)  # Global rate limit for video topics
+        
+        # Smart frame forwarding configuration
+        self.declare_parameter('frame_forwarding.enabled', True)
+        self.declare_parameter('frame_forwarding.trigger_on_voice', True)
+        self.declare_parameter('frame_forwarding.trigger_on_text', True)
+        self.declare_parameter('frame_forwarding.continuous_nth_frame', 5)
+        self.declare_parameter('frame_forwarding.max_frame_age_ms', 1000)
         
         # WebSocket server configuration
         self.declare_parameter('websocket_server.enabled', False)
@@ -822,6 +839,15 @@ class ROSAIBridge(Node):
             'agent_registration': {
                 'timeout_seconds': self.get_parameter('agent_registration.timeout_seconds').value,
                 'allow_duplicate_ids': self.get_parameter('agent_registration.allow_duplicate_ids').value
+            },
+            
+            # Smart frame forwarding configuration
+            'frame_forwarding': {
+                'enabled': self.get_parameter('frame_forwarding.enabled').value,
+                'trigger_on_voice': self.get_parameter('frame_forwarding.trigger_on_voice').value,
+                'trigger_on_text': self.get_parameter('frame_forwarding.trigger_on_text').value,
+                'continuous_nth_frame': self.get_parameter('frame_forwarding.continuous_nth_frame').value,
+                'max_frame_age_ms': self.get_parameter('frame_forwarding.max_frame_age_ms').value
             }
         }
         
@@ -1007,16 +1033,42 @@ class ROSAIBridge(Node):
                 self.log_error(f"Full traceback: {traceback.format_exc()}")
                 
     def _ros_callback(self, msg: Any, topic_name: str, msg_type: str):
-        """ROS callback - broadcast message to all consumers with optional rate limiting"""
+        """ROS callback - smart frame forwarding based on voice/text triggers"""
         try:
-            # Check if this topic has rate limiting (BEFORE any logging)
-            if topic_name in self._topic_rate_limiters:
+            # Check if smart frame forwarding is enabled
+            frame_forwarding_enabled = self._config.get('frame_forwarding', {}).get('enabled', True)
+            
+            # Handle image frames with smart caching
+            if "Image" in msg_type and frame_forwarding_enabled:
+                # Always store the latest frame (no rate limiting on storage)
+                # Store with its message type for proper forwarding
+                self._latest_frames[topic_name] = (msg, time.time(), msg_type)
+                # Log frame caching (reduce spam by logging every 10th frame)
+                if not hasattr(self, '_frame_cache_counter'):
+                    self._frame_cache_counter = 0
+                self._frame_cache_counter += 1
+                if self._frame_cache_counter % 10 == 0:
+                    self.log_debug(f"📸 Cached frame from {topic_name} (total cached topics: {len(self._latest_frames)})")
+                
+                # Check if we should use legacy rate limiting (max_video_fps > 0)
+                if self._config.get('max_video_fps', 0) > 0:
+                    # Legacy mode: use rate limiting
+                    if topic_name in self._topic_rate_limiters:
+                        limiter = self._topic_rate_limiters[topic_name]
+                        if not limiter.should_pass():
+                            return  # Drop due to rate limiting
+                    # Fall through to normal forwarding
+                else:
+                    # Smart mode: don't forward automatically, wait for triggers
+                    return  # Frame cached, waiting for trigger
+            
+            # For legacy rate limiting on non-smart mode
+            elif topic_name in self._topic_rate_limiters and not frame_forwarding_enabled:
                 limiter = self._topic_rate_limiters[topic_name]
                 if not limiter.should_pass():
-                    # Drop this frame due to rate limiting
-                    return  # Silent drop to reduce log spam
+                    return  # Drop due to rate limiting
             
-            # Create zero-copy envelope
+            # Create zero-copy envelope for non-image or legacy mode
             envelope = MessageEnvelope(
                 msg_type="topic",
                 topic_name=topic_name,
@@ -1025,6 +1077,40 @@ class ROSAIBridge(Node):
                 timestamp=time.time(),
                 metadata={'source_node': self.get_name()}
             )
+            
+            # Check if this is a voice/text trigger
+            is_trigger = False
+            if frame_forwarding_enabled:
+                trigger_on_voice = self._config.get('frame_forwarding', {}).get('trigger_on_voice', True)
+                trigger_on_text = self._config.get('frame_forwarding', {}).get('trigger_on_text', True)
+                continuous_nth = self._config.get('frame_forwarding', {}).get('continuous_nth_frame', 5)
+                
+                if trigger_on_voice and 'voice_chunks' in topic_name:
+                    # Check if this is the first chunk (chunk_sequence == 0)
+                    try:
+                        if hasattr(msg, 'chunk_sequence'):
+                            if msg.chunk_sequence == 0:
+                                # First chunk - always trigger
+                                is_trigger = True
+                                self._voice_chunk_counter = 0
+                                self.log_info(f"🎯 First voice chunk detected - forwarding cached frames")
+                            else:
+                                # Subsequent chunks - forward every Nth
+                                self._voice_chunk_counter += 1
+                                if self._voice_chunk_counter % continuous_nth == 0:
+                                    is_trigger = True
+                                    self.log_info(f"🎯 Voice chunk #{self._voice_chunk_counter} - forwarding frames (every {continuous_nth})")
+                        else:
+                            # No chunk_sequence field, treat as trigger
+                            is_trigger = True
+                            self.log_info(f"🎯 Voice detected (no sequence) - forwarding cached frames")
+                    except Exception as e:
+                        self.log_debug(f"Error checking chunk_sequence: {e}")
+                        is_trigger = True  # Default to triggering on error
+                        
+                elif trigger_on_text and 'text_input' in topic_name:
+                    is_trigger = True
+                    self.log_info(f"🎯 Text input detected - forwarding cached frames")
             
             # Put into inbound queue for direct agent interfaces
             success = self.queues.put_inbound_topic(envelope)
@@ -1042,6 +1128,18 @@ class ROSAIBridge(Node):
                     asyncio.create_task, 
                     self.websocket_server.broadcast_to_agents(envelope)
                 )
+                
+                # If this was a trigger, also forward cached frames
+                if is_trigger:
+                    if self.asyncio_loop:
+                        # Schedule the coroutine to run in the asyncio loop
+                        future = asyncio.run_coroutine_threadsafe(
+                            self._forward_cached_frames(),
+                            self.asyncio_loop
+                        )
+                        self.log_info(f"📸 Scheduled frame forwarding task")
+                    else:
+                        self.log_error("❌ No asyncio loop available for frame forwarding!")
             elif self.websocket_server:
                 self.log_warning("WebSocket server available but no asyncio loop reference")
             else:
@@ -1053,6 +1151,57 @@ class ROSAIBridge(Node):
                 
         except Exception as e:
             self.log_error(f"Error in ROS callback for {topic_name}: {e}")
+    
+    async def _forward_cached_frames(self):
+        """Forward all cached frames when triggered by voice/text"""
+        try:
+            self.log_info(f"📸 Starting frame forwarding from {len(self._latest_frames)} cached topics")
+            
+            if not self._latest_frames:
+                self.log_warning("⚠️ No cached frames to forward")
+                return
+                
+            max_age_ms = self._config.get('frame_forwarding', {}).get('max_frame_age_ms', 1000)
+            max_age_sec = max_age_ms / 1000.0
+            current_time = time.time()
+            
+            for topic_name, frame_data in self._latest_frames.items():
+                # Unpack with proper handling for both old and new format
+                if len(frame_data) == 3:
+                    frame_msg, timestamp, ros_msg_type = frame_data
+                else:
+                    # Fallback for old format (shouldn't happen but safe)
+                    frame_msg, timestamp = frame_data
+                    ros_msg_type = "sensor_msgs/CompressedImage"
+                    
+                age = current_time - timestamp
+                
+                # Only forward frames that are fresh enough
+                if age < max_age_sec:
+                    # Create envelope for the cached frame
+                    envelope = MessageEnvelope(
+                        msg_type="topic",
+                        topic_name=topic_name,
+                        raw_data=frame_msg,
+                        ros_msg_type=ros_msg_type,
+                        timestamp=timestamp,
+                        metadata={
+                            'source_node': self.get_name(),
+                            'triggered_by': 'voice_detection',
+                            'frame_age_ms': int(age * 1000)
+                        }
+                    )
+                    
+                    # Broadcast to WebSocket agents
+                    if self.websocket_server:
+                        self.log_info(f"📸 Broadcasting frame from {topic_name} to agents...")
+                        result = await self.websocket_server.broadcast_to_agents(envelope)
+                        self.log_info(f"📸 Forwarded cached frame from {topic_name} (age: {int(age*1000)}ms)")
+                else:
+                    self.log_debug(f"Skipped stale frame from {topic_name} (age: {int(age*1000)}ms > {max_age_ms}ms)")
+                    
+        except Exception as e:
+            self.log_error(f"Error forwarding cached frames: {e}")
             
     def _process_outbound_queue(self):
         """Process outbound messages from agents and publish to ROS topics"""

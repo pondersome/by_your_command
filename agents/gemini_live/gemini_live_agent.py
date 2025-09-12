@@ -215,7 +215,12 @@ class GeminiLiveAgent:
                 
                 # Handle image frames separately (store latest, don't send immediately)
                 if envelope.ros_msg_type in ["sensor_msgs/Image", "sensor_msgs/CompressedImage"]:
-                    self.logger.debug(f"📷 Received compressed image frame from bridge!")
+                    # Check if this is a triggered frame
+                    triggered = envelope.metadata and envelope.metadata.get('triggered_by') == 'voice_detection'
+                    if triggered:
+                        self.logger.info(f"🎯📷 Received TRIGGERED image frame from bridge! Age: {envelope.metadata.get('frame_age_ms')}ms")
+                    else:
+                        self.logger.debug(f"📷 Received compressed image frame from bridge!")
                     await self._handle_image_frame(envelope)
                     return
                 

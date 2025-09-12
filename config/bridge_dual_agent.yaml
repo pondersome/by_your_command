@@ -23,6 +23,17 @@ ros_ai_bridge:
     queue_timeout_ms: 1000
     drop_policy: "oldest"
     
+    # Video frame rate limiting (reduced but not disabled - provides baseline frames)
+    max_video_fps: 0.5  # Send baseline frames at 0.5 fps, plus triggered frames
+    
+    # Smart frame forwarding configuration
+    frame_forwarding:
+      enabled: true                # Enable smart frame forwarding
+      trigger_on_voice: true       # Forward frames when voice detected
+      trigger_on_text: true        # Forward frames when text input detected
+      continuous_nth_frame: 5      # During continuous audio, forward every 5th frame
+      max_frame_age_ms: 1000       # Don't forward frames older than 1 second
+    
     # Topics to bridge (ROS → Agent)
     subscribed_topics:
       - topic: "voice_chunks"  # agent bound human voice data

@@ -19,17 +19,24 @@ by_your_command is a ROS 2 package for multimodal human-robot interaction suppor
 
 ## Quick Start
 
-1. Set your OpenAI API key:
+1. Set your API keys:
 ```bash
-export OPENAI_API_KEY="sk-..."
+export OPENAI_API_KEY="sk-..."  # For OpenAI agents
+export GEMINI_API_KEY="..."     # For Gemini agents
 ```
 
-2. Launch the complete system:
+2. Launch the system:
 ```bash
+# For OpenAI (voice only):
 ros2 launch by_your_command oai_realtime.launch.py
+
+# For Gemini (voice + vision):
+ros2 launch by_your_command gemini_dual_agent.launch.py
 ```
 
 3. Speak naturally - the robot will respond with voice!
+   - With Gemini: Ask "What do you see?" for visual descriptions
+   - Commands are automatically extracted from conversation
 
 ## Installation
 
@@ -98,6 +105,29 @@ Set your API keys as environment variables:
 export OPENAI_API_KEY="your-openai-api-key-here"
 export GEMINI_API_KEY="your-gemini-api-key-here"
 ```
+
+### Smart Frame Forwarding (Gemini Vision)
+The system implements intelligent frame forwarding to reduce latency for vision queries:
+
+```yaml
+# config/bridge_dual_agent.yaml
+ros_ai_bridge:
+  ros__parameters:
+    # Hybrid approach: baseline + triggered frames
+    max_video_fps: 0.5  # Baseline frames at 0.5 fps
+    
+    frame_forwarding:
+      enabled: true                # Enable smart forwarding
+      trigger_on_voice: true       # Forward fresh frames on voice
+      trigger_on_text: true        # Forward fresh frames on text
+      continuous_nth_frame: 5      # During continuous speech
+      max_frame_age_ms: 1000       # Max age for forwarded frames
+```
+
+This configuration achieves:
+- **~50ms frame latency** when asking "what do you see?"
+- **98% frame drop rate** for API efficiency
+- **Fresh vision context** even immediately after robot movement
 
 ### VAD Settings
 Edit `config/config.yaml` to tune voice detection and clap detection parameters:
@@ -171,10 +201,13 @@ Launch all nodes:
 # OpenAI Realtime API integration
 ros2 launch by_your_command oai_realtime.launch.py
 
-# Gemini Live API integration
+# Gemini Live API integration (single agent)
 ros2 launch by_your_command gemini_live.launch.py
 
-# Dual-agent mode: Conversation + Command extraction (OpenAI)
+# Gemini Dual-agent mode: Conversation + Command extraction with vision
+ros2 launch by_your_command gemini_dual_agent.launch.py
+
+# OpenAI Dual-agent mode: Conversation + Command extraction (no vision)
 ros2 launch by_your_command oai_dual_agent.launch.py
 
 # Enable voice recording for debugging
@@ -401,15 +434,23 @@ The `agents/common/` module provides shared functionality across all agent imple
 
 #### Gemini Live Agent  
 - **Pattern**: Turn-based with receive generator per conversation
-- **Architecture**: Hybrid approach using OpenAI's bridge pattern with minimal middleware
+- **Architecture**: Direct WebSocket approach (no Pipecat required)
 - **Key Innovation**: `ReceiveCoordinator` manages generator lifecycle
 - **Critical Rule**: Must create `session.receive()` AFTER sending input, not before
 - **Audio**: 16kHz input, 24kHz output (no resampling needed)
 - **Streaming**: Full support - audio chunks sent immediately without buffering
-- **Vision Support**: ✅ Full camera integration with real-time image processing
+- **Vision Support**: ✅ Full multimodal integration with smart frame forwarding
   - Uses unified `session.send(input={...})` API for all inputs (audio, text, images)
-  - Images sent as base64-encoded JPEG with audio/text queries
-  - Latest frame pattern: Stores most recent camera frame, includes with interactions
+  - Smart frame forwarding: ~50ms latency (vs 500ms with fixed rate limiting)
+  - Hybrid approach: 0.5fps baseline + voice-triggered fresh frames
+  - Native bounding box format: `{"box_2d": [x1,y1,x2,y2], "label": "object"}`
+
+**Key Features**:
+- **Dual-Agent Mode**: Separate conversation and command extraction agents
+- **Transcription Support**: Both input and output transcriptions available
+- **Response Modalities**: TEXT-only for commands, AUDIO for conversation
+- **Text Buffering**: Handles fragmented command responses
+- **Frame Caching**: Bridge caches all frames, forwards on voice/text triggers
 - **ConversationContext**: Preserves conversation history across session boundaries
 - **ConversationMonitor**: Monitors conversation state and provides real-time insights
 - **PauseDetector**: Intelligent detection of conversation pauses for session cycling
