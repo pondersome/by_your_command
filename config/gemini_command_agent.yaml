@@ -31,9 +31,11 @@ gemini_live_agent:
   max_context_tokens: 1000  # Smaller context for command extraction
   conversation_timeout: 600.0  # 10 minutes - reset context after this
   
-  # Published Topics (relative paths for namespacing)
-  audio_out_topic: ""  # DISABLED - no audio output for command agent
-  transcript_topic: "command_transcript"  # Movement commands and JSON scene data
+  # Published Topics (relative paths for namespacing) - new naming convention
+  response_voice_topic: ""  # DISABLED - no audio output for command agent
+  response_text_topic: ""   # DISABLED - command agent uses response_cmd instead
+  response_cmd_topic: "response_cmd"  # Movement commands and JSON scene data (was command_transcript)
+  prompt_transcript_topic: "prompt_transcript"  # User voice transcript (NEW!)
   command_detected_topic: "command_detected"  # Signal when command extracted
   interruption_signal_topic: ""  # Not needed without audio
   

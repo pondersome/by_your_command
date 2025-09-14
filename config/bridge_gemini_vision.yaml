@@ -27,11 +27,11 @@ ros_ai_bridge:
     rate_limits:
       "/grunt1/arm1/cam_live/color/image_raw": 1.0  # 1 fps for video
     
-    # Topics to bridge (ROS → Agent)
+    # Topics to bridge (ROS → Agent) - new naming convention
     subscribed_topics:
-      - topic: "voice_chunks"
+      - topic: "prompt_voice"  # was voice_chunks
         msg_type: "by_your_command/AudioDataUtterance"
-      - topic: "text_input"
+      - topic: "prompt_text"   # was text_input
         msg_type: "std_msgs/String"
       - topic: "conversation_id"
         msg_type: "std_msgs/String"
@@ -39,13 +39,15 @@ ros_ai_bridge:
         msg_type: "sensor_msgs/Image"
         # max_fps: 1.0  # Rate limiting will be handled differently
         
-    # Topics to publish (Agent → ROS)
+    # Topics to publish (Agent → ROS) - new naming convention
     published_topics:
-      - topic: "audio_out"       # audio response from llm
+      - topic: "response_voice"   # audio response from llm (was audio_out)
         msg_type: "audio_common_msgs/AudioData"
-      - topic: "llm_transcript"  # transcript of llm response
+      - topic: "response_text"    # transcript of llm response (was llm_transcript)
         msg_type: "std_msgs/String"
-      - topic: "command_transcript"  # commands detected if using command mode
+      - topic: "response_cmd"     # commands detected if using command mode (was command_transcript)
+        msg_type: "std_msgs/String"
+      - topic: "prompt_transcript" # user voice transcript (NEW!)
         msg_type: "std_msgs/String"
       - topic: "cmd_vel"         # motion commands from llm
         msg_type: "geometry_msgs/Twist"

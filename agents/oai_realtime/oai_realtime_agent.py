@@ -88,11 +88,15 @@ class OpenAIRealtimeAgent:
         self.session_ready = asyncio.Event()
         
         # Published topic configuration (support command extractor agent)
+        # Using new naming convention: prompt_* for user input, response_* for agent output
         self.published_topics = {
-            'audio_out': self.config.get('audio_out_topic', 'audio_out'),  # Relative for namespacing
-            'transcript': self.config.get('transcript_topic', 'llm_transcript'),  # Relative for namespacing
-            'command_detected': self.config.get('command_detected_topic', 'command_detected'),  # Relative for namespacing
-            'interruption_signal': self.config.get('interruption_signal_topic', 'interruption_signal')  # Relative for namespacing
+            'response_voice': self.config.get('response_voice_topic', 
+                                             self.config.get('audio_out_topic', 'response_voice')),  # Fallback for compatibility
+            'response_text': self.config.get('response_text_topic', 
+                                            self.config.get('transcript_topic', 'response_text')),  # Fallback for compatibility
+            'prompt_transcript': self.config.get('prompt_transcript_topic', 'prompt_transcript'),  # NEW: User voice transcript
+            'command_detected': self.config.get('command_detected_topic', 'command_detected'),  # Keep as-is
+            'interruption_signal': self.config.get('interruption_signal_topic', 'interruption_signal')  # Keep as-is
         }
         
         # Setup logging
@@ -638,9 +642,9 @@ class OpenAIRealtimeAgent:
             audio_data_dict = {"int16_data": audio_array_16k.tolist()}
             
             # Send to ROS via bridge if audio output is enabled
-            if self.published_topics['audio_out']:  # Skip if topic is empty/disabled
+            if self.published_topics['response_voice']:  # Skip if topic is empty/disabled
                 success = await self.bridge_interface.put_outbound_message(
-                    self.published_topics['audio_out'], 
+                    self.published_topics['response_voice'], 
                     audio_data_dict, 
                     "audio_common_msgs/AudioData"
                 )
@@ -666,6 +670,17 @@ class OpenAIRealtimeAgent:
             self.session_manager.add_conversation_turn("user", transcript)
             self.logger.info(f"👤 User transcript: {transcript}")
             self._mark_response_complete('transcription')
+            
+            # NEW: Publish user transcript to ROS (was missing before!)
+            if self.bridge_interface and self.published_topics.get('prompt_transcript'):
+                transcript_data = {"data": transcript}
+                success = await self.bridge_interface.put_outbound_message(
+                    self.published_topics['prompt_transcript'],
+                    transcript_data,
+                    "std_msgs/String"
+                )
+                if success:
+                    self.logger.info("📤 User transcript published to ROS")
             
             # Manually trigger response since OpenAI server VAD doesn't automatically respond reliably
             # Keep manual triggering for now while we investigate interruption separately
@@ -698,7 +713,7 @@ class OpenAIRealtimeAgent:
             if self.bridge_interface:
                 transcript_data = {"data": final_transcript}
                 success = await self.bridge_interface.put_outbound_message(
-                    self.published_topics['transcript'], 
+                    self.published_topics['response_text'], 
                     transcript_data, 
                     "std_msgs/String"
                 )

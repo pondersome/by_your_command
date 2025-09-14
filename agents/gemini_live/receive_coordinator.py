@@ -298,7 +298,8 @@ class ReceiveCoordinator:
         self.metrics['audio_responses'] += 1
         
         # Check if audio output is configured (not empty)
-        audio_topic = self.published_topics.get('audio_out', '')
+        # Using new naming: response_voice for agent audio output
+        audio_topic = self.published_topics.get('response_voice', '')
         if not audio_topic:
             self.logger.debug("🔇 Audio output disabled - skipping audio response")
             return
@@ -320,26 +321,24 @@ class ReceiveCoordinator:
         # Determine agent type
         agent_id = self.session_manager.config.get('agent_id', '')
         
-        # Command agents should NOT publish user transcripts to command_transcript
-        # Only conversational agents should publish user transcripts
-        if 'command' not in agent_id.lower():
-            # Publish user transcript to ROS (similar to OAI agent)
-            transcript_topic = self.published_topics.get('transcript', 'llm_transcript')
-            
-            if self.bridge and transcript_topic:
-                output_text = f"User: {text}"
-                await self.bridge.put_outbound_message(
-                    topic=transcript_topic,
-                    msg_data={'data': output_text},
-                    msg_type='std_msgs/String'
-                )
-                self.logger.info(f"📤 Published user transcript: {text}")
-            
-            # Add to conversation context for conversational agents
-            self.session_manager.add_conversation_turn("user", text)
-        else:
-            # Command agents just log but don't publish user transcripts
+        # NEW: Publish user transcript to prompt_transcript for ALL agents
+        prompt_transcript_topic = self.published_topics.get('prompt_transcript', 'prompt_transcript')
+        if self.bridge and prompt_transcript_topic:
+            await self.bridge.put_outbound_message(
+                topic=prompt_transcript_topic,
+                msg_data={'data': text},
+                msg_type='std_msgs/String'
+            )
+            self.logger.info(f"📤 Published user transcript to {prompt_transcript_topic}: {text}")
+        
+        # Add to conversation context for ALL agents (helps with context management)
+        self.session_manager.add_conversation_turn("user", text)
+        
+        # Log differently based on agent type
+        if 'command' in agent_id.lower():
             self.logger.info(f"📝 Command agent received user input: {text}")
+        else:
+            self.logger.info(f"👤 Conversational agent received user input: {text}")
     
     async def _handle_text_response(self, text: str):
         """Handle text response from Gemini"""
@@ -360,8 +359,9 @@ class ReceiveCoordinator:
             # Don't publish fragments - wait for complete response
             return
         else:
-            # Conversational agent - use transcript topic from config
-            topic = self.published_topics.get('transcript', 'llm_transcript')
+            # Conversational agent - use response_text topic from config
+            # Using new naming: response_text for agent text output
+            topic = self.published_topics.get('response_text', 'response_text')
             output_text = f"Assistant: {text}"
             
             # Check for command acknowledgment pattern
@@ -418,7 +418,8 @@ class ReceiveCoordinator:
         self.logger.info(f"📝 Complete response: '{full_text}'")
         
         # Publish whatever the command agent generated - let command_processor decide
-        topic = 'command_transcript'
+        # Using new naming: response_cmd for command output
+        topic = self.published_topics.get('response_cmd', 'response_cmd')
         
         if self.bridge:
             await self.bridge.put_outbound_message(
@@ -426,7 +427,7 @@ class ReceiveCoordinator:
                 msg_data={'data': full_text},
                 msg_type='std_msgs/String'
             )
-            self.logger.info(f"🎯 Published to command_transcript: {full_text[:100]}...")
+            self.logger.info(f"🎯 Published to {topic}: {full_text[:100]}...")
     
     async def cleanup(self):
         """Clean up resources"""

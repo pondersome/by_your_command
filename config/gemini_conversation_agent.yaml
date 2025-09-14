@@ -39,9 +39,10 @@ gemini_live_agent:
   # Named prompt selection (from prompts.yaml)
   prompt_id: "barney_conversational_gemini"
   
-  # Output topics
-  audio_out_topic: "audio_out"
-  transcript_topic: "llm_transcript"
+  # Output topics - new naming convention
+  response_voice_topic: "response_voice"  # Audio output (was audio_out)
+  response_text_topic: "response_text"    # Text output (was llm_transcript)
+  prompt_transcript_topic: "prompt_transcript"  # User voice transcript (NEW!)
   
 # ROS AI Bridge Configuration (same as OpenAI)
 ros_ai_bridge:
@@ -57,13 +58,15 @@ ros_ai_bridge:
       
     # Topics to bridge
     subscribed_topics:
-      - topic: "voice_chunks"
+      - topic: "prompt_voice"  # was voice_chunks
         msg_type: "by_your_command/AudioDataUtterance"
       - topic: "camera/image_raw"
         msg_type: "sensor_msgs/Image"
         
     published_topics:
-      - topic: "audio_out"
+      - topic: "response_voice"  # was audio_out
         msg_type: "audio_common_msgs/AudioData"
-      - topic: "llm_transcript"
+      - topic: "response_text"   # was llm_transcript
+        msg_type: "std_msgs/String"
+      - topic: "prompt_transcript"  # NEW!
         msg_type: "std_msgs/String"
