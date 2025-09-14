@@ -20,9 +20,9 @@ class AudioDataToStampedNode(Node):
     def __init__(self):
         super().__init__('audio_data_to_stamped')
         
-        # Parameters
-        self.declare_parameter('input_topic', '/audio_out')
-        self.declare_parameter('output_topic', '/audio_out_stamped')
+        # Parameters - updated to new naming convention
+        self.declare_parameter('input_topic', '/response_voice')  # was /audio_out
+        self.declare_parameter('output_topic', '/response_voice_stamped')  # was /audio_out_stamped
         self.declare_parameter('sample_rate', 16000)  # Standardized to 16kHz
         self.declare_parameter('format', 8)  # paInt16
         self.declare_parameter('channels', 1)

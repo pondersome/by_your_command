@@ -61,13 +61,14 @@ class SileroVADNode(Node):
         )
         self.create_subscription(AudioStamped, 'audio', self.audio_callback, qos_profile=qos)
         self.voice_pub = self.create_publisher(Bool, 'voice_activity', qos_profile=qos)
-        self.chunk_pub = self.create_publisher(AudioDataUtterance, 'voice_chunks', qos_profile=qos)
+        # Publish to new topic name (was voice_chunks)
+        self.chunk_pub = self.create_publisher(AudioDataUtterance, 'prompt_voice', qos_profile=qos)
         
         # Subscribe to wake_cmd topic for remote sleep/wake control
         self.create_subscription(Bool, 'wake_cmd', self.wake_cmd_callback, qos_profile=qos)
         
-        # Subscribe to text_input topic for text-based wake commands (backup mechanism)
-        self.create_subscription(String, 'text_input', self.text_input_callback, qos_profile=qos)
+        # Subscribe to new topic name for text-based wake commands (was text_input)
+        self.create_subscription(String, 'prompt_text', self.text_input_callback, qos_profile=qos)
         # Load and instantiate VADIterator with tuning
         self.model = load_silero_vad()
         self.vad_iterator = VADIterator(

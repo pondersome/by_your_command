@@ -114,7 +114,7 @@ def generate_launch_description():
         name='simple_audio_player',
         output='screen',
         parameters=[{
-            'topic': 'audio_out',  # Relative topic for namespacing
+            'topic': 'response_voice',  # Relative topic for namespacing
             'sample_rate': 16000,  # Standardized from 24kHz
             'channels': 1,
             'device': -1    # Default output device
@@ -204,9 +204,9 @@ def generate_launch_description():
         name='voice_recorder_output',
         output='screen',
         parameters=[{
-            'output_dir': '/tmp/voice_chunks/assistant_output',
+            'output_dir': '/tmp/prompt_voice/assistant_output',
             'input_mode': 'audio_data',
-            'input_topic': 'audio_out',  # Assistant voice
+            'input_topic': 'response_voice',  # Assistant voice
             'input_sample_rate': 16000,  # Standardized from 24kHz
             'audio_timeout': 10.0
         }]
@@ -219,7 +219,7 @@ def generate_launch_description():
         name='voice_recorder_raw',
         output='screen',
         parameters=[{
-            'output_dir': '/tmp/voice_chunks/mic_raw',
+            'output_dir': '/tmp/prompt_voice/mic_raw',
             'input_mode': 'audio_stamped',
             'input_topic': 'audio_filtered',  # Post echo suppression
             'input_sample_rate': 16000,
@@ -236,7 +236,7 @@ def generate_launch_description():
         name='command_processor',
         output='screen',
         parameters=[{
-            'command_transcript_topic': 'command_transcript',
+            'response_cmd_topic': 'response_cmd',
             'arm_preset_topic': '/grunt1/arm_preset',  # Absolute path outside namespace
             'behavior_command_topic': '/grunt1/behavior_command'  # Absolute path outside namespace
         }]
@@ -244,7 +244,7 @@ def generate_launch_description():
     
     # Command transcript monitor (optional debug tool)
     command_monitor = LogInfo(
-        msg=['Command extractor will publish to /command_transcript and /command_detected']
+        msg=['Command extractor will publish to /response_cmd and /command_detected']
     )
     
     # Startup message
@@ -256,7 +256,7 @@ def generate_launch_description():
             '    Voice: ', LaunchConfiguration('voice'), '\n', 
             '🤖 Command Extraction Agent:\n',
             '    Model: ', LaunchConfiguration('cmd_model'), '\n',
-            '    Topics: /command_transcript, /command_detected\n',
+            '    Topics: /response_cmd, /command_detected\n',
             '⏱️  Pause timeout: ', LaunchConfiguration('pause_timeout'), 's\n',
             '🔊 Both agents listening for speech...'
         ]

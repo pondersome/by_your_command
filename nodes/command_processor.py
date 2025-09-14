@@ -2,8 +2,9 @@
 """
 Command Processor Node
 
-Listens for command_transcript messages from the AI agents and processes them
-into actionable commands or behavior requests for various robot subsystems.
+Listens for response_cmd messages (was command_transcript) from the AI agents 
+and processes them into actionable commands or behavior requests for various 
+robot subsystems.
 
 Currently supports:
 - Arm preset commands (e.g., "lookup", "tenhut@rightish")
@@ -26,8 +27,8 @@ class CommandProcessor(Node):
     def __init__(self):
         super().__init__('command_processor')
         
-        # Declare parameters for topic names
-        self.declare_parameter('command_transcript_topic', 'command_transcript')
+        # Declare parameters for topic names - updated to new naming convention
+        self.declare_parameter('command_transcript_topic', 'response_cmd')  # was command_transcript
         self.declare_parameter('arm_preset_topic', '/grunt1/arm_preset')  # Absolute path to arm_preset
         self.declare_parameter('behavior_command_topic', '/grunt1/behavior_command')  # Absolute path outside namespace
         
