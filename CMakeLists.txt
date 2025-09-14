@@ -160,6 +160,12 @@ install(PROGRAMS
   RENAME test_data_driven_clap
 )
 
+install(PROGRAMS
+  scripts/expand_prompt.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME expand_prompt
+)
+
 # Install configuration, launch files, and other resources
 install(DIRECTORY 
   bringup

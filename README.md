@@ -99,6 +99,32 @@ system_prompts:
 - Shared macros across multiple agents
 - Dynamic prompt composition
 
+### Prompt Expansion Utility
+Debug and compare prompt configurations using the `expand_prompt` command-line tool:
+
+```bash
+# List all available prompts
+ros2 run by_your_command expand_prompt --list
+
+# Expand a specific prompt to see the final result
+ros2 run by_your_command expand_prompt visual_analyzer
+
+# Save expanded prompt to file for comparison
+ros2 run by_your_command expand_prompt command_extractor -o expanded.txt
+
+# Show macro expansion comments inline
+ros2 run by_your_command expand_prompt conversational_assistant --comment
+
+# Customize indentation (default: 2 spaces)
+ros2 run by_your_command expand_prompt visual_analyzer --indent 4
+```
+
+This utility helps with:
+- Debugging complex prompt hierarchies
+- Comparing different macro substitutions
+- Understanding the final prompt sent to LLMs
+- Testing prompt variations quickly
+
 ### API Keys
 Set your API keys as environment variables:
 ```bash

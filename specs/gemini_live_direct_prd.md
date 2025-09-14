@@ -147,6 +147,23 @@ Low-level WebSocket management:
 - Message framing and protocol handling
 - Connection health monitoring and recovery
 
+#### 5. Prompt Expansion Utility
+Command-line tool for debugging and comparing prompt configurations:
+- **Location**: `scripts/expand_prompt.py`
+- **Purpose**: Expand prompts.yaml macros recursively (similar to xacro for ROS)
+- **Features**:
+  - Lists all available prompts with `--list`
+  - Expands macros with {{macro_name}} syntax
+  - Adds inline comments showing expansions with `--comment`
+  - Outputs to file with `-o filename`
+  - Customizable indentation with `--indent`
+- **Usage**: `ros2 run by_your_command expand_prompt <prompt_id> [options]`
+- **Benefits**:
+  - Debug complex prompt hierarchies
+  - Compare different macro substitutions
+  - Understand final prompts sent to LLMs
+  - Test prompt variations quickly without running agents
+
 ### Integration Points
 
 #### ROS AI Bridge Integration
