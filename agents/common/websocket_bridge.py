@@ -197,8 +197,8 @@ class WebSocketBridgeInterface:
         try:
             # Build subscription list based on configuration
             subscriptions = [
-                {"topic": "voice_chunks", "msg_type": "by_your_command/AudioDataUtterance"},
-                {"topic": "text_input", "msg_type": "std_msgs/String"},
+                {"topic": "prompt_voice", "msg_type": "by_your_command/AudioDataUtterance"},
+                {"topic": "prompt_text", "msg_type": "std_msgs/String"},
                 {"topic": "conversation_id", "msg_type": "std_msgs/String"}
             ]
             

@@ -177,7 +177,7 @@ def generate_launch_description():
         name='command_processor',
         output='screen',
         parameters=[{
-            'response_cmd_topic': 'response_cmd',
+            'command_transcript_topic': 'response_cmd',
             'arm_preset_topic': '/grunt1/arm_preset',
             'behavior_command_topic': '/grunt1/behavior_command'
         }],

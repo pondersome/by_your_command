@@ -90,10 +90,12 @@ class OpenAIRealtimeAgent:
         # Published topic configuration (support command extractor agent)
         # Using new naming convention: prompt_* for user input, response_* for agent output
         self.published_topics = {
-            'response_voice': self.config.get('response_voice_topic', 
+            'response_voice': self.config.get('response_voice_topic',
                                              self.config.get('audio_out_topic', 'response_voice')),  # Fallback for compatibility
-            'response_text': self.config.get('response_text_topic', 
+            'response_text': self.config.get('response_text_topic',
                                             self.config.get('transcript_topic', 'response_text')),  # Fallback for compatibility
+            'response_cmd': self.config.get('response_cmd_topic',
+                                           self.config.get('command_transcript_topic', '')),  # Command extractor output
             'prompt_transcript': self.config.get('prompt_transcript_topic', 'prompt_transcript'),  # NEW: User voice transcript
             'command_detected': self.config.get('command_detected_topic', 'command_detected'),  # Keep as-is
             'interruption_signal': self.config.get('interruption_signal_topic', 'interruption_signal')  # Keep as-is
@@ -712,29 +714,48 @@ class OpenAIRealtimeAgent:
             # Send transcript to ROS via WebSocket
             if self.bridge_interface:
                 transcript_data = {"data": final_transcript}
-                success = await self.bridge_interface.put_outbound_message(
-                    self.published_topics['response_text'], 
-                    transcript_data, 
-                    "std_msgs/String"
-                )
-                
-                if success:
-                    self.metrics['messages_sent_to_ros'] += 1
-                    self.logger.info("📤 Assistant transcript sent to ROS")
-                    
-                    # For command extractor: check if this looks like a command
-                    if (self.published_topics.get('command_detected') and 
-                        final_transcript.startswith("COMMAND:")):
-                        # Publish command detected signal
-                        command_signal = {"data": True}
-                        await self.bridge_interface.put_outbound_message(
-                            self.published_topics['command_detected'],
-                            command_signal,
-                            "std_msgs/Bool"
-                        )
-                        self.logger.info("🤖 Command detected and signaled")
+
+                # Determine which topic to use based on agent configuration
+                # Command agents publish to response_cmd, conversation agents to response_text
+                if self.published_topics.get('response_cmd') and not self.published_topics.get('response_text'):
+                    # This is a command agent - publish to response_cmd
+                    topic = self.published_topics['response_cmd']
+                    topic_name = "response_cmd"
+                elif self.published_topics.get('response_text'):
+                    # This is a conversation agent - publish to response_text
+                    topic = self.published_topics['response_text']
+                    topic_name = "response_text"
                 else:
-                    self.logger.warning("⚠️ Failed to send assistant transcript to ROS")
+                    # Fallback - shouldn't happen
+                    topic = None
+                    topic_name = None
+
+                if topic:
+                    success = await self.bridge_interface.put_outbound_message(
+                        topic,
+                        transcript_data,
+                        "std_msgs/String"
+                    )
+
+                    if success:
+                        self.metrics['messages_sent_to_ros'] += 1
+                        self.logger.info(f"📤 Assistant transcript sent to ROS on {topic_name}")
+
+                        # For command extractor: check if this looks like a command
+                        if (self.published_topics.get('command_detected') and
+                            final_transcript.startswith("COMMAND:")):
+                            # Publish command detected signal
+                            command_signal = {"data": True}
+                            await self.bridge_interface.put_outbound_message(
+                                self.published_topics['command_detected'],
+                                command_signal,
+                                "std_msgs/Bool"
+                            )
+                            self.logger.info("🤖 Command detected and signaled")
+                    else:
+                        self.logger.warning(f"⚠️ Failed to send assistant transcript to ROS on {topic_name}")
+                else:
+                    self.logger.warning("⚠️ No output topic configured for assistant transcript")
         else:
             self.logger.warning("⚠️ Empty assistant transcript received")
             

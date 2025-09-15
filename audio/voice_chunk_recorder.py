@@ -68,7 +68,7 @@ class VoiceChunkRecorder(Node):
         else:
             self.get_logger().info("Starting in utterance mode")
             # Subscribe to enhanced chunks with utterance metadata
-            self.create_subscription(AudioDataUtterance, 'voice_chunks', self.chunk_callback, qos_profile=qos)
+            self.create_subscription(AudioDataUtterance, 'prompt_voice', self.chunk_callback, qos_profile=qos)
             # Optional: still subscribe to voice_activity for debugging/logging only
             self.create_subscription(Bool, 'voice_activity', self.voice_activity_debug, qos_profile=qos)
 
