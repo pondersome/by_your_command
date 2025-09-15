@@ -31,9 +31,10 @@ gemini_live_agent:
   max_context_tokens: 2000
   conversation_timeout: 600.0  # 10 minutes - reset context after this
   
-  # Published Topics (relative paths for namespacing)
-  audio_out_topic: "audio_out"  # Audio responses enabled
-  transcript_topic: "llm_transcript"  # Natural language transcript
+  # Published Topics (relative paths for namespacing) - new naming convention
+  response_voice_topic: "response_voice"  # Audio responses enabled (was audio_out)
+  response_text_topic: "response_text"    # Natural language transcript (was llm_transcript)
+  prompt_transcript_topic: "prompt_transcript"  # User voice transcript (NEW!)
   command_detected_topic: ""  # Not used by conversational agent
   interruption_signal_topic: "interruption_signal"
   

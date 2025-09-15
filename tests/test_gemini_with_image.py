@@ -15,11 +15,11 @@ class GeminiImageTester(Node):
         super().__init__('gemini_image_tester')
         
         # Publisher for text input
-        self.text_pub = self.create_publisher(String, 'text_input', 10)
+        self.text_pub = self.create_publisher(String, 'prompt_text', 10)
         
         # Subscriber for LLM transcript
         self.transcript_sub = self.create_subscription(
-            String, 'llm_transcript', 
+            String, 'response_text', 
             self.transcript_callback, 10
         )
         

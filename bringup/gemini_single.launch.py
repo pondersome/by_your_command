@@ -115,7 +115,7 @@ def generate_launch_description():
         name='simple_audio_player',
         output='screen',
         parameters=[{
-            'topic': 'audio_out',
+            'topic': 'response_voice',
             'sample_rate': 24000,  # Gemini output rate
             'channels': 1,
             'device': -1
@@ -177,7 +177,7 @@ def generate_launch_description():
         name='command_processor',
         output='screen',
         parameters=[{
-            'command_transcript_topic': 'command_transcript',
+            'command_transcript_topic': 'response_cmd',
             'arm_preset_topic': '/grunt1/arm_preset',
             'behavior_command_topic': '/grunt1/behavior_command'
         }],
@@ -193,9 +193,9 @@ def generate_launch_description():
         name='voice_recorder_output',
         output='screen',
         parameters=[{
-            'output_dir': '/tmp/voice_chunks/gemini_single',
+            'output_dir': '/tmp/prompt_voice/gemini_single',
             'input_mode': 'audio_data',
-            'input_topic': 'audio_out',
+            'input_topic': 'response_voice',
             'input_sample_rate': 24000,
             'audio_timeout': 10.0
         }]

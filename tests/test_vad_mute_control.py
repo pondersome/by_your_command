@@ -20,7 +20,7 @@ class VADMuteTest(Node):
         # Subscriber to monitor voice_chunks output
         self.voice_chunks_sub = self.create_subscription(
             AudioDataUtterance,
-            'voice_chunks',
+            'prompt_voice',
             self.voice_chunks_callback,
             10
         )

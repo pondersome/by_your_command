@@ -98,9 +98,17 @@ class GeminiLiveAgent:
         }
         
         # Published topics configuration
+        # Using new naming convention: prompt_* for user input, response_* for agent output
+        # Determine topic based on agent type
+        is_command_agent = 'command' in self.agent_id.lower()
+        
         self.published_topics = {
-            'audio_out': config.get('audio_out_topic', 'audio_out'),
-            'transcript': config.get('transcript_topic', 'llm_transcript'),
+            'response_voice': '' if is_command_agent else config.get('response_voice_topic', 
+                                                                     config.get('audio_out_topic', 'response_voice')),
+            'response_text': '' if is_command_agent else config.get('response_text_topic',
+                                                                    config.get('transcript_topic', 'response_text')),
+            'response_cmd': config.get('response_cmd_topic', 'response_cmd') if is_command_agent else '',
+            'prompt_transcript': config.get('prompt_transcript_topic', 'prompt_transcript'),
             'interruption_signal': config.get('interruption_signal_topic', 'interruption_signal')
         }
         

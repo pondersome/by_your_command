@@ -100,7 +100,7 @@ def test_serializer():
     # Test text serialization
     text_envelope = type('Envelope', (), {
         'ros_msg_type': 'std_msgs/String',
-        'topic_name': '/text_input',
+        'topic_name': '/prompt_text',
         'raw_data': type('String', (), {
             'data': 'Test message'
         })()

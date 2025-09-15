@@ -33,7 +33,7 @@ class VoiceActiveDebugger(Node):
         # Monitor voice_chunks
         self.voice_chunks_sub = self.create_subscription(
             AudioDataUtterance,
-            'voice_chunks',
+            'prompt_voice',
             self.voice_chunks_callback,
             10
         )

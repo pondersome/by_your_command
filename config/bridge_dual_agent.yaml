@@ -34,27 +34,31 @@ ros_ai_bridge:
       continuous_nth_frame: 5      # During continuous audio, forward every 5th frame
       max_frame_age_ms: 1000       # Don't forward frames older than 1 second
     
-    # Topics to bridge (ROS → Agent)
+    # Topics to bridge (ROS → Agent) - new naming convention
     subscribed_topics:
-      - topic: "voice_chunks"  # agent bound human voice data
+      - topic: "prompt_voice"  # agent bound human voice data (was voice_chunks)
         msg_type: "by_your_command/AudioDataUtterance"
-      - topic: "text_input"    # agent bound text prompts
+      - topic: "prompt_text"    # agent bound text prompts (was text_input)
         msg_type: "std_msgs/String"
       - topic: "conversation_id" # Bidirectional - external conversation resets
         msg_type: "std_msgs/String"
       - topic: "/grunt1/arm1/cam_live/color/image_raw/compressed"  # Compressed camera feed for vision
         msg_type: "sensor_msgs/CompressedImage"
         
-    # Topics to publish (Agent → ROS) - Combined from both agents
+    # Topics to publish (Agent → ROS) - Combined from both agents - new naming convention
     published_topics:
       # Conversational agent topics
-      - topic: "audio_out"       # audio response from llm
+      - topic: "response_voice"   # audio response from llm (was audio_out)
         msg_type: "audio_common_msgs/AudioData"
-      - topic: "llm_transcript"  # transcript of llm response
+      - topic: "response_text"    # transcript of llm response (was llm_transcript)
         msg_type: "std_msgs/String"
       
       # Command agent topics
-      - topic: "command_transcript"  # commands detected and formatted by command agent
+      - topic: "response_cmd"     # commands detected and formatted by command agent (was command_transcript)
+        msg_type: "std_msgs/String"
+      
+      # NEW topic
+      - topic: "prompt_transcript" # user voice transcript (NEW!)
         msg_type: "std_msgs/String"
       
       # Shared topics

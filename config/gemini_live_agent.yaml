@@ -43,9 +43,10 @@ gemini_live_agent:
   # Agent Identification
   agent_id: "gemini_live"
   
-  # Published Topics (relative paths for namespacing)
-  audio_out_topic: "audio_out"
-  transcript_topic: "llm_transcript"
+  # Published Topics (relative paths for namespacing) - new naming convention
+  response_voice_topic: "response_voice"  # Audio output (was audio_out)
+  response_text_topic: "response_text"    # Text output (was llm_transcript)
+  prompt_transcript_topic: "prompt_transcript"  # User voice transcript (NEW!)
   command_detected_topic: "command_detected"
   interruption_signal_topic: "interruption_signal"
   

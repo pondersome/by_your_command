@@ -24,8 +24,8 @@ class SimpleAudioPlayer(Node):
     def __init__(self):
         super().__init__('simple_audio_player')
         
-        # Parameters
-        self.declare_parameter('topic', '/audio_out')
+        # Parameters - updated to new naming convention
+        self.declare_parameter('topic', '/response_voice')  # was /audio_out
         self.declare_parameter('sample_rate', 16000)  # Default to 16kHz
         self.declare_parameter('channels', 1)
         self.declare_parameter('device', -1)

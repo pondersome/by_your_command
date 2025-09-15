@@ -82,14 +82,14 @@ graph [
   node [
     id 5
     name "F"
-    label "Voice Chunks"
+    label "Prompt Voice"
     graphics [
       hasFill 1
       type "box"
       fill "#37474f"
     ]
     LabelGraphics [
-      text "Voice Chunks"
+      text "Prompt Voice"
       fontColor "white"
       fontName "Arial"
     ]
@@ -127,14 +127,14 @@ graph [
   node [
     id 8
     name "I"
-    label "Text Input"
+    label "Prompt Text"
     graphics [
       hasFill 1
       type "box"
       fill "#37474f"
     ]
     LabelGraphics [
-      text "Text Input"
+      text "Prompt Text"
       fontColor "white"
       fontName "Arial"
     ]
@@ -232,14 +232,14 @@ graph [
   node [
     id 15
     name "P"
-    label "audio_out\nVoice Response"
+    label "response_voice\nVoice Response"
     graphics [
       hasFill 1
       type "box"
       fill "#4caf50"
     ]
     LabelGraphics [
-      text "audio_out\nVoice Response"
+      text "response_voice\nVoice Response"
       fontColor "white"
       fontName "Arial"
     ]
@@ -247,14 +247,14 @@ graph [
   node [
     id 16
     name "Q"
-    label "llm_transcript\nConversation Text"
+    label "response_text\nConversation Text"
     graphics [
       hasFill 1
       type "box"
       fill "#4caf50"
     ]
     LabelGraphics [
-      text "llm_transcript\nConversation Text"
+      text "response_text\nConversation Text"
       fontColor "white"
       fontName "Arial"
     ]
@@ -277,14 +277,14 @@ graph [
   node [
     id 18
     name "S"
-    label "command_transcript\nMovement Commands"
+    label "response_cmd\nMovement Commands"
     graphics [
       hasFill 1
       type "box"
       fill "#ff9800"
     ]
     LabelGraphics [
-      text "command_transcript\nMovement Commands"
+      text "response_cmd\nMovement Commands"
       fontColor "black"
       fontName "Arial"
     ]

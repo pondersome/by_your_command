@@ -1,5 +1,8 @@
 # By Your Command System PRD
 
+> **Note: This document predates the topic renaming refactoring (2025-09-14). Some topic names mentioned here have been updated in the implementation. See `topic_renaming_refactoring_prd.md` for current naming.**
+
+
 ## 1. Executive Summary
 
 By Your Command is a comprehensive ROS 2 package enabling real-time, multimodal human-robot interaction through voice, camera, and video streams. The system provides a complete pipeline from sensor input through LLM integration, enabling robots to engage in natural conversations, understand commands, and respond with voice synthesis.
@@ -30,7 +33,7 @@ By Your Command is a comprehensive ROS 2 package enabling real-time, multimodal 
 ┌─────────────────┐            │                        │
 │   Silero VAD    │            │                        │
 └────────┬────────┘            │                        │
-         │/voice_chunks         │                        │
+         │/prompt_voice         │                        │
          ▼                      ▼                        ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │                        ROS AI Bridge                              │
@@ -40,15 +43,15 @@ By Your Command is a comprehensive ROS 2 package enabling real-time, multimodal 
 │  - Supports up to 10 concurrent agent connections                │
 │                                                                  │
 │  Subscribed Topics (ROS → Agents):                               │
-│    • /voice_chunks (AudioDataUtterance)                          │
-│    • /text_input (String)                                        │
+│    • /prompt_voice (AudioDataUtterance)                          │
+│    • /prompt_text (String)                                        │
 │    • /camera/image_raw (Image)                                   │
 │                                                                  │
 │  Published Topics (Agents → ROS):                                │
-│    • /audio_out (AudioData)                                      │
-│    • /llm_transcript (String)                                    │
+│    • /response_voice (AudioData)                                      │
+│    • /response_text (String)                                    │
 │    • /cmd_vel (Twist)                                           │
-│    • /command_transcript (String) [dual-agent mode]              │
+│    • /response_cmd (String) [dual-agent mode]              │
 │    • /command_detected (Bool) [dual-agent mode]                  │
 └─────────────────────────────┬────────────────────────────────────┘
                               │
@@ -87,7 +90,7 @@ By Your Command is a comprehensive ROS 2 package enabling real-time, multimodal 
          ▼                    ▼           ▼                ▼
 ┌─────────────────┐  ┌──────────────┐  ┌─────────────┐  ┌──────────────┐
 │  Audio Player   │  │Robot Commands│  │LLM Transcript│  │Command Trans.│
-│ (/audio_out)    │  │ (/cmd_vel)   │  │(/llm_trans.) │  │(/cmd_trans.) │
+│ (/response_voice)    │  │ (/cmd_vel)   │  │(/llm_trans.) │  │(/cmd_trans.) │
 └────────┬────────┘  └──────────────┘  └─────────────┘  └──────┬───────┘
          │                                                       │
          ▼                                                       ▼
@@ -101,14 +104,14 @@ By Your Command is a comprehensive ROS 2 package enabling real-time, multimodal 
 The system supports running multiple specialized agents concurrently, enabling sophisticated behaviors through separation of concerns:
 
 ```
-                           /voice_chunks
+                           /prompt_voice
                                  │
                                  ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │                        ROS AI Bridge                              │
 │                                                                  │
 │  Broadcasting to all subscribed agents:                          │
-│    • Each agent receives same /voice_chunks                      │
+│    • Each agent receives same /prompt_voice                      │
 │    • Agents process independently                                │
 │    • No inter-agent communication required                       │
 └────────────────────────────┬─────────────────────────────────────┘
@@ -140,8 +143,8 @@ The system supports running multiple specialized agents concurrently, enabling s
 │                                                                  │
 │  Publishing agent-specific outputs:                              │
 │    Conversational:              Command Extractor:               │
-│    • /audio_out                 • /command_transcript            │
-│    • /llm_transcript            • /command_detected              │
+│    • /response_voice                 • /response_cmd            │
+│    • /response_text            • /command_detected              │
 │    • /assistant_speaking        • /cmd_vel                       │
 └──────────────────────────────────────────────────────────────────┘
 ```

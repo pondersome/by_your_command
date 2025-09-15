@@ -1,5 +1,8 @@
 # Context Management Enhancements for Dual Agents - PRD
 
+> **Note: This document predates the topic renaming refactoring (2025-09-14). Some topic names mentioned here have been updated in the implementation. See `topic_renaming_refactoring_prd.md` for current naming.**
+
+
 **Created:** 2025-09-14  
 **Status:** Draft  
 **Author:** Karim Virani  
@@ -274,8 +277,8 @@ agent_config:
   sibling_agents: ["oai_command"]
   
   subscriptions:
-    - topic: "voice_chunks"
-    - topic: "command_transcript"
+    - topic: "prompt_voice"
+    - topic: "response_cmd"
       filter:
         agent_role: "command"  # Only from command agents
         

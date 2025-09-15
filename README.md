@@ -267,13 +267,13 @@ ros2 run by_your_command test_clap_detection
 ros2 run by_your_command publish_command "lookup"
 
 # Voice control commands
-ros2 topic pub /command_transcript std_msgs/String "data: 'sleep'"  # Sleep command (mutes VAD)
+ros2 topic pub /response_cmd std_msgs/String "data: 'sleep'"  # Sleep command (mutes VAD)
 
 # Text input (alternative to voice when microphone unavailable/muted)
-ros2 topic pub /text_input std_msgs/String "data: 'Hello robot, what time is it?'" --once
+ros2 topic pub /prompt_text std_msgs/String "data: 'Hello robot, what time is it?'" --once
 
 # Text-based wake commands (when VAD is muted/sleeping)
-ros2 topic pub /text_input std_msgs/String "data: 'wake up'" --once
+ros2 topic pub /prompt_text std_msgs/String "data: 'wake up'" --once
 
 # Remote mute/unmute control for VAD node
 ros2 topic pub /voice_active std_msgs/Bool "data: false"  # Mute
@@ -287,27 +287,27 @@ ros2 topic pub /voice_active std_msgs/Bool "data: true"   # Unmute
 #### Voice Input Flow
 ```
 Microphone → audio_capturer → echo_suppressor → /audio_filtered → 
-silero_vad → /voice_chunks → ROS Bridge → WebSocket → 
+silero_vad → /prompt_voice → ROS Bridge → WebSocket → 
 Agent (OpenAI/Gemini) → LLM API
 ```
 
 #### Text Input Flow (Alternative Path)
 ```
-/text_input → ROS Bridge → WebSocket → 
+/prompt_text → ROS Bridge → WebSocket → 
 Agent (OpenAI/Gemini) → LLM API
 ```
 
 #### Voice Output Flow (OpenAI)
 ```
 OpenAI API → response.audio.delta → OpenAI Agent → WebSocket → 
-ROS Bridge → /audio_out → simple_audio_player → Speakers
+ROS Bridge → /response_voice → simple_audio_player → Speakers
          ↓                                              ↓
-         └──────────→ /llm_transcript ──────────────────┘
+         └──────────→ /response_text ──────────────────┘
                                 ↓
                       /assistant_speaking → echo_suppressor (mutes mic)
 
 User Interruption Flow:
-User Speech → VAD → /voice_chunks → Agent (while assistant speaking) →
+User Speech → VAD → /prompt_voice → Agent (while assistant speaking) →
   1. response.cancel → OpenAI API (stops generation)
   2. conversation.item.truncate → OpenAI API (cleans context)
   3. /interruption_signal → simple_audio_player → PyAudio abort() (immediate cutoff)
@@ -316,9 +316,9 @@ User Speech → VAD → /voice_chunks → Agent (while assistant speaking) →
 #### Voice Output Flow (Gemini)
 ```
 Gemini API → response.data → ReceiveCoordinator → WebSocket → 
-ROS Bridge → /audio_out (24kHz) → simple_audio_player → Speakers
+ROS Bridge → /response_voice (24kHz) → simple_audio_player → Speakers
          ↓                                              ↓
-         └──────────→ /llm_transcript ──────────────────┘
+         └──────────→ /response_text ──────────────────┘
 
 Key Difference: Gemini uses a ReceiveCoordinator middleware to manage
 the receive generator lifecycle (must create AFTER sending input)
@@ -334,7 +334,7 @@ the receive generator lifecycle (must create AFTER sending input)
 │    VAD      │     │Image Process │              ↓
 └─────┬───────┘     └──────┬───────┘              ↓
       ↓                    ↓                       ↓
-/voice_chunks        /camera/image_raw      /sensor_data
+/prompt_voice        /camera/image_raw      /sensor_data
       ↓                    ↓                       ↓
       └────────────────────┴───────────────────────┘
                            ↓
@@ -351,7 +351,7 @@ the receive generator lifecycle (must create AFTER sending input)
                   └────────┬───────┘
                            ↓
     ┌──────────────┬───────┴────────┬─────────────┐
-/audio_out    /llm_transcript   /cmd_vel    /other_outputs
+/response_voice    /response_text   /cmd_vel    /other_outputs
     ↓              ↓                ↓              ↓
 ┌─────────┐   ┌─────────┐      ┌────────┐    ┌────────┐
 │ Speaker │   │ Logger  │      │ Motors │    │ Other  │
@@ -360,7 +360,7 @@ the receive generator lifecycle (must create AFTER sending input)
 
 #### Multi-Agent Architecture
 ```
-                        /voice_chunks
+                        /prompt_voice
                               ↓
                     ┌─────────────────┐
                     │  ROS AI Bridge  │
@@ -387,7 +387,7 @@ the receive generator lifecycle (must create AFTER sending input)
                 ↓                           ↓
     ┌───────────┴─────────┐       ┌────────┴─────────┐
     ↓                     ↓       ↓                  ↓
-/audio_out         /llm_transcript  /command_transcript
+/response_voice         /response_text  /response_cmd
     ↓                                                ↓
 ┌────────┐                                  /command_detected
 │Speaker │                                          ↓
@@ -574,11 +574,11 @@ A node that performs voice activity detection using the Silero VAD model and pub
 - `/audio` (audio_common_msgs/AudioStamped): Input audio stream
 - `/wake_cmd` (std_msgs/Bool): Wake command from external sources (e.g., clap detector)
 - `/voice_active` (std_msgs/Bool): Remote mute/unmute control (default: true/active)
-- `/text_input` (std_msgs/String): Text-based wake commands when muted
+- `/prompt_text` (std_msgs/String): Text-based wake commands when muted
 
 **Published Topics**:
 - `/voice_activity` (std_msgs/Bool): Voice activity detection status
-- `/voice_chunks` (by_your_command/AudioDataUtterance): Voice chunks with utterance metadata
+- `/prompt_voice` (by_your_command/AudioDataUtterance): Voice chunks with utterance metadata
 
 **Parameters**:
 - `sample_rate` (int, default 16000): Audio sampling rate in Hz
@@ -600,7 +600,7 @@ A node that performs voice activity detection using the Silero VAD model and pub
 A node that subscribes to enhanced voice chunks and writes them to WAV files with utterance-aware naming.
 
 **Subscribed Topics**:
-- `/voice_chunks` (by_your_command/AudioDataUtterance): Enhanced voice chunks with metadata
+- `/prompt_voice` (by_your_command/AudioDataUtterance): Enhanced voice chunks with metadata
 - `/voice_activity` (std_msgs/Bool): Voice activity status (for debugging)
 
 **Parameters**:
@@ -623,8 +623,8 @@ A minimal data transport bridge that handles message queuing between ROS2's call
 - Configurable queue management
 
 **Topics**:
-- Subscribes: `/voice_chunks`, `/camera/image_raw` (configurable)
-- Publishes: `/audio_out`, `/cmd_vel`, `/llm_transcript` (configurable)
+- Subscribes: `/prompt_voice`, `/camera/image_raw` (configurable)
+- Publishes: `/response_voice`, `/cmd_vel`, `/response_text` (configurable)
 
 **Parameters**:
 - `max_queue_size` (int, default 100): Maximum queue size before dropping messages
@@ -637,14 +637,14 @@ A minimal data transport bridge that handles message queuing between ROS2's call
 A lightweight audio player specifically designed for playing AudioData messages at 24kHz from OpenAI Realtime API with real-time interruption support.
 
 **Subscribed Topics**:
-- `/audio_out` (audio_common_msgs/AudioData): Audio data to play
+- `/response_voice` (audio_common_msgs/AudioData): Audio data to play
 - `/interruption_signal` (std_msgs/Bool): Signal to immediately clear audio queue and stop playback
 
 **Published Topics**:
 - `assistant_speaking` (std_msgs/Bool): True when playing audio, False when stopped (respects namespace)
 
 **Parameters**:
-- `topic` (string, default "audio_out"): Input audio topic (relative, respects namespace)
+- `topic` (string, default "response_voice"): Input audio topic (relative, respects namespace)
 - `sample_rate` (int, default 16000): Audio sample rate (standardized from 24kHz)
 - `channels` (int, default 1): Number of audio channels
 - `device` (int, default -1): Audio output device (-1 for default)
@@ -661,7 +661,7 @@ A lightweight audio player specifically designed for playing AudioData messages 
 A node that listens for command transcripts from AI agents and routes them to appropriate robot subsystems.
 
 **Subscribed Topics**:
-- `command_transcript` (std_msgs/String): Commands extracted by the AI agent
+- `response_cmd` (std_msgs/String): Commands extracted by the AI agent
 
 **Published Topics**:
 - `/grunt1/arm_preset` (std_msgs/String): Arm preset commands (absolute path, no namespace)
@@ -669,7 +669,7 @@ A node that listens for command transcripts from AI agents and routes them to ap
 - `voice_active` (std_msgs/Bool): Voice control for sleep command (relative topic name)
 
 **Parameters**:
-- `command_transcript_topic` (string, default "command_transcript"): Input topic for commands
+- `command_transcript_topic` (string, default "response_cmd"): Input topic for commands
 - `arm_preset_topic` (string, default "/grunt1/arm_preset"): Output topic for arm commands
 - `behavior_command_topic` (string, default "/grunt1/behavior_command"): Output topic for behavior commands
 
@@ -705,7 +705,7 @@ A fallback echo suppression solution that prevents audio feedback loops by mutin
 A node that transcribes voice chunks using Whisper and processes commands with an LLM via OpenAI.
 
 **Subscribed Topics**:
-- `/voice_chunks` (by_your_command/AudioDataUtterance): Voice chunks for transcription
+- `/prompt_voice` (by_your_command/AudioDataUtterance): Voice chunks for transcription
 
 **Parameters**:
 - `openai_api_key` (string): OpenAI API key
@@ -837,9 +837,9 @@ The system supports running multiple specialized agents simultaneously:
 - **No Conflicts**: Different output topics prevent interference
 
 **Configuration**:
-- Conversational agent publishes to: `/audio_out`, `/llm_transcript`
-- Command agent publishes to: `/command_transcript`, `/command_detected`
-- Both subscribe to: `/voice_chunks`
+- Conversational agent publishes to: `/response_voice`, `/response_text`
+- Command agent publishes to: `/response_cmd`, `/command_detected`
+- Both subscribe to: `/prompt_voice`
 
 **Usage**:
 ```bash
@@ -847,7 +847,7 @@ The system supports running multiple specialized agents simultaneously:
 ros2 launch by_your_command oai_dual_agent.launch.py
 
 # Monitor command detection
-ros2 topic echo /command_transcript
+ros2 topic echo /response_cmd
 ros2 topic echo /command_detected
 ```
 
@@ -856,7 +856,7 @@ ros2 topic echo /command_detected
 ### No Audio Output
 - Check that PyAudio is installed: `pip3 install pyaudio`
 - Verify default audio device: `pactl info | grep "Default Sink"`
-- Check topic has data: `ros2 topic echo /audio_out --no-arr`
+- Check topic has data: `ros2 topic echo /response_voice --no-arr`
 - Save audio for debugging: `ros2 launch by_your_command oai_realtime.launch.py enable_voice_recorder:=true`
 
 ### Feedback/Echo Issues

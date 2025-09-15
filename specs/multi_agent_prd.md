@@ -52,7 +52,7 @@ agents/
 ROS2 Topics → [ros_ai_bridge] → [Agent Queues] → [LLM APIs] → [Response Processing] → ROS2 Actions
      ↑                 ↓              ↓             ↓              ↓                    ↓
 Audio Capture    Message Queue   Session Mgmt   WebSocket     Command Parse      /cmd_vel
-Camera Feed      BEST_EFFORT     Context Mgmt   Streaming     Tool Calling       /audio_out
+Camera Feed      BEST_EFFORT     Context Mgmt   Streaming     Tool Calling       /response_voice
 Sensor Data      Async Bridge    Cost Control   Real-time     Action Planning    Custom Actions
 /conversation_id  Conversation    Conv Monitor   API Calls     Response Format    /conversation_id
 ```

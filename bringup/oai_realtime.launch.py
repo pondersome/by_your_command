@@ -105,7 +105,7 @@ def generate_launch_description():
         name='simple_audio_player',
         output='screen',
         parameters=[{
-            'topic': 'audio_out',  # Relative topic for namespacing
+            'topic': 'response_voice',  # Relative topic for namespacing
             'sample_rate': 16000,  # Standardized from 24kHz
             'channels': 1,
             'device': -1    # Default output device
@@ -177,9 +177,9 @@ def generate_launch_description():
         name='voice_recorder_output',
         output='screen',
         parameters=[{
-            'output_dir': '/tmp/voice_chunks/assistant_output',
+            'output_dir': '/tmp/prompt_voice/assistant_output',
             'input_mode': 'audio_data',
-            'input_topic': 'audio_out',  # Assistant voice
+            'input_topic': 'response_voice',  # Assistant voice
             'input_sample_rate': 24000,
             'audio_timeout': 10.0
         }]
@@ -192,7 +192,7 @@ def generate_launch_description():
         name='voice_recorder_raw',
         output='screen',
         parameters=[{
-            'output_dir': '/tmp/voice_chunks/mic_raw',
+            'output_dir': '/tmp/prompt_voice/mic_raw',
             'input_mode': 'audio_stamped',
             'input_topic': 'audio_filtered',  # Post echo suppression
             'input_sample_rate': 16000,

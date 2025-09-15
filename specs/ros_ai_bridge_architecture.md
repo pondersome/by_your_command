@@ -159,7 +159,7 @@ Bridge passes ROS message objects directly through internal queues without seria
 def audio_callback(self, ros_msg: AudioData):
     envelope = MessageEnvelope(
         msg_type="topic",
-        topic_name="/voice_chunks", 
+        topic_name="/prompt_voice", 
         raw_data=ros_msg,  # Pass ROS message object directly
         ros_msg_type="audio_common_msgs/AudioData",
         timestamp=time.time()
@@ -230,7 +230,7 @@ ros_ai_bridge:
     
     # Topics to bridge (ROS → Agent)
     subscribed_topics:
-      - topic: "/voice_chunks"
+      - topic: "/prompt_voice"
         msg_type: "audio_common_msgs/AudioData"
       - topic: "/camera/image_raw"  
         msg_type: "sensor_msgs/Image"
@@ -238,7 +238,7 @@ ros_ai_bridge:
         
     # Topics to publish (Agent → ROS)
     published_topics:
-      - topic: "/audio_out"
+      - topic: "/response_voice"
         msg_type: "audio_common_msgs/AudioData"
       - topic: "/cmd_vel"
         msg_type: "geometry_msgs/Twist"
@@ -419,7 +419,7 @@ All messages use JSON format with envelope structure:
   "type": "message",
   "envelope": {
     "msg_type": "topic",
-    "topic_name": "/voice_chunks",
+    "topic_name": "/prompt_voice",
     "ros_msg_type": "by_your_command/AudioDataUtterance", 
     "timestamp": 1642534567.123,
     "metadata": {
@@ -444,7 +444,7 @@ All messages use JSON format with envelope structure:
   "agent_id": "openai_realtime",
   "capabilities": ["audio_processing", "realtime_api"],
   "subscriptions": [
-    {"topic": "/voice_chunks", "msg_type": "by_your_command/AudioDataUtterance"}
+    {"topic": "/prompt_voice", "msg_type": "by_your_command/AudioDataUtterance"}
   ]
 }
 
@@ -699,7 +699,7 @@ ros_ai_bridge:
       host: "0.0.0.0"
       port: 8765
     subscribed_topics:
-      - topic: "/voice_chunks"
+      - topic: "/prompt_voice"
         msg_type: "by_your_command/AudioDataUtterance"
 
 # agent_system_b.yaml - Compute system  
@@ -770,7 +770,7 @@ async def main():
     bridge_client = WebSocketBridgeClient("localhost", 8765, "openai_realtime")
     
     subscriptions = [
-        {"topic": "/voice_chunks", "msg_type": "by_your_command/AudioDataUtterance"}
+        {"topic": "/prompt_voice", "msg_type": "by_your_command/AudioDataUtterance"}
     ]
     await bridge_client.connect(subscriptions)
     

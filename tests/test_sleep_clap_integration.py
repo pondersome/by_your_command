@@ -16,13 +16,13 @@ class SleepClapIntegrationTest(Node):
         super().__init__('sleep_clap_integration_test')
         
         # Publishers
-        self.command_pub = self.create_publisher(String, 'command_transcript', 10)
+        self.command_pub = self.create_publisher(String, 'response_cmd', 10)
         self.voice_active_pub = self.create_publisher(Bool, 'voice_active', 10)
         
         # Subscribers to monitor system behavior
         self.voice_chunks_sub = self.create_subscription(
             AudioDataUtterance,
-            'voice_chunks',
+            'prompt_voice',
             self.voice_chunks_callback,
             10
         )

@@ -1,5 +1,8 @@
 # Gemini Live Agent Implementation - Product Requirements Document
 
+> **Note: This document predates the topic renaming refactoring (2025-09-14). Some topic names mentioned here have been updated in the implementation. See `topic_renaming_refactoring_prd.md` for current naming.**
+
+
 **Author**: Karim Virani  
 **Version**: 2.0  
 **Date**: September 2025  
@@ -122,13 +125,13 @@ This would ensure the freshest possible frame is sent with voice queries, though
 ```python
 # Conceptual Pipeline Structure
 pipeline = Pipeline(
-    ROSVoiceInput(),           # Subscribe to /voice_chunks
+    ROSVoiceInput(),           # Subscribe to /prompt_voice
     ROSCameraInput(),          # Subscribe to /camera/image_raw
     GeminiLiveBridge(),        # Custom processor for Gemini Live API
     ResponseRouter(),          # Route to appropriate outputs
-    ROSTranscriptOutput(),     # Publish to /llm_transcript
-    ROSAudioOutput(),          # Publish to /audio_out
-    ROSCommandOutput()         # Publish to /command_transcript
+    ROSTranscriptOutput(),     # Publish to /response_text
+    ROSAudioOutput(),          # Publish to /response_voice
+    ROSCommandOutput()         # Publish to /response_cmd
 )
 ```
 
@@ -171,7 +174,7 @@ pipeline = Pipeline(
 ### 4.1 Core Capabilities
 
 #### 4.1.1 Voice Interaction
-- **Input**: Process 16kHz PCM audio from `/voice_chunks` topic
+- **Input**: Process 16kHz PCM audio from `/prompt_voice` topic
 - **Output**: Generate 24kHz PCM audio responses
 - **Transcription**: Real-time speech-to-text with speaker diarization
 - **Natural Conversation**: Support interruptions and turn-taking
@@ -238,7 +241,7 @@ agents:
 
 #### 4.3.1 Input Processing
 ```
-/voice_chunks → ROSVoiceInput → GeminiLiveBridge
+/prompt_voice → ROSVoiceInput → GeminiLiveBridge
                                         ↓
 /camera/image_raw → ROSCameraInput →→→→↓
                                         ↓
@@ -250,9 +253,9 @@ agents:
 Gemini Live API
         ↓
 ResponseRouter
-        ├→ /audio_out (voice response)
-        ├→ /llm_transcript (conversation text)
-        ├→ /command_transcript (extracted commands)
+        ├→ /response_voice (voice response)
+        ├→ /response_text (conversation text)
+        ├→ /response_cmd (extracted commands)
         └→ /scene_description (visual analysis)
 ```
 
@@ -315,7 +318,7 @@ class GeminiLiveNode(Node):
         # ROS subscribers
         self.voice_sub = self.create_subscription(
             AudioDataUtterance,
-            'voice_chunks',
+            'prompt_voice',
             self.voice_callback,
             10
         )
@@ -382,7 +385,7 @@ class EnhancedBridge:
 #### 5.3.2 Camera Topic Support with Frame Throttling
 ```yaml
 subscribed_topics:
-  - topic: "voice_chunks"
+  - topic: "prompt_voice"
     msg_type: "by_your_command/AudioDataUtterance"
     broadcast: true  # Send to all agents
   - topic: "camera/image_raw"
@@ -510,9 +513,9 @@ gemini_live_agent:
   
   # Output topics
   outputs:
-    audio: "audio_out"
-    transcript: "llm_transcript"
-    commands: "command_transcript"
+    audio: "response_voice"
+    transcript: "response_text"
+    commands: "response_cmd"
     scene: "scene_description"
 ```
 
@@ -534,7 +537,7 @@ ros_ai_bridge:
       
     # Topics configuration
     subscribed_topics:
-      - topic: "voice_chunks"
+      - topic: "prompt_voice"
         msg_type: "by_your_command/AudioDataUtterance"
       - topic: "/grunt1/arm1/cam_live/color/image_raw/compressed"
         msg_type: "sensor_msgs/CompressedImage"

@@ -13,7 +13,7 @@ class UtteranceChunkTester(Node):
         
         # Subscribe to both voice activity and enhanced voice chunks
         self.create_subscription(Bool, 'voice_activity', self.voice_activity_callback, 10)
-        self.create_subscription(AudioDataUtterance, 'voice_chunks', self.chunk_callback, 10)
+        self.create_subscription(AudioDataUtterance, 'prompt_voice', self.chunk_callback, 10)
         
         # Track utterance state
         self.current_utterance_id = None

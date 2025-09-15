@@ -1085,7 +1085,8 @@ class ROSAIBridge(Node):
                 trigger_on_text = self._config.get('frame_forwarding', {}).get('trigger_on_text', True)
                 continuous_nth = self._config.get('frame_forwarding', {}).get('continuous_nth_frame', 5)
                 
-                if trigger_on_voice and 'voice_chunks' in topic_name:
+                # Check for voice trigger (support both old and new names for compatibility)
+                if trigger_on_voice and ('prompt_voice' in topic_name or 'voice_chunks' in topic_name):
                     # Check if this is the first chunk (chunk_sequence == 0)
                     try:
                         if hasattr(msg, 'chunk_sequence'):
@@ -1108,7 +1109,8 @@ class ROSAIBridge(Node):
                         self.log_debug(f"Error checking chunk_sequence: {e}")
                         is_trigger = True  # Default to triggering on error
                         
-                elif trigger_on_text and 'text_input' in topic_name:
+                # Check for text trigger (support both old and new names for compatibility)
+                elif trigger_on_text and ('prompt_text' in topic_name or 'text_input' in topic_name):
                     is_trigger = True
                     self.log_info(f"🎯 Text input detected - forwarding cached frames")
             

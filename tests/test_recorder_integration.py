@@ -15,7 +15,7 @@ class RecorderTester(Node):
         super().__init__('recorder_tester')
         
         # Publisher for test chunks
-        self.chunk_pub = self.create_publisher(AudioDataUtterance, 'voice_chunks', 10)
+        self.chunk_pub = self.create_publisher(AudioDataUtterance, 'prompt_voice', 10)
         
         # Timer to send test chunks
         self.timer = self.create_timer(0.1, self.send_test_chunk)  # 10Hz

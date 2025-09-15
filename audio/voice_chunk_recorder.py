@@ -21,7 +21,7 @@ class VoiceChunkRecorder(Node):
         self.declare_parameter('sample_rate', DEFAULT_SAMPLE_RATE)
         self.declare_parameter('close_timeout_sec', 2.0)  # Timeout for waiting for final chunk
         self.declare_parameter('input_mode', 'utterance')  # 'utterance', 'audio_data', or 'audio_stamped'
-        self.declare_parameter('input_topic', '/audio_out')  # Topic for audio_data mode
+        self.declare_parameter('input_topic', '/response_voice')  # Topic for audio_data mode (was /audio_out)
         self.declare_parameter('input_sample_rate', 24000)  # Sample rate of input audio
         self.declare_parameter('audio_timeout', 10.0)  # Timeout for audio_data mode
         
@@ -68,7 +68,7 @@ class VoiceChunkRecorder(Node):
         else:
             self.get_logger().info("Starting in utterance mode")
             # Subscribe to enhanced chunks with utterance metadata
-            self.create_subscription(AudioDataUtterance, 'voice_chunks', self.chunk_callback, qos_profile=qos)
+            self.create_subscription(AudioDataUtterance, 'prompt_voice', self.chunk_callback, qos_profile=qos)
             # Optional: still subscribe to voice_activity for debugging/logging only
             self.create_subscription(Bool, 'voice_activity', self.voice_activity_debug, qos_profile=qos)
 

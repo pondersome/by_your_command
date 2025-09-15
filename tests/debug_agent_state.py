@@ -19,14 +19,14 @@ class AgentStateDebugger(Node):
         # Monitor transcripts to see if agents are responding
         self.llm_transcript_sub = self.create_subscription(
             String,
-            'llm_transcript',
+            'response_text',
             self.llm_transcript_callback,
             10
         )
         
         self.command_transcript_sub = self.create_subscription(
             String,
-            'command_transcript', 
+            'response_cmd', 
             self.command_transcript_callback,
             10
         )
