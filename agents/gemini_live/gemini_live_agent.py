@@ -44,6 +44,9 @@ class GeminiLiveAgent:
         
         # Agent identification
         self.agent_id = config.get('agent_id', 'gemini_live')
+        self.agent_role = config.get('agent_role', 'conversation')  # Default to conversation agent
+        self.sibling_agents = config.get('sibling_agents', [])  # List of sibling agent IDs
+        self.has_siblings = len(self.sibling_agents) > 0
         
         # Core components (following OpenAI pattern)
         self.bridge_interface: Optional[WebSocketBridgeInterface] = None
@@ -128,7 +131,9 @@ class GeminiLiveAgent:
         self.receive_coordinator = ReceiveCoordinator(
             self.bridge_interface,
             self.session_manager,
-            self.published_topics
+            self.published_topics,
+            self.agent_id,
+            self.agent_role
         )
         
         self.logger.info("✅ Gemini Live Agent initialized")

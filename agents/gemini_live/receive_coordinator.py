@@ -13,6 +13,7 @@ Date: August 2025
 
 import asyncio
 import logging
+import time
 from typing import Optional, Dict, Any
 import numpy as np
 from google.genai import types
@@ -26,18 +27,23 @@ class ReceiveCoordinator:
     Ends generator on turn_complete, creates new one for next turn.
     """
     
-    def __init__(self, bridge_interface, session_manager, published_topics: Dict[str, str]):
+    def __init__(self, bridge_interface, session_manager, published_topics: Dict[str, str],
+                 agent_id: str = 'gemini_live', agent_role: str = 'conversation'):
         """
         Initialize the coordinator.
-        
+
         Args:
             bridge_interface: WebSocket bridge for communication
             session_manager: Gemini session manager
             published_topics: Topic names for publishing responses
+            agent_id: Unique identifier for this agent
+            agent_role: Role of the agent (conversation or command)
         """
         self.bridge = bridge_interface
         self.session_manager = session_manager
         self.published_topics = published_topics
+        self.agent_id = agent_id
+        self.agent_role = agent_role
         self.logger = logging.getLogger(__name__)
         
         # State tracking - per-turn approach
@@ -57,7 +63,15 @@ class ReceiveCoordinator:
             'turns_completed': 0,
             'sessions_started': 0
         }
-        
+
+    def _create_metadata(self) -> Dict:
+        """Create metadata for outbound messages"""
+        return {
+            "agent_id": self.agent_id,
+            "agent_role": self.agent_role,
+            "timestamp": time.time()
+        }
+
     async def start_turn_receive(self, session):
         """
         Start receive generator for current turn AFTER input is sent.
@@ -312,7 +326,8 @@ class ReceiveCoordinator:
             await self.bridge.put_outbound_message(
                 topic=audio_topic,
                 msg_data={'int16_data': audio_array.tolist()},
-                msg_type='audio_common_msgs/AudioData'
+                msg_type='audio_common_msgs/AudioData',
+                metadata=self._create_metadata()
             )
             self.logger.debug(f"🔊 Published audio ({len(audio_array)} samples)")
             
@@ -327,7 +342,8 @@ class ReceiveCoordinator:
             await self.bridge.put_outbound_message(
                 topic=prompt_transcript_topic,
                 msg_data={'data': text},
-                msg_type='std_msgs/String'
+                msg_type='std_msgs/String',
+                metadata=self._create_metadata()
             )
             self.logger.info(f"📤 Published user transcript to {prompt_transcript_topic}: {text}")
         
@@ -384,7 +400,8 @@ class ReceiveCoordinator:
             await self.bridge.put_outbound_message(
                 topic=topic,
                 msg_data={'data': output_text},
-                msg_type='std_msgs/String'
+                msg_type='std_msgs/String',
+                metadata=self._create_metadata()
             )
             
         # Add to conversation context (only for conversational agents)
@@ -425,7 +442,8 @@ class ReceiveCoordinator:
             await self.bridge.put_outbound_message(
                 topic=topic,
                 msg_data={'data': full_text},
-                msg_type='std_msgs/String'
+                msg_type='std_msgs/String',
+                metadata=self._create_metadata()
             )
             self.logger.info(f"🎯 Published to {topic}: {full_text[:100]}...")
     

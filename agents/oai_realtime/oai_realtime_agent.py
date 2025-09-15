@@ -45,7 +45,13 @@ class OpenAIRealtimeAgent:
     def __init__(self, config: Optional[Dict] = None):
         self.config = config or {}
         self.bridge_interface: Optional[WebSocketBridgeInterface] = None  # Will be set in initialize()
-        
+
+        # Agent identity for context management
+        self.agent_id = self.config.get('agent_id', 'openai_realtime')
+        self.agent_role = self.config.get('agent_role', 'conversation')  # Default to conversation agent
+        self.sibling_agents = self.config.get('sibling_agents', [])  # List of sibling agent IDs
+        self.has_siblings = len(self.sibling_agents) > 0
+
         # Core components - using refactored classes
         self.serializer = OpenAISerializer()
         self.pause_detector = PauseDetector(
@@ -646,9 +652,10 @@ class OpenAIRealtimeAgent:
             # Send to ROS via bridge if audio output is enabled
             if self.published_topics['response_voice']:  # Skip if topic is empty/disabled
                 success = await self.bridge_interface.put_outbound_message(
-                    self.published_topics['response_voice'], 
-                    audio_data_dict, 
-                    "audio_common_msgs/AudioData"
+                    self.published_topics['response_voice'],
+                    audio_data_dict,
+                    "audio_common_msgs/AudioData",
+                    self._create_metadata()
                 )
                 
                 if success:
@@ -679,7 +686,8 @@ class OpenAIRealtimeAgent:
                 success = await self.bridge_interface.put_outbound_message(
                     self.published_topics['prompt_transcript'],
                     transcript_data,
-                    "std_msgs/String"
+                    "std_msgs/String",
+                    self._create_metadata()
                 )
                 if success:
                     self.logger.info("📤 User transcript published to ROS")
@@ -734,7 +742,8 @@ class OpenAIRealtimeAgent:
                     success = await self.bridge_interface.put_outbound_message(
                         topic,
                         transcript_data,
-                        "std_msgs/String"
+                        "std_msgs/String",
+                        self._create_metadata()
                     )
 
                     if success:
@@ -749,7 +758,8 @@ class OpenAIRealtimeAgent:
                             await self.bridge_interface.put_outbound_message(
                                 self.published_topics['command_detected'],
                                 command_signal,
-                                "std_msgs/Bool"
+                                "std_msgs/Bool",
+                                self._create_metadata()
                             )
                             self.logger.info("🤖 Command detected and signaled")
                     else:
@@ -1088,6 +1098,15 @@ class OpenAIRealtimeAgent:
         """Check if agent is running in standalone mode"""
         return self.bridge_interface is None and self.debug_interface is not None
         
+    def _create_metadata(self) -> Dict:
+        """Create metadata for outbound messages"""
+        return {
+            "agent_id": self.agent_id,
+            "agent_role": self.agent_role,
+            "timestamp": time.time(),
+            "conversation_id": self.conversation_monitor.current_conversation_id if hasattr(self, 'conversation_monitor') else None
+        }
+
     def _setup_conversation_logging(self):
         """Add conversation ID to all log messages"""
         # Create a custom filter that adds conversation ID
@@ -1130,7 +1149,8 @@ class OpenAIRealtimeAgent:
             success = await self.bridge_interface.put_outbound_message(
                 "conversation_id",  # Use relative topic name for bridge compatibility
                 conv_msg,
-                "std_msgs/String"
+                "std_msgs/String",
+                self._create_metadata()
             )
             if success:
                 self.logger.info(f"📤 Published conversation ID: {conversation_id}")
@@ -1179,7 +1199,8 @@ class OpenAIRealtimeAgent:
                 await self.bridge_interface.put_outbound_message(
                     self.published_topics['interruption_signal'],
                     interrupt_signal,
-                    "std_msgs/Bool"
+                    "std_msgs/Bool",
+                    self._create_metadata()
                 )
                 self.logger.info("📡 Sent interruption signal to audio player")
             

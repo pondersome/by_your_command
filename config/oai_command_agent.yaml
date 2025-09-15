@@ -2,6 +2,8 @@
 openai_command_agent:
   # Agent Identity
   agent_id: "openai_command_extractor"
+  agent_role: "command"  # Role: conversation or command
+  sibling_agents: ["openai_realtime"]  # Conversation agent sibling
   
   # Bridge Connection (WebSocket-based distributed deployment)
   bridge_connection:

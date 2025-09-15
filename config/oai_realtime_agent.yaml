@@ -2,6 +2,7 @@
 openai_realtime_agent:
   # Agent Identity
   agent_id: "openai_realtime"
+  agent_role: "conversation"  # Role: conversation or command
   
   # Bridge Connection (WebSocket-based distributed deployment)
   bridge_connection:

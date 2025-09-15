@@ -335,12 +335,19 @@ class WebSocketBridgeInterface:
             self.logger.error(f"Error getting inbound message: {e}")
             return None
             
-    async def put_outbound_message(self, topic: str, msg_data: Dict, msg_type: str) -> bool:
-        """Send message back to bridge"""
+    async def put_outbound_message(self, topic: str, msg_data: Dict, msg_type: str, metadata: Dict = None) -> bool:
+        """Send message back to bridge with optional metadata
+
+        Args:
+            topic: ROS topic to publish to
+            msg_data: Message data dictionary
+            msg_type: ROS message type
+            metadata: Optional metadata dict with agent_id, agent_role, etc.
+        """
         if not self.connected or not self.websocket:
             self.logger.warning("Cannot send message - not connected to bridge")
             return False
-            
+
         try:
             outbound = {
                 "type": "outbound_message",
@@ -348,14 +355,18 @@ class WebSocketBridgeInterface:
                 "msg_type": msg_type,
                 "data": msg_data
             }
-            
+
+            # Add metadata if provided
+            if metadata:
+                outbound["metadata"] = metadata
+
             outbound_json = json.dumps(outbound)
             self.logger.info(f"📤 Sending outbound message to bridge: {outbound_json[:100]}...")
             await self.websocket.send(outbound_json)
             self.messages_sent += 1
             self.logger.info(f"✅ Successfully sent message to topic: {topic}")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Failed to send outbound message: {e}")
             return False

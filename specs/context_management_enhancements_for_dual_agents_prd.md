@@ -180,13 +180,13 @@ Agents subscribe to each other's output topics:
 
 ```python
 # Conversation agent subscribes to:
-- voice_chunks
-- command_transcript  # From command agent
+- prompt_voice
+- response_cmd  # From command agent
 
 # Command agent subscribes to:
-- voice_chunks  
-- llm_transcript  # From conversation agent
-- user_transcript  # For authoritative transcription
+- prompt_voice
+- response_text  # From conversation agent
+- prompt_transcript  # For authoritative transcription
 ```
 
 ### 6.4 Context Incorporation Logic
@@ -235,8 +235,8 @@ def __init__(self):
 - Still no context sharing
 
 ### 7.4 Phase 3: Cross-Subscription
-- Conversation agent subscribes to command_transcript
-- Command agent subscribes to llm_transcript
+- Conversation agent subscribes to response_cmd
+- Command agent subscribes to response_text
 - Add filtering to prevent self-loops
 
 ### 7.5 Phase 4: Context Incorporation
@@ -255,7 +255,7 @@ def __init__(self):
 
 ```json
 {
-  "topic": "/user_transcript",
+  "topic": "/prompt_transcript",
   "data": "move forward please",
   "metadata": {
     "agent_id": "gemini_conversational",

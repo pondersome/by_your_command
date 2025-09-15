@@ -9,6 +9,8 @@
 gemini_live_agent:
   # Agent Identification
   agent_id: "gemini_command_extractor"
+  agent_role: "command"  # Role: conversation or command
+  sibling_agents: ["gemini_conversational"]  # Conversation agent sibling
   
   # API Configuration
   # Set GEMINI_API_KEY environment variable for security
