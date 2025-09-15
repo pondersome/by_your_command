@@ -89,7 +89,7 @@ class EndToEndTester:
             
             mock_envelope_data = {
                 "msg_type": "topic",
-                "topic_name": "/voice_chunks",
+                "topic_name": "/prompt_voice",
                 "ros_msg_type": "by_your_command/AudioDataUtterance",
                 "timestamp": time.time(),
                 "metadata": {"source_node": "test"},
@@ -139,7 +139,7 @@ class EndToEndTester:
             # Send test transcript back to bridge
             transcript_data = {"data": "Test transcript from agent"}
             success = await self.bridge_interface.put_outbound_message(
-                "/llm_transcript",
+                "/response_text",
                 transcript_data,
                 "std_msgs/String"
             )

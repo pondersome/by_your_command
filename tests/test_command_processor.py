@@ -16,7 +16,7 @@ class CommandProcessorTester(Node):
         super().__init__('command_processor_tester')
         
         # Publisher for command transcripts
-        self.command_pub = self.create_publisher(String, 'command_transcript', 10)
+        self.command_pub = self.create_publisher(String, 'response_cmd', 10)
         
         # Subscribers to monitor outputs
         self.arm_sub = self.create_subscription(

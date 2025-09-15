@@ -34,8 +34,8 @@ class SimpleWebSocketAgent:
                 "agent_id": self.agent_id,
                 "capabilities": ["audio_processing", "test_agent"],
                 "subscriptions": [
-                    {"topic": "/voice_chunks", "msg_type": "by_your_command/AudioDataUtterance"},
-                    {"topic": "/text_input", "msg_type": "std_msgs/String"}
+                    {"topic": "/prompt_voice", "msg_type": "by_your_command/AudioDataUtterance"},
+                    {"topic": "/prompt_text", "msg_type": "std_msgs/String"}
                 ]
             }
             
@@ -114,7 +114,7 @@ class SimpleWebSocketAgent:
             
         test_message = {
             "type": "outbound_message",
-            "topic": "/llm_transcript",
+            "topic": "/response_text",
             "msg_type": "std_msgs/String",
             "data": {"data": f"Test message from {self.agent_id}"}
         }

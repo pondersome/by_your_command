@@ -37,7 +37,7 @@ ros2 run by_your_command test_sleep_clap_integration
 ros2 run by_your_command test_clap_detection
 
 # Voice control commands
-ros2 topic pub /command_transcript std_msgs/String "data: 'sleep'"  # Sleep command
+ros2 topic pub /response_cmd std_msgs/String "data: 'sleep'"  # Sleep command
 
 # Remote mute/unmute control for Silero VAD
 ros2 topic pub /voice_active std_msgs/Bool "data: false"  # Mute
@@ -81,7 +81,7 @@ ByYourCommand is a ROS 2 package for voice-controlled interactions using:
 5. Real-time transcription and LLM response generation via OpenAI Realtime API
 
 **Voice Output & Interruption**:
-1. LLM audio responses streamed back through bridge to `/audio_out`
+1. LLM audio responses streamed back through bridge to `/response_voice`
 2. Audio player provides real-time playback with interruption monitoring
 3. User speech during assistant speaking triggers three-stage interruption:
    - OpenAI API: `response.cancel` + `conversation.item.truncate`

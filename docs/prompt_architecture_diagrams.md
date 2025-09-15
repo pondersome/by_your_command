@@ -105,10 +105,10 @@ flowchart TB
     end
     
     subgraph "Output Topics"
-        L --> P[audio_out<br/>Voice Response]
-        L --> Q[llm_transcript<br/>Conversation Text]
+        L --> P[response_voice<br/>Voice Response]
+        L --> Q[response_text<br/>Conversation Text]
         M --> R["Brief Acknowledgment<br/>'OK - moving forward'"]
-        N --> S[command_transcript<br/>Movement Commands]
+        N --> S[response_cmd<br/>Movement Commands]
         O --> S
     end
     
@@ -170,11 +170,11 @@ stateDiagram-v2
             VisionQuery --> DescribeScene: Generate description  
             DescribeScene --> Output3: Natural language scene
             
-            Output1 --> PublishTranscript: To llm_transcript
+            Output1 --> PublishTranscript: To response_text
             Output2 --> PublishTranscript
             Output3 --> PublishTranscript
-            
-            Output1 --> PublishAudio: To audio_out
+
+            Output1 --> PublishAudio: To response_voice
             Output2 --> PublishAudio
             Output3 --> PublishAudio
         }
@@ -196,7 +196,7 @@ stateDiagram-v2
             
             NotRelevant --> Silent: No output
             
-            OutputCmd --> PublishCmd: To command_transcript
+            OutputCmd --> PublishCmd: To response_cmd
             OutputScene --> PublishCmd
         }
     }
@@ -281,8 +281,8 @@ sequenceDiagram
         CmdAgent->>Bridge: {"command": "move@forward"}
     end
     
-    Bridge->>CmdProc: Commands via command_transcript
-    Bridge->>User: Audio response via audio_out
+    Bridge->>CmdProc: Commands via response_cmd
+    Bridge->>User: Audio response via response_voice
     
     CmdProc->>Robot: ARM:lookup preset
     CmdProc->>Robot: move@forward command
@@ -302,7 +302,7 @@ sequenceDiagram
 | **Conversation** | Full natural responses | Silent (no response) |
 | **Vision Queries** | Natural language descriptions | JSON object list with coordinates |
 | **Audio Output** | ✅ Enabled | ❌ Disabled |
-| **Text Output Topic** | `/llm_transcript` | `/command_transcript` |
+| **Text Output Topic** | `/response_text` | `/response_cmd` |
 | **Macros Used** | `robot_name`, `robot_capabilities`, `cmd_response`, `personality_traits` | `robot_name`, `robot_capabilities`, `arm_presets`, `bearing_presets`, `motion_commands` |
 | **Response Examples** | "I can see a red ball on the table" | `{"command": "ARM:lookup"}` |
 | **Silent Conditions** | Never (always responds) | Non-command inputs |

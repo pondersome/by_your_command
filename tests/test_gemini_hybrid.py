@@ -28,8 +28,8 @@ async def main():
         'session_pause_timeout': 10.0,
         'conversation_timeout': 600.0,
         'system_prompt': 'You are a helpful assistant. Be concise.',
-        'audio_out_topic': 'audio_out',
-        'transcript_topic': 'llm_transcript',
+        'response_voice_topic': 'response_voice',
+        'transcript_topic': 'response_text',
         'interruption_signal_topic': 'interruption_signal'
     }
     

@@ -1,4 +1,7 @@
 # OpenAI Realtime API Agent Product Requirements Document
+
+> **Note: This document predates the topic renaming refactoring (2025-09-14). Some topic names mentioned here have been updated in the implementation. See `topic_renaming_refactoring_prd.md` for current naming.**
+
 ## Real-Time Conversational AI with Intelligent Session Management
 
 **Author**: Karim Virani  
@@ -62,8 +65,8 @@ Multimodal realtime API sessions can become exponentially expensive with session
 #### Session Cycling Solution
 **Key Architectural Innovation**: Local VAD pre-filtering enables intelligent session cycling:
 
-- `/voice_chunks` topic receives VAD-filtered audio from `silero_vad_node`
-- True silence detection via absence of `/voice_chunks` messages
+- `/prompt_voice` topic receives VAD-filtered audio from `silero_vad_node`
+- True silence detection via absence of `/prompt_voice` messages
 - Independent of OpenAI's server-side VAD for pause detection
 - Clean pause boundaries enable aggressive session cycling
 
@@ -201,8 +204,8 @@ The agent uses the shared `WebSocketBridgeInterface` from `agents/common/` with 
                 "agent_id": self.agent_id,
                 "capabilities": ["audio_processing", "realtime_api"],
                 "subscriptions": [
-                    {"topic": "/voice_chunks", "msg_type": "by_your_command/AudioDataUtterance"},
-                    {"topic": "/text_input", "msg_type": "std_msgs/String"}
+                    {"topic": "/prompt_voice", "msg_type": "by_your_command/AudioDataUtterance"},
+                    {"topic": "/prompt_text", "msg_type": "std_msgs/String"}
                 ]
             }
             await self.websocket.send(json.dumps(registration))
@@ -347,7 +350,7 @@ class OpenAIRealtimeAgent:
                 # Send transcript back through bridge
                 transcript_msg = {"data": data["transcript"]}
                 await self.bridge_interface.put_outbound_message(
-                    "/llm_transcript", 
+                    "/response_text", 
                     transcript_msg, 
                     "std_msgs/String"
                 )
@@ -357,7 +360,7 @@ class OpenAIRealtimeAgent:
                 audio_data = base64.b64decode(data["delta"])
                 audio_msg = {"int16_data": np.frombuffer(audio_data, dtype=np.int16).tolist()}
                 await self.bridge_interface.put_outbound_message(
-                    "/audio_out", 
+                    "/response_voice", 
                     audio_msg, 
                     "audio_common_msgs/AudioData"
                 )
@@ -657,11 +660,11 @@ IDLE → CONNECTING → ACTIVE → CLOSING → CLOSED → IDLE
 
 #### 3.1.2 Core Strategy: Aggressive Pause-Based Cycling
 
-**Key Insight**: Every pause is an opportunity to reset the expensive token accumulation by cycling the session. This works because `/voice_chunks` arrives pre-filtered by local VAD, allowing true pause detection.
+**Key Insight**: Every pause is an opportunity to reset the expensive token accumulation by cycling the session. This works because `/prompt_voice` arrives pre-filtered by local VAD, allowing true pause detection.
 
 **VAD Architecture**:
 ```
-[Microphone] → [silero_vad_node] → /voice_chunks → [ros_ai_bridge] → [LLM API]
+[Microphone] → [silero_vad_node] → /prompt_voice → [ros_ai_bridge] → [LLM API]
                      ↑                                        ↓
               (Local VAD filtering)                  (API also has VAD)
 ```
@@ -709,8 +712,8 @@ class PauseDetector:
 - This is **independent** of the OpenAI Realtime API's internal VAD
 
 **Session Creation Triggers**:
-- First `/voice_chunks` received when no session exists
-- New `/voice_chunks` after pause-induced closure
+- First `/prompt_voice` received when no session exists
+- New `/prompt_voice` after pause-induced closure
 - After any session rotation (pause-based or limit-based)
 
 **Session Rotation Triggers**:
@@ -1050,7 +1053,7 @@ async def _connect_to_bridge(self):
 audio_data = create_test_audio_sine_wave(440, 2.0)  # 440Hz for 2 seconds
 noise_data = create_test_audio_noise(1.0)           # 1 second white noise
 
-# Inject into agent (processes as if from /voice_chunks topic)
+# Inject into agent (processes as if from /prompt_voice topic)
 success = await agent.debug_inject_audio(
     audio_data,
     utterance_id="test_speech_001",
@@ -1061,7 +1064,7 @@ success = await agent.debug_inject_audio(
 
 **Text Message Injection**:
 ```python
-# Inject text messages (processes as if from /text_input topic)
+# Inject text messages (processes as if from /prompt_text topic)
 success = await agent.debug_inject_text("Hello Barney, move your arm up!")
 ```
 
@@ -1438,12 +1441,12 @@ The complete audio flow through the system:
 ```
 Input Pipeline:
 Microphone → audio_capturer (16kHz) → echo_suppressor → /audio_filtered → 
-silero_vad → /voice_chunks (AudioDataUtterance) → ROS Bridge → 
+silero_vad → /prompt_voice (AudioDataUtterance) → ROS Bridge → 
 WebSocket → Agent → OpenAI API
 
 Output Pipeline:
 OpenAI API → response.audio.delta (24kHz PCM16) → Agent → 
-/audio_out (AudioData) → simple_audio_player → PyAudio → Speakers
+/response_voice (AudioData) → simple_audio_player → PyAudio → Speakers
 ```
 
 ### 4.2 Critical Implementation Discoveries
@@ -1480,7 +1483,7 @@ OpenAI API → response.audio.delta (24kHz PCM16) → Agent →
 - **Lesson**: Always verify message field names match between publishers and subscribers
 
 ### 4.4 Audio Debugging Tools
-- **voice_chunk_recorder**: Enhanced with audio_data mode to save /audio_out to WAV files
+- **voice_chunk_recorder**: Enhanced with audio_data mode to save /response_voice to WAV files
 - **Parameters**: input_mode='audio_data', input_sample_rate=24000, audio_timeout=10.0
 - **Usage**: Verify audio format and content before debugging playback issues
 

@@ -45,7 +45,7 @@ Audio Input → [silero_vad_node] → Voice Chunks → [downstream processors]
 - `/audio` (AudioStamped): Continuous audio stream from audio_capturer_node
 
 **Outputs**:
-- `/voice_chunks` (by_your_command/AudioDataUtterance): Enhanced voice segments with utterance metadata
+- `/prompt_voice` (by_your_command/AudioDataUtterance): Enhanced voice segments with utterance metadata
 - `/voice_activity` (Bool): Binary voice state for system coordination
 
 **Key Features**:
@@ -59,7 +59,7 @@ Audio Input → [silero_vad_node] → Voice Chunks → [downstream processors]
 **Purpose**: Testing and validation node for voice chunk quality
 
 **Inputs**:
-- `/voice_chunks` (by_your_command/AudioDataUtterance): Enhanced voice segments with metadata
+- `/prompt_voice` (by_your_command/AudioDataUtterance): Enhanced voice segments with metadata
 - `/voice_activity` (Bool): Utterance boundary markers
 
 **Outputs**:
@@ -318,10 +318,10 @@ The clap detection system has several **hardcoded thresholds** that cannot be tu
 ### Subscribed Topics
 - `/audio` (AudioStamped): Raw audio input stream
 - `/voice_active` (Bool): Remote mute/unmute control
-- `/text_input` (String): Text-based wake commands
+- `/prompt_text` (String): Text-based wake commands
 
 ### Published Topics
-- `/voice_chunks` (AudioDataUtterance): Enhanced voice segments with metadata
+- `/prompt_voice` (AudioDataUtterance): Enhanced voice segments with metadata
 - `/voice_activity` (Bool): Binary voice detection state
 - `/voice_active` (Bool): Wake signals from clap/text detection
 
@@ -361,7 +361,7 @@ QoS:
    - **State Machine**: Tracks timing between claps for pattern validation
    - **Bug Fix**: Removed hardcoded 15x loudness check that invalidated configurable spike_ratio
 
-2. **Text-Based Wake Commands**: Added programmatic wake-up via text_input topic
+2. **Text-Based Wake Commands**: Added programmatic wake-up via prompt_text topic
    - **Commands**: "wake", "awaken", "wake up" with case-insensitive partial matching
    - **Integration**: Publishes to voice_active for system-wide coordination
    - **Safety**: Self-triggered wake flag prevents feedback loops
@@ -449,15 +449,15 @@ QoS:
 - ✅ Comprehensive test utilities for validation and integration testing
 - ✅ Speech→voice terminology standardization across the codebase
 - ✅ **Adaptive clap detection with double-clap pattern recognition**
-- ✅ **Text-based wake commands via text_input topic**
+- ✅ **Text-based wake commands via prompt_text topic**
 - ✅ **Remote mute/unmute control via voice_active topic**
 - ✅ **Background noise adaptation for consistent detection**
 
 ### 📋 Current Architecture
 - **Message Types**: by_your_command/AudioDataUtterance, by_your_command/AudioDataUtteranceStamped
 - **Topics**: 
-  - Input: /audio, /voice_active, /text_input
-  - Output: /voice_chunks, /voice_activity, /voice_active
+  - Input: /audio, /voice_active, /prompt_text
+  - Output: /prompt_voice, /voice_activity, /voice_active
 - **Nodes**: silero_vad_node (with wake-up mechanisms), voice_chunk_recorder (utterance-aware)
 - **Classes**: AdaptiveClapDetector (background tracking and spike detection)
 - **Test Utilities**: test_utterance_chunks, test_recorder_integration, test_clap_detection

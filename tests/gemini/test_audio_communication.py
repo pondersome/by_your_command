@@ -35,7 +35,7 @@ async def main():
     }
     
     # Find an audio file to use as input
-    audio_dir = Path("/tmp/voice_chunks/assistant_output")
+    audio_dir = Path("/tmp/prompt_voice/assistant_output")
     wav_files = list(audio_dir.glob("*.wav"))
     if not wav_files:
         print("❌ No audio files found")

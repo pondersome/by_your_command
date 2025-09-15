@@ -27,7 +27,7 @@ digraph DualAgentProcessing {
         fillcolor="#f5f5f5";
         
         E [label="Silero VAD", fillcolor="#37474f", fontcolor="white"];
-        F [label="Voice Chunks", fillcolor="#37474f", fontcolor="white"];
+        F [label="Prompt Voice", fillcolor="#37474f", fontcolor="white"];
         G [label="Compressed Images", fillcolor="#37474f", fontcolor="white"];
         
         B -> E [ltail=cluster_input];
@@ -42,7 +42,7 @@ digraph DualAgentProcessing {
         fillcolor="#eeeeee";
         
         H [label="WebSocket Server\nPort 8765", fillcolor="#616161", fontcolor="white"];
-        I [label="Text Input", fillcolor="#37474f", fontcolor="white"];
+        I [label="Prompt Text", fillcolor="#37474f", fontcolor="white"];
         
         I -> H;
     }
@@ -79,10 +79,10 @@ digraph DualAgentProcessing {
         style=filled;
         fillcolor="#f5f5f5";
         
-        P [label="audio_out\nVoice Response", fillcolor="#4caf50", fontcolor="white"];
-        Q [label="llm_transcript\nConversation Text", fillcolor="#4caf50", fontcolor="white"];
+        P [label="response_voice\nVoice Response", fillcolor="#4caf50", fontcolor="white"];
+        Q [label="response_text\nConversation Text", fillcolor="#4caf50", fontcolor="white"];
         R [label="Brief Acknowledgment\n'OK - moving forward'", fillcolor="#757575", fontcolor="white"];
-        S [label="command_transcript\nMovement Commands", fillcolor="#ff9800", fontcolor="black"];
+        S [label="response_cmd\nMovement Commands", fillcolor="#ff9800", fontcolor="black"];
         
         L -> P;
         L -> Q;

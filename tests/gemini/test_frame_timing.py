@@ -21,12 +21,12 @@ class FrameTimingTester(Node):
         )
         self.voice_pub = self.create_publisher(
             AudioDataUtterance,
-            'voice_chunks',
+            'prompt_voice',
             10
         )
         self.text_pub = self.create_publisher(
             String,
-            'text_input',
+            'prompt_text',
             10
         )
         

@@ -92,7 +92,7 @@ by_your_command/AudioDataUtterance audio_data_utterance
 1. **Message Type Update**:
    ```python
    from by_your_command.msg import AudioDataUtterance
-   self.create_subscription(AudioDataUtterance, 'voice_chunks', self.chunk_callback, qos_profile=qos)
+   self.create_subscription(AudioDataUtterance, 'prompt_voice', self.chunk_callback, qos_profile=qos)
    ```
 
 2. **Utterance-Aware File Management**:

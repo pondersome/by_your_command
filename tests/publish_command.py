@@ -28,7 +28,7 @@ def main(args=None):
     rclpy.init(args=args)
     node = Node('command_publisher')
     
-    pub = node.create_publisher(String, 'command_transcript', 10)
+    pub = node.create_publisher(String, 'response_cmd', 10)
     
     # Wait for publisher to connect
     import time
