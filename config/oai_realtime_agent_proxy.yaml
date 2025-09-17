@@ -8,7 +8,7 @@ openai_realtime_agent:
   bridge_connection:
     type: "websocket"               # Connection type: websocket | direct
     host: "localhost"               # Bridge WebSocket server host
-    port: 8765                      # Bridge WebSocket server port
+    port: 8766                      # Connect through proxy for shared context
     reconnect_interval: 5.0         # Seconds between reconnection attempts
     max_reconnect_attempts: 10      # Maximum reconnection attempts
     heartbeat_interval: 30          # WebSocket heartbeat interval

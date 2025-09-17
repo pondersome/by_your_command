@@ -92,10 +92,12 @@ class OpenAISessionManager(BaseSessionManager):
         self.logger.info(f"Using voice: {voice_setting} (from config)")
         
         # OpenAI session configuration message
+        # Get modalities from response_config, default to text+audio
+        modalities = self.config.get('response_config', {}).get('modalities', ["text", "audio"])
         config_msg = {
             "type": "session.update",
             "session": {
-                "modalities": ["text", "audio"],
+                "modalities": modalities,
                 "instructions": system_prompt,
                 "voice": voice_setting,
                 "input_audio_format": "pcm16",
@@ -172,12 +174,14 @@ class OpenAISessionManager(BaseSessionManager):
         """Update OpenAI session with new prompt"""
         try:
             # Build update message with new prompt
+            # Get modalities from response_config
+            modalities = self.config.get('response_config', {}).get('modalities', ["text", "audio"])
             config_msg = {
                 "type": "session.update",
                 "session": {
                     "instructions": prompt,
                     # Keep other settings the same
-                    "modalities": ["text", "audio"],
+                    "modalities": modalities,
                     "voice": self.config.get('voice', 'alloy'),
                     "turn_detection": {
                         "type": "server_vad",

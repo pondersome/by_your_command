@@ -1,0 +1,4790 @@
+Directory structure:
+└── v-kiniv-rws/
+    ├── README.md
+    ├── CMakeLists.txt
+    ├── LICENSE
+    ├── package.xml
+    ├── include/
+    │   └── rws/
+    │       ├── client_handler.hpp
+    │       ├── connector.hpp
+    │       ├── generic_client.hpp
+    │       ├── node_interface.hpp
+    │       ├── node_interface_impl.hpp
+    │       ├── translate.hpp
+    │       └── typesupport_helpers.hpp
+    ├── launch/
+    │   └── rws_server_launch.py
+    ├── src/
+    │   ├── client_handler.cpp
+    │   ├── serdes.cpp
+    │   ├── serdes.hpp
+    │   ├── server_node.cpp
+    │   ├── translate.cpp
+    │   └── typesupport_helpers.cpp
+    └── test/
+        ├── client_handler_test.cpp
+        ├── connector_test.cpp
+        ├── translate_test.cpp
+        ├── typesupport_helpers_test.cpp
+        └── mocks/
+            ├── generic_publisher_mock.hpp
+            └── node_mock.hpp
+
+================================================
+FILE: README.md
+================================================
+# ROS WebSocket Server
+RWS provides WebSocket interface to ROS2. It is partially* compatible with Rosbridge v2 protocol and can be used as a drop-in replacement. The main difference with Rosbridge is that RWS is written is C++, hence it's more fast and memory efficient, however ROS1 is not supported.
+
+_* Not all Rosbridge operations supported, check compatability section below for more information_.
+
+For general information regarding the protocol, check [Rosbridge protocol description](https://github.com/RobotWebTools/rosbridge_suite/blob/ros2/ROSBRIDGE_PROTOCOL.md).
+
+# Usage
+Clone RWS into your workspace source directory:
+```bash
+cd your_workspace_dir/src
+git clone https://github.com/v-kiniv/rws.git
+# Build your workspace using colcon, as usual
+```
+
+Launch using launch script provided by the package:
+```bash
+# source your workspace
+ros2 launch rws rws_server_launch.py
+```
+
+Or add `rws_server` node to your own launch script:
+```bash
+rws_server_node = Node(
+	package='rws',
+	executable='rws_server',
+	name='rws_server',
+	output='screen',
+	parameters=[{
+	  # ...
+	}]
+)
+```
+
+# Parameters
+* `port` - port to use for websocket server. `9090` by default.
+* `rosbridge_compatible` - enable compatibility with rosbridge protocol. Currently the only difference is that **stamp->nanosec** field in all messages will be renamed to **stamp->nsec**. `True` by default.
+* `watchdog` - use ping/pong to detect and drop unresponsive clients that keep TCP connection open. `True` by default.
+
+# Rosbridge compatability
+
+### Operations
+| Operation | RWS | Rosbridge | Description|
+| --- | --- | --- | --- |
+| advertise | + | + | Advertise topic |
+| unadvertise | + | + | Stop advertising topic |
+| publish | + | + | Publish to topic |
+| subscribe | + | + | Subscribe to topic |
+| unsubscribe | + | + | Unsubscribe from topic |
+| call_service | + | + | Call service |
+| advertise_service | - | + |Advertise external service |
+| unadvertise_service | - | + | Stop advertising external service |
+| service_request | - | + | Request to external service |
+| service_response | - | + | Response from external service |
+
+### Fragmentation
+**Message fragmentation is not supported in RWS**
+
+### Compression
+| Algorithm | RWS | Rosbridge |
+| --- | --- | --- |
+| CBOR-RAW | + | + |
+| CBOR | + | + |
+| BSON | + | + |
+| MessagePack | + | - |
+| UBJSON | + | - |
+| BJData | + | - |
+
+### Rosapi service calls
+Unlike Rosbridge, RWS does not expose `/rosapi` node, all `rosapi` related API requests are handled internally in `rws_server` node.
+
+Check the list of implemented `rosapi` services in https://github.com/v-kiniv/rws/issues/49#issue-2839982035
+
+# Dependencies
+RWS is using [websocketpp](https://github.com/zaphoyd/websocketpp), [asio](https://github.com/chriskohlhoff/asio) and [nlohmann/json](https://github.com/nlohmann/json). These 3 libraries will be fetched by CMake during configuration step.
+
+# Motivation behind RWS
+In my experiece, Rosbridge does not work well with the second version of ROS. Seems like Rosbridge developers mainly focused on ROS1 support, and ROS2 is handled on a best effort basis(for example, check [this issue](https://github.com/RobotWebTools/rosbridge_suite/issues/744)). I'm experiencing severe memory leaks(~1 GB of memory per day), high CPU usage, on a device like Raspberry Pi it's a problem. It's also not very stable and sometimes crashes if multiple clients reconnect rapidly.
+My first intention was to fix ROS2 support in Rosbridge. I started by collecting all non-merged fixes from other people and trying to add my own, some progress was made, but the server was still CPU hungry(even though less leaky and more stable), so I decided that C++ is more appropriate than Python, for this kind of task.
+
+### Performance
+Here is the data from `htop` command output from a Raspberry Pi 4B(4GB version) running the following stack:
+* ROS2 Galactic
+* Rosbridge(as of [this commit](https://github.com/RobotWebTools/rosbridge_suite/commit/7af3683ec6a02b1569d7e3c42367721b0be2ac78)) node
+* iRobot Create 2 nodes
+* Lidar driver node(RPLidar A1)
+* IMU driver node(BNO055)
+
+Client is a Mac running Ventura and Foxglove Studio(v1.32.0) subscibed to 7x20Hz and 3x1Hz topics(plots with IMU data, odometry, etc.).
+
+| Process | CPU Usage | Memory Usage(initial) |
+| --- | --- | --- |
+| rosbridge_server | 57.4% | 59 MB |
+| rws_server | 12.8% | 18 MB |
+
+This is **not** a benchmark by any means, and is intended to demostrate that there **is** a difference in performance with my setup. I encourage you to try RWS with your setup and draw conslusion based on that.
+
+
+
+================================================
+FILE: CMakeLists.txt
+================================================
+cmake_minimum_required(VERSION 3.8)
+project(rws)
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+cmake_policy(SET CMP0135 NEW)
+
+### Fetch JSON at configure time
+include(FetchContent)
+fetchcontent_declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.2/json.tar.xz)
+fetchcontent_makeavailable(json)
+# /JSON
+
+### Fetch ASIO at configure time
+add_definitions(
+  # Complile ASIO without Boost
+  -DBOOST_DATE_TIME_NO_LIB
+  -DBOOST_REGEX_NO_LIB
+  -DASIO_STANDALONE
+)
+fetchcontent_declare(asio
+  GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
+  GIT_TAG asio-1-24-0)
+
+fetchcontent_getproperties(asio)
+if(NOT asio_POPULATED)
+  fetchcontent_populate(asio)
+endif()
+
+add_library(asio INTERFACE)
+target_include_directories(asio INTERFACE ${asio_SOURCE_DIR}/asio/include)
+# /ASIO
+
+### Fetch ASIO at configure time
+add_definitions(
+  # Compile websocketpp with C++11
+  -D_WEBSOCKETPP_CPP11_STL_
+  -D_WEBSOCKETPP_CPP11_FUNCTIONAL_
+)
+fetchcontent_declare(websocketpp
+GIT_REPOSITORY https://github.com/zaphoyd/websocketpp.git
+  GIT_TAG 0.8.2)
+fetchcontent_getproperties(websocketpp)
+if(NOT websocketpp_POPULATED)
+  fetchcontent_populate(websocketpp)
+  add_subdirectory(${websocketpp_SOURCE_DIR} ${websocketpp_BINARY_DIR} EXCLUDE_FROM_ALL)
+endif()
+
+add_library(websocketpp INTERFACE)
+target_include_directories(websocketpp INTERFACE ${websocketpp_SOURCE_DIR})
+# /WEBSOCKETPP
+
+set(DEPENDENCIES
+  rclcpp
+  ament_index_cpp
+  CycloneDDS
+)
+
+# Find ROS dependencies
+find_package(ament_cmake REQUIRED)
+foreach(Dependency IN ITEMS ${DEPENDENCIES})
+  find_package(${Dependency} REQUIRED)
+endforeach()
+
+file(GLOB SRCFILES src/*.*pp)
+add_executable(rws_server ${SRCFILES})
+ament_target_dependencies(rws_server ${DEPENDENCIES})
+target_include_directories(rws_server PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+  $<INSTALL_INTERFACE:include>)
+target_compile_features(rws_server PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
+target_link_libraries(rws_server CycloneDDS::ddsc asio websocketpp nlohmann_json::nlohmann_json)
+
+install(TARGETS rws_server
+  DESTINATION lib/${PROJECT_NAME})
+
+install(DIRECTORY launch
+  DESTINATION share/${PROJECT_NAME}/
+)
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_gmock REQUIRED)
+  find_package(ament_lint_auto REQUIRED)
+  find_package(rcl_interfaces REQUIRED)
+
+  # the following lines skip linters
+  set(ament_cmake_cppcheck_FOUND TRUE)
+  set(ament_cmake_copyright_FOUND TRUE)
+  set(ament_cmake_cpplint_FOUND TRUE)
+  set(ament_cmake_flake8_FOUND TRUE)
+  set(ament_cmake_uncrustify_FOUND TRUE)
+
+  # Run all lint tests in package.xml except those listed above
+  ament_lint_auto_find_test_dependencies()
+
+  # rws_translate_test
+  ament_add_gtest(rws_translate_test
+    src/typesupport_helpers.cpp
+    src/translate.cpp
+    src/serdes.cpp
+    test/translate_test.cpp
+  )
+  ament_target_dependencies(rws_translate_test ${DEPENDENCIES})
+  target_include_directories(rws_translate_test PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<INSTALL_INTERFACE:include>)
+  target_link_libraries(rws_translate_test CycloneDDS::ddsc nlohmann_json::nlohmann_json)
+
+  # rws_typesupport_helpers_test
+  ament_add_gtest(rws_typesupport_helpers_test
+    src/typesupport_helpers.cpp
+    test/typesupport_helpers_test.cpp
+  )
+  ament_target_dependencies(rws_typesupport_helpers_test ${DEPENDENCIES})
+  target_include_directories(rws_typesupport_helpers_test PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<INSTALL_INTERFACE:include>)
+
+  # rws_connector_test
+  ament_add_gmock(rws_connector_test
+    test/connector_test.cpp
+    src/typesupport_helpers.cpp
+  )
+  ament_target_dependencies(rws_connector_test ${DEPENDENCIES})
+  target_include_directories(rws_connector_test PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/test/mocks>
+    $<INSTALL_INTERFACE:include>)
+
+  # client_handler_test
+  ament_add_gmock(client_handler_test
+    test/client_handler_test.cpp
+    src/client_handler.cpp
+    src/typesupport_helpers.cpp
+    src/translate.cpp
+    src/serdes.cpp
+  )
+  ament_target_dependencies(client_handler_test ${DEPENDENCIES})
+  target_include_directories(client_handler_test PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/test/mocks>
+    $<INSTALL_INTERFACE:include>)
+  target_link_libraries(client_handler_test CycloneDDS::ddsc nlohmann_json::nlohmann_json)
+endif()
+
+ament_package()
+
+
+
+================================================
+FILE: LICENSE
+================================================
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+
+================================================
+FILE: package.xml
+================================================
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>rws</name>
+  <version>1.0.0</version>
+  <description>ROS WebSocket Server</description>
+  <maintainer email="vasily.kiniv@gmail.com">Vasily Kiniv</maintainer>
+  <license>Apache License 2.0</license>
+
+  <depend>cyclonedds</depend>
+  
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <build_depend>rclcpp</build_depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  <test_depend>rcl_interfaces</test_depend>
+  <test_depend>test_msgs</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
+
+
+
+================================================
+FILE: include/rws/client_handler.hpp
+================================================
+// Copyright 2022 Vasily Kiniv
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef RWS__NODE_HPP_
+#define RWS__NODE_HPP_
+
+#include <nlohmann/json.hpp>
+
+#include "rclcpp/rclcpp.hpp"
+#include "rws/connector.hpp"
+#include "rws/generic_client.hpp"
+
+namespace rws
+{
+
+using json = nlohmann::json;
+class ClientHandler
+{
+public:
+  ClientHandler(
+    int client_id, std::shared_ptr<rws::NodeInterface<>> node,
+    std::shared_ptr<Connector<>> connector, bool rosbridge_compatible,
+    std::function<void(std::string & msg)> callback,
+    std::function<void(std::vector<std::uint8_t> & msg)> binary_callback);
+  json process_message(json & msg);
+
+  ~ClientHandler();
+
+private:
+  int client_id_;
+  std::shared_ptr<rws::NodeInterface<>> node_;
+  std::shared_ptr<rws::Connector<>> connector_;
+  bool rosbridge_compatible_;
+  std::function<void(std::string & msg)> callback_;
+  std::function<void(std::vector<std::uint8_t> & msg)> binary_callback_;
+
+  std::map<std::string, std::function<void()>> subscriptions_;
+  std::map<std::string, std::function<void()>> publishers_;
+  std::map<std::string, std::string> publisher_type_;
+  std::map<std::string, std::function<void(std::shared_ptr<const rclcpp::SerializedMessage>)>>
+    publisher_cb_;
+  std::map<std::string, std::shared_ptr<rws::GenericClient>> clients_;
+
+  rclcpp::Logger get_logger()
+  {
+    return rclcpp::get_logger(std::string("client_handler_") + std::to_string(client_id_));
+  }
+
+  void send_message(std::string & msg);
+  void send_message(std::vector<std::uint8_t> & msg);
+
+  // Topic handlers
+  bool subscribe_to_topic(const json & request, json & response_out);
+  bool unsubscribe_from_topic(const json & request, json & response_out);
+  bool advertise_topic(const json & request, json & response_out);
+  bool unadvertise_topic(const json & request, json & response_out);
+  bool publish_to_topic(const json & request, json & response_out);
+  void subscription_callback(topic_params & params, std::shared_ptr<const rclcpp::SerializedMessage> message);
+
+  // Service handlers
+  bool call_service(const json & request, json & response_out);
+  bool call_external_service(const json & request, json & response_out);
+};
+
+}  // namespace rws
+
+#endif  // RWS__NODE_HPP_
+
+
+================================================
+FILE: include/rws/connector.hpp
+================================================
+
+#ifndef RWS__CONNECTOR_HPP_
+#define RWS__CONNECTOR_HPP_
+
+#include <string>
+
+#include "rclcpp/rclcpp.hpp"
+#include "rws/node_interface.hpp"
+
+namespace rws
+{
+
+struct topic_params
+{
+  topic_params() : history_depth(10), compression("none"), topic(""), type(""), latch(false), throttle_rate(0, 0) {}
+  topic_params(std::string t, std::string tp)
+  : history_depth(10), compression("none"), topic(t), type(tp), latch(false), throttle_rate(0, 0)
+  {
+  }
+  topic_params(std::string t, std::string tp, size_t qs, std::string c, rclcpp::Duration tr)
+  : history_depth(qs), compression(c), topic(t), type(tp), latch(false), throttle_rate(tr)
+  {
+  }
+  topic_params(std::string t, std::string tp, size_t qs, bool l)
+  : history_depth(qs), compression("none"), topic(t), type(tp), latch(l), throttle_rate(0, 0)
+  {
+  }
+  bool operator==(const topic_params & p)
+  {
+    return  topic == p.topic && 
+            type == p.type && 
+            history_depth == p.history_depth && 
+            throttle_rate == p.throttle_rate &&
+            compression == p.compression &&
+            latch == p.latch;
+  }
+  size_t history_depth;
+  std::string compression;  // rws internal
+  std::string topic;
+  std::string type;
+  bool latch;  // only for publishers, rws internal
+  rclcpp::Duration throttle_rate;
+};
+
+typedef std::function<void(topic_params & params, std::shared_ptr<const rclcpp::SerializedMessage> message)>
+  subscription_callback;
+
+template <class PublisherClass = rclcpp::GenericPublisher>
+class Connector
+{
+public:
+  Connector(std::shared_ptr<NodeInterface<PublisherClass>> node) : node_(node) {}
+  ~Connector() {}
+
+  std::function<void()> subscribe_to_topic(
+    uint16_t client_id, topic_params & params, subscription_callback handler)
+  {
+    std::lock_guard<std::mutex> guard(subscribers_mutex_);
+
+    auto matching_subscriber = get_subscriber_by_params(params);
+    subscriber_handle handle = {nullptr, params, handler, client_id, next_handler_id_++, rclcpp::Time(0, 0, RCL_ROS_TIME)};
+    rclcpp::QoS qos(params.history_depth);
+    auto info = node_->get_publishers_info_by_topic(params.topic);
+    for(const auto& node : info)
+    {
+      qos.durability(node.qos_profile().get_rmw_qos_profile().durability);
+    }
+    bool is_transient_local = qos.durability() == rclcpp::DurabilityPolicy::TransientLocal;
+
+    if (matching_subscriber == nullptr || is_transient_local) {
+      handle.subscription = node_->create_generic_subscription(
+        params.topic, params.type, qos,
+        std::bind(&Connector::topic_message_callback, this, params, std::placeholders::_1));
+    } else {
+      handle.subscription = matching_subscriber->subscription;
+    }
+
+    subscribers_.push_back(handle);
+
+    return [this, handle_id = handle.handle_id]() {
+      std::lock_guard<std::mutex> guard(subscribers_mutex_);
+      for (auto it = subscribers_.begin(); it != subscribers_.end(); ++it) {
+        if ((*it).handle_id == handle_id) {
+          subscribers_.erase(it);
+          break;
+        }
+      }
+    };
+  }
+
+  bool is_subscribed_to_topic(topic_params & params)
+  {
+    return get_subscriber_by_params(params) != nullptr;
+  }
+
+  bool is_advertising_topic(topic_params & params)
+  {
+    return get_publisher_by_params(params) != nullptr;
+  }
+
+  std::function<void()> advertise_topic(
+    uint16_t client_id, topic_params & params,
+    std::function<void(std::shared_ptr<const rclcpp::SerializedMessage>)> & cb_in)
+  {
+    std::lock_guard<std::mutex> guard(publishers_mutex_);
+
+    auto matching_publisher = get_publisher_by_params(params);
+    publisher_handle handle({nullptr, params, client_id, next_handler_id_++});
+
+    auto qos = rclcpp::QoS(params.history_depth);
+    if (params.latch) {
+      qos = qos.transient_local();
+    }
+    if (matching_publisher == nullptr) {
+      handle.publisher = node_->create_generic_publisher(params.topic, params.type, qos);
+    } else {
+      handle.publisher = matching_publisher->publisher;
+    }
+
+    publishers_.push_back(handle);
+
+    cb_in = [p = handle.publisher](std::shared_ptr<const rclcpp::SerializedMessage> message) {
+      p->publish(*message);
+    };
+
+    return [this, handle_id = handle.handle_id]() {
+      std::lock_guard<std::mutex> guard(publishers_mutex_);
+      for (auto it = publishers_.begin(); it != publishers_.end(); ++it) {
+        if ((*it).handle_id == handle_id) {
+          publishers_.erase(it);
+          break;
+        }
+      }
+    };
+  }
+
+private:
+  struct subscriber_handle
+  {
+    std::shared_ptr<rclcpp::GenericSubscription> subscription;
+    topic_params params;
+    subscription_callback callback;
+    size_t client_id;
+    size_t handle_id;
+    rclcpp::Time last_sent;
+  };
+  struct publisher_handle
+  {
+    std::shared_ptr<PublisherClass> publisher;
+    topic_params params;
+    size_t client_id;
+    size_t handle_id;
+  };
+
+  std::shared_ptr<NodeInterface<PublisherClass>> node_;
+  std::vector<subscriber_handle> subscribers_;
+  std::vector<publisher_handle> publishers_;
+  std::mutex subscribers_mutex_;
+  std::mutex publishers_mutex_;
+  size_t next_handler_id_ = 0;
+
+  subscriber_handle * get_subscriber_by_params(topic_params & params)
+  {
+    for (auto & sub : subscribers_) {
+      if (sub.params == params) {
+        return &sub;
+      }
+    }
+    return nullptr;
+  }
+
+  publisher_handle * get_publisher_by_params(topic_params & params)
+  {
+    for (auto & pub : publishers_) {
+      if (pub.params == params) {
+        return &pub;
+      }
+    }
+    return nullptr;
+  }
+
+  void topic_message_callback(topic_params & params, std::shared_ptr<const rclcpp::SerializedMessage> message)
+  {
+    for (auto & sub : subscribers_) {
+      if (sub.params == params &&
+          (params.throttle_rate.nanoseconds() == 0 || (sub.last_sent + params.throttle_rate) < node_->now())) {
+        sub.callback(params, message);
+        sub.last_sent = node_->now();
+      }
+    }
+  }
+};
+
+}  // namespace rws
+
+#endif  // RWS__CONNECTOR_HPP_
+
+
+================================================
+FILE: include/rws/generic_client.hpp
+================================================
+// Copyright 2022 Vasily Kiniv
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef RWS__GENERIC_CLIENT_HPP_
+#define RWS__GENERIC_CLIENT_HPP_
+
+#include <cstring>
+#include "rclcpp/client.hpp"
+#include "rclcpp/expand_topic_or_service_name.hpp"
+#include "rclcpp/serialized_message.hpp"
+#include "rclcpp/typesupport_helpers.hpp"
+#include "rmw/rmw.h"
+#include "rosidl_typesupport_introspection_cpp/service_introspection.hpp"
+#include "rws/typesupport_helpers.hpp"
+
+namespace rws
+{
+using rosidl_typesupport_introspection_cpp::ServiceMembers;
+
+class GenericClient : public rclcpp::ClientBase
+{
+public:
+  using SharedRequest = std::shared_ptr<rclcpp::SerializedMessage>;
+  using SharedResponse = std::shared_ptr<rclcpp::SerializedMessage>;
+
+  using Promise = std::promise<SharedResponse>;
+  using PromiseWithRequest = std::promise<std::pair<SharedRequest, SharedResponse>>;
+
+  using SharedPromise = std::shared_ptr<Promise>;
+  using SharedPromiseWithRequest = std::shared_ptr<PromiseWithRequest>;
+
+  using SharedFuture = std::shared_future<SharedResponse>;
+  using SharedFutureWithRequest = std::shared_future<std::pair<SharedRequest, SharedResponse>>;
+
+  using CallbackType = std::function<void(SharedFuture)>;
+  using CallbackWithRequestType = std::function<void(SharedFutureWithRequest)>;
+
+  RCLCPP_SMART_PTR_DEFINITIONS(GenericClient)
+
+  GenericClient(
+    rclcpp::node_interfaces::NodeBaseInterface * node_base,
+    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr node_graph, std::string service_name,
+    std::string service_type, rcl_client_options_t & client_options)
+  : rclcpp::ClientBase(node_base, node_graph)
+  {
+    srv_ts_lib_ = rclcpp::get_typesupport_library(service_type, rws::ts_identifier);
+    srv_ts_hdl_ =
+      rws::get_service_typesupport_handle(service_type, rws::ts_identifier, *srv_ts_lib_);
+    auto srv_members = static_cast<const ServiceMembers *>(srv_ts_hdl_->data);
+
+    auto request_members = srv_members->request_members_;
+    auto request_type = get_type_from_message_members(request_members);
+    req_ts_lib_ = rclcpp::get_typesupport_library(request_type, rws::ts_identifier);
+    req_ts_hdl_ = rclcpp::get_message_typesupport_handle(request_type, rws::ts_identifier, *req_ts_lib_);
+
+    auto response_members = srv_members->response_members_;
+    auto response_type = get_type_from_message_members(response_members);
+    res_ts_lib_ = rclcpp::get_typesupport_library(response_type, rws::ts_identifier);
+    res_ts_hdl_ = rclcpp::get_message_typesupport_handle(response_type, rws::ts_identifier, *res_ts_lib_);
+
+    rcl_ret_t ret = rcl_client_init(
+      this->get_client_handle().get(), this->get_rcl_node_handle(), srv_ts_hdl_,
+      service_name.c_str(), &client_options);
+    if (ret != RCL_RET_OK) {
+      if (ret == RCL_RET_SERVICE_NAME_INVALID) {
+        auto rcl_node_handle = this->get_rcl_node_handle();
+        // this will throw on any validation problem
+        rcl_reset_error();
+        rclcpp::expand_topic_or_service_name(
+          service_name, rcl_node_get_name(rcl_node_handle), rcl_node_get_namespace(rcl_node_handle),
+          true);
+      }
+      rclcpp::exceptions::throw_from_rcl_error(ret, "could not create client");
+    }
+  }
+
+  virtual ~GenericClient() {}
+
+  std::shared_ptr<void> create_response() override
+  {
+    auto srv_members = static_cast<const ServiceMembers *>(srv_ts_hdl_->data);
+    return allocate_message(srv_members->response_members_);
+  }
+
+  std::shared_ptr<rmw_request_id_t> create_request_header() override
+  {
+    return std::shared_ptr<rmw_request_id_t>(new rmw_request_id_t);
+  }
+
+  void handle_response(
+    std::shared_ptr<rmw_request_id_t> request_header, std::shared_ptr<void> response) override
+  {
+    std::unique_lock<std::mutex> lock(pending_requests_mutex_);
+    int64_t sequence_number = request_header->sequence_number;
+
+    auto ser_response = std::make_shared<rclcpp::SerializedMessage>();
+    rmw_ret_t r =
+      rmw_serialize(response.get(), res_ts_hdl_, &ser_response->get_rcl_serialized_message());
+    if (r != RMW_RET_OK) {
+      RCUTILS_LOG_ERROR_NAMED("rws", "Failed to serialize service response. Ignoring...");
+      return;
+    }
+
+    // TODO(esteve) this should throw instead since it is not expected to happen in the first place
+    if (this->pending_requests_.count(sequence_number) == 0) {
+      RCUTILS_LOG_ERROR_NAMED("rws", "Received invalid sequence number. Ignoring...");
+      return;
+    }
+    auto tuple = this->pending_requests_[sequence_number];
+    auto call_promise = std::get<0>(tuple);
+    auto callback = std::get<1>(tuple);
+    auto future = std::get<2>(tuple);
+    this->pending_requests_.erase(sequence_number);
+    // Unlock here to allow the service to be called recursively from one of its callbacks.
+    lock.unlock();
+
+    call_promise->set_value(ser_response);
+    callback(future);
+  }
+
+  SharedFuture async_send_request(SharedRequest request)
+  {
+    return async_send_request(request, [](SharedFuture) {});
+  }
+
+  SharedFuture async_send_request(SharedRequest request, CallbackType && cb)
+  {
+    std::lock_guard<std::mutex> lock(pending_requests_mutex_);
+    int64_t sequence_number;
+
+    auto srv_members = static_cast<const ServiceMembers *>(srv_ts_hdl_->data);
+    auto req_members = srv_members->request_members_;
+    auto buf = allocate_message(req_members);
+
+    if(req_members->member_count_ > 1 ||
+       std::strcmp(req_members->members_[0].name_, "structure_needs_at_least_one_member") != 0) {
+      const rmw_serialized_message_t * sm = &request->get_rcl_serialized_message();
+      rmw_ret_t rmw_ret = rmw_deserialize(sm, req_ts_hdl_, buf.get());
+      if(RMW_RET_OK != rmw_ret) {
+        rclcpp::exceptions::throw_from_rcl_error(rmw_ret, "failed to deserialize request");
+      }
+    }
+
+    rcl_ret_t ret = rcl_send_request(get_client_handle().get(), buf.get(), &sequence_number);
+    if (RCL_RET_OK != ret) {
+      rclcpp::exceptions::throw_from_rcl_error(ret, "failed to send request");
+    }
+
+    SharedPromise call_promise = std::make_shared<Promise>();
+    SharedFuture f(call_promise->get_future());
+    pending_requests_[sequence_number] =
+      std::make_tuple(call_promise, std::forward<CallbackType>(cb), f);
+    return f;
+  }
+
+private:
+  RCLCPP_DISABLE_COPY(GenericClient)
+
+  std::map<int64_t, std::tuple<SharedPromise, CallbackType, SharedFuture>> pending_requests_;
+  std::mutex pending_requests_mutex_;
+  std::shared_ptr<rcpputils::SharedLibrary> srv_ts_lib_;
+  const rosidl_service_type_support_t * srv_ts_hdl_;
+  std::shared_ptr<rcpputils::SharedLibrary> req_ts_lib_;
+  const rosidl_message_type_support_t * req_ts_hdl_;
+  std::shared_ptr<rcpputils::SharedLibrary> res_ts_lib_;
+  const rosidl_message_type_support_t * res_ts_hdl_;
+};
+
+}  // namespace rws
+
+#endif  // RWS__GENERIC_CLIENT_HPP_
+
+
+================================================
+FILE: include/rws/node_interface.hpp
+================================================
+#ifndef RWS__NODE_INTERFACE_HPP_
+#define RWS__NODE_INTERFACE_HPP_
+
+#include "rclcpp/generic_publisher.hpp"
+#include "rclcpp/generic_subscription.hpp"
+#include "rws/generic_client.hpp"
+
+namespace rws
+{
+
+template <class PublisherClass = rclcpp::GenericPublisher>
+class NodeInterface
+{
+public:
+  // virtual NodeInterface();
+  // virtual ~NodeInterface();
+  /// Create and return a GenericSubscription.
+  /**
+   * The returned pointer will never be empty, but this function can throw various exceptions, for
+   * instance when the message's package can not be found on the AMENT_PREFIX_PATH.
+   *
+   * \param topics_interface NodeTopicsInterface pointer used in parts of the setup.
+   * \param topic_name Topic name
+   * \param topic_type Topic type
+   * \param qos %QoS settings
+   * \param callback Callback for new messages of serialized form
+   * \param options %Publisher options.
+   * Not all publisher options are currently respected, the only relevant options for this
+   * publisher are `event_callbacks`, `use_default_callbacks`, and `%callback_group`.
+   */
+  virtual std::shared_ptr<rclcpp::GenericSubscription> create_generic_subscription(
+    const std::string & topic_name, const std::string & topic_type, const rclcpp::QoS & qos,
+    std::function<void(std::shared_ptr<const rclcpp::SerializedMessage>)> callback,
+    const rclcpp::SubscriptionOptions & options = (rclcpp::SubscriptionOptions())) = 0;
+
+  /// Create and return a GenericPublisher.
+  /**
+   * The returned pointer will never be empty, but this function can throw various exceptions, for
+   * instance when the message's package can not be found on the AMENT_PREFIX_PATH.
+   *
+   * \param topics_interface NodeTopicsInterface pointer used in parts of the setup
+   * \param topic_name Topic name
+   * \param topic_type Topic type
+   * \param qos %QoS settings
+   * \param options %Publisher options.
+   * Not all publisher options are currently respected, the only relevant options for this
+   * publisher are `event_callbacks`, `use_default_callbacks`, and `%callback_group`.
+   */
+  virtual std::shared_ptr<PublisherClass> create_generic_publisher(
+    const std::string & topic_name, const std::string & topic_type, const rclcpp::QoS & qos,
+    const rclcpp::PublisherOptions & options = (rclcpp::PublisherOptions())) = 0;
+
+  /// Create a generic service client with a given type.
+  virtual GenericClient::SharedPtr create_generic_client(
+    const std::string & service_name, const std::string & service_type,
+    const rmw_qos_profile_t & qos_profile, rclcpp::CallbackGroup::SharedPtr group) = 0;
+
+  virtual rclcpp::Time now() const = 0;
+  virtual rclcpp::node_interfaces::NodeBaseInterface::SharedPtr get_node_base_interface() = 0;
+  virtual rclcpp::node_interfaces::NodeGraphInterface::SharedPtr get_node_graph_interface() = 0;
+  virtual rclcpp::node_interfaces::NodeServicesInterface::SharedPtr
+  get_node_services_interface() = 0;
+  virtual rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr get_node_topics_interface() = 0;
+  virtual std::map<std::string, std::vector<std::string>> get_service_names_and_types() const = 0;
+  virtual std::map<std::string, std::vector<std::string>> get_service_names_and_types_by_node(
+    const std::string & node_name, const std::string & namespace_) const = 0;
+  virtual std::map<std::string, std::vector<std::string>> get_topic_names_and_types() const = 0;
+  virtual std::vector<rclcpp::TopicEndpointInfo> get_subscriptions_info_by_topic(
+    const std::string & topic_name, bool no_mangle = false) const = 0;
+  virtual std::vector<rclcpp::TopicEndpointInfo> get_publishers_info_by_topic(
+    const std::string & topic_name, bool no_mangle = false) const = 0;
+  virtual std::vector<std::string> get_node_names() const = 0;
+};
+
+}  // namespace rws
+
+#endif  // RWS__NODE_INTERFACE_HPP_
+
+
+
+================================================
+FILE: include/rws/node_interface_impl.hpp
+================================================
+#ifndef RWS__NODE_INTERFACE_IMPL_HPP_
+#define RWS__NODE_INTERFACE_IMPL_HPP_
+
+#include "rclcpp/rclcpp.hpp"
+#include "rclcpp/time.hpp"
+#include "rws/node_interface.hpp"
+#include "rws/typesupport_helpers.hpp"
+
+namespace rws
+{
+
+class NodeInterfaceImpl : public rws::NodeInterface<>
+{
+public:
+  NodeInterfaceImpl(std::shared_ptr<rclcpp::Node> node) : node_(node) {}
+  ~NodeInterfaceImpl() {}
+
+  std::shared_ptr<rclcpp::GenericSubscription> create_generic_subscription(
+    const std::string & topic_name, const std::string & topic_type, const rclcpp::QoS & qos,
+    std::function<void(std::shared_ptr<const rclcpp::SerializedMessage>)> callback,
+    const rclcpp::SubscriptionOptions & options = (rclcpp::SubscriptionOptions()))
+  {
+    return node_->create_generic_subscription(topic_name, topic_type, qos, callback, options);
+  }
+
+  std::shared_ptr<rclcpp::GenericPublisher> create_generic_publisher(
+    const std::string & topic_name, const std::string & topic_type, const rclcpp::QoS & qos,
+    const rclcpp::PublisherOptions & options = (rclcpp::PublisherOptions()))
+  {
+    auto ts_lib = rws::get_typesupport_library(topic_type, "rosidl_typesupport_cpp");
+    auto pub = std::make_shared<rclcpp::GenericPublisher>(
+      node_->get_node_topics_interface()->get_node_base_interface(), std::move(ts_lib), topic_name,
+      topic_type, qos, options);
+    node_->get_node_topics_interface()->add_publisher(pub, options.callback_group);
+    return pub;
+  }
+
+  GenericClient::SharedPtr create_generic_client(
+    const std::string & service_name, const std::string & service_type,
+    const rmw_qos_profile_t & qos_profile, rclcpp::CallbackGroup::SharedPtr group)
+  {
+    rcl_client_options_t options = rcl_client_get_default_options();
+    options.qos = qos_profile;
+
+    auto cli = GenericClient::make_shared(
+      node_->get_node_base_interface().get(), node_->get_node_graph_interface(), service_name,
+      service_type, options);
+
+    auto cli_base_ptr = std::dynamic_pointer_cast<rclcpp::ClientBase>(cli);
+    node_->get_node_services_interface()->add_client(cli_base_ptr, group);
+    return cli;
+  }
+
+  rclcpp::Time now() const { return node_->now(); }
+  rclcpp::node_interfaces::NodeBaseInterface::SharedPtr get_node_base_interface()
+  {
+    return node_->get_node_base_interface();
+  }
+  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr get_node_graph_interface()
+  {
+    return node_->get_node_graph_interface();
+  }
+  rclcpp::node_interfaces::NodeServicesInterface::SharedPtr get_node_services_interface()
+  {
+    return node_->get_node_services_interface();
+  }
+  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr get_node_topics_interface()
+  {
+    return node_->get_node_topics_interface();
+  }
+  std::map<std::string, std::vector<std::string>> get_service_names_and_types() const
+  {
+    return node_->get_service_names_and_types();
+  }
+  std::map<std::string, std::vector<std::string>> get_service_names_and_types_by_node(
+    const std::string & node_name, const std::string & namespace_) const
+  {
+    return node_->get_service_names_and_types_by_node(node_name, namespace_);
+  }
+  std::map<std::string, std::vector<std::string>> get_topic_names_and_types() const
+  {
+    return node_->get_topic_names_and_types();
+  }
+  std::vector<rclcpp::TopicEndpointInfo> get_subscriptions_info_by_topic(
+    const std::string & topic_name, bool no_mangle = false) const
+  {
+    return node_->get_subscriptions_info_by_topic(topic_name, no_mangle);
+  }
+  std::vector<rclcpp::TopicEndpointInfo> get_publishers_info_by_topic(
+    const std::string & topic_name, bool no_mangle = false) const
+  {
+    return node_->get_publishers_info_by_topic(topic_name, no_mangle);
+  }
+  std::vector<std::string> get_node_names() const { return node_->get_node_names(); }
+
+private:
+  std::shared_ptr<rclcpp::Node> node_;
+};
+
+}  // namespace rws
+
+#endif  // RWS__NODE_INTERFACE_IMPL_HPP_
+
+
+================================================
+FILE: include/rws/translate.hpp
+================================================
+// Copyright 2022 Vasily Kiniv
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef RWS__TRANSLATE_HPP_
+#define RWS__TRANSLATE_HPP_
+
+#include <nlohmann/json.hpp>
+#include <string>
+
+#include "rclcpp/serialized_message.hpp"
+
+namespace rws
+{
+
+using json = nlohmann::json;
+using SharedMessage = std::shared_ptr<rclcpp::SerializedMessage>;
+using ConstSharedMessage = std::shared_ptr<const rclcpp::SerializedMessage>;
+
+/// Translate serialized message to json object
+/**
+ * \param msg_type Message type, e.g. "std_msgs/String"
+ * \param[in] msg Serialized message
+ * \return Json representation of the message
+ */
+json serialized_message_to_json(const std::string & msg_type, ConstSharedMessage msg);
+
+/// Translate json object to serialized message
+/**
+ * \param[in] msg_type Message type, e.g. "std_msgs/msg/String"
+ * \param[in] j Json representation of the message
+ * \return Serialized message
+ */
+SharedMessage json_to_serialized_message(const std::string & msg_type, const json & j);
+
+/// Translate json object to serialized service request
+/**
+ * \param[in] srv_type Service type, e.g. "std_srvs/srv/SetBool"
+ * \param[in] j Json representation of service request
+ * \return Serialized service request
+ */
+SharedMessage json_to_serialized_service_request(const std::string & srv_type, const json & j);
+
+/// Translate serialized service response to json object
+/**
+ * \param[in] srv_type Service type, e.g. "std_srvs/srv/SetBool"
+ * \param[in] msg Serialized service response
+ * \return Json representation of the service response
+ */
+json serialized_service_response_to_json(const std::string & srv_type, ConstSharedMessage msg);
+
+/// Generate textual representation of the message structure
+/**
+ * \param[in] msg_type Message type, e.g. "std_msgs/msg/String"
+ * \param[in] rosbridge_compatible Is Rosbidge compatible, e.g. replace nanosec with nsec
+ * \return String representation of the message structure
+ */
+std::string generate_message_meta(const std::string & msg_type, bool rosbridge_compatible = false);
+
+}  // namespace rws
+
+#endif  // RWS__TRANSLATE_HPP_
+
+
+================================================
+FILE: include/rws/typesupport_helpers.hpp
+================================================
+// Copyright 2022 Vasily Kiniv
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef RWS__TYPESUPPORT_HELPERS_HPP_
+#define RWS__TYPESUPPORT_HELPERS_HPP_
+
+#include <memory>
+#include <sstream>
+#include <string>
+#include <tuple>
+
+#include "rcpputils/shared_library.hpp"
+#include "rosidl_runtime_cpp/service_type_support_decl.hpp"
+#include "rosidl_typesupport_introspection_cpp/message_introspection.hpp"
+
+namespace rws
+{
+
+using rosidl_typesupport_introspection_cpp::MessageMembers;
+
+extern const char * ts_identifier;
+
+/// Load the type support library for the given type.
+/// This is a thread-safe version of rclcpp::get_typesupport_library.
+/// Note: this function will cache the loaded libraries till the end of the program.
+/**
+ * \param[in] type The topic or service type, e.g. "std_msgs/msg/String" or "std_srvs/srv/Trigger"
+ * \param[in] typesupport_identifier Type support identifier, typically "rosidl_typesupport_cpp"
+ * \return A shared library
+ */
+std::shared_ptr<rcpputils::SharedLibrary> get_typesupport_library(
+  const std::string & type, const std::string & typesupport_identifier);
+
+/// Extract the service type support handle from the library.
+/**
+ * The library needs to match the service type. The shared library must stay loaded for the lifetime of the result.
+ * \param[in] type The service type, e.g. "std_srvs/srv/Trigger"
+ * \param[in] typesupport_identifier Type support identifier, typically "rosidl_typesupport_introspection_cpp"
+ * \param[in] library The shared type support library
+ * \return A type support handle for the service
+ */
+const rosidl_service_type_support_t * get_service_typesupport_handle(
+  const std::string & type, const std::string & typesupport_identifier,
+  rcpputils::SharedLibrary & library);
+
+/// Get type string from a serialized message members.
+/**
+ * \param[in] members The message members
+ * \return The type string, e.g. "std_msgs/msg/String"
+ */
+std::string get_type_from_message_members(const MessageMembers * members);
+
+/// Split namespace and node name into a tuple.
+/**
+ * \param[in] type The type string, e.g. "some_ns/some_node"
+ * \return A tuple of namespace and node name
+ */
+std::tuple<std::string, std::string> split_ns_node_name(const std::string & node_name);
+
+/// Convert ros1 message type string to ros2 style type string.
+/**
+ * \param[in] type The ros1 message type string, e.g. "std_msgs/String"
+ * \return The ros2 style type string, e.g. "std_msgs/msg/String"
+ */
+std::string message_type_to_ros2_style(const std::string & ros1_msg_type);
+
+/// Convert ros2 style type string to ros1 style type string.
+/**
+ * \param[in] type The ros2 style type string, e.g. "std_msgs/msg/String"
+ * \return The ros1 message type string, e.g. "std_msgs/String"
+ */
+std::string message_type_to_ros1_style(const std::string & ros2_msg_type);
+
+/// Allocate memory for a ros message based on serialized message members.
+/// It will also prealocate std::string objects in the allocated memory chunk,
+/// so RMW deserialization will not cause segfault on Linux systems.
+/**
+ * \param[in] members The message members
+ * \return A shared pointer to the allocated memory
+ */
+std::shared_ptr<void> allocate_message(const MessageMembers * members);
+
+}  // namespace rws
+
+#endif  // RWS__TYPESUPPORT_HELPERS_HPP_
+
+
+================================================
+FILE: launch/rws_server_launch.py
+================================================
+import os
+
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch_ros.actions import Node
+from launch.substitutions import LaunchConfiguration
+
+def generate_launch_description():
+    declare_port_param = DeclareLaunchArgument(
+        'port',
+        default_value='9090',
+        description='Port to use for websocket server'
+    )
+
+    declare_rosbridge_compat_param = DeclareLaunchArgument(
+        'rosbridge_compatible',
+        default_value='True',
+        description='Enable compatibility with rosbridge protocol'
+    )
+
+    declare_watchgod_param = DeclareLaunchArgument(
+        'watchdog',
+        default_value='True',
+        description='Use ping/pong to detect and drop unresponsive clients that keep TCP connection open'
+    )
+
+    rws_server_node = Node(
+        package='rws',
+        executable='rws_server',
+        name='rws_server',
+        output='screen',
+        parameters=[{
+            'port': LaunchConfiguration('port'),
+            'rosbridge_compatible': LaunchConfiguration('rosbridge_compatible'),
+            'watchdog': LaunchConfiguration('watchdog'),
+        }]
+    )
+
+    return LaunchDescription([
+        declare_port_param,
+        declare_rosbridge_compat_param,
+        declare_watchgod_param,
+        rws_server_node
+    ])
+
+
+
+================================================
+FILE: src/client_handler.cpp
+================================================
+// Copyright 2022 Vasily Kiniv
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include "rws/client_handler.hpp"
+
+#include <chrono>
+#include <cstdio>
+#include <nlohmann/json.hpp>
+
+#include "rclcpp/logger.hpp"
+#include "rclcpp/qos.hpp"
+#include "rclcpp/rclcpp.hpp"
+#include "rws/translate.hpp"
+
+namespace rws
+{
+
+using json = nlohmann::json;
+using namespace std::chrono_literals;
+using std::placeholders::_1;
+
+std::string string_thread_id()
+{
+  auto hashed = std::hash<std::thread::id>()(std::this_thread::get_id());
+  return std::to_string(hashed);
+}
+
+ClientHandler::ClientHandler(
+  int client_id, std::shared_ptr<rws::NodeInterface<>> node, std::shared_ptr<Connector<>> connector,
+  bool rosbridge_compatible, std::function<void(std::string & msg)> callback,
+  std::function<void(std::vector<std::uint8_t> & msg)> binary_callback)
+: client_id_(client_id),
+  node_(node),
+  connector_(connector),
+  rosbridge_compatible_(rosbridge_compatible),
+  callback_(callback),
+  binary_callback_(binary_callback)
+{
+  RCLCPP_INFO(
+    get_logger(), "Constructing client %s(%s)", std::to_string(client_id_).c_str(),
+    string_thread_id().c_str());
+}
+
+ClientHandler::~ClientHandler()
+{
+  RCLCPP_INFO(
+    get_logger(), "Destroying client %s(%s)", std::to_string(client_id_).c_str(),
+    string_thread_id().c_str());
+  for (auto it = subscriptions_.begin(); it != subscriptions_.end(); ++it) {
+    it->second();
+  }
+  for (auto it = publishers_.begin(); it != publishers_.end(); ++it) {
+    it->second();
+  }
+}
+
+json ClientHandler::process_message(json & msg)
+{
+  bool handled = false;
+  json response = {{"id", msg["id"]}, {"result", false}};
+
+  if (!msg.contains("op")) {
+    response["error"] = "No op specified";
+    RCLCPP_ERROR(get_logger(), response["error"].dump().c_str());
+    return response;
+  }
+
+  std::string op = msg["op"];
+
+  if (op == "call_service") {
+    handled = call_service(msg, response);
+  }
+
+  if (op == "subscribe") {
+    handled = subscribe_to_topic(msg, response);
+  }
+
+  if (op == "advertise") {
+    handled = advertise_topic(msg, response);
+  }
+
+  if (op == "unadvertise") {
+    handled = unadvertise_topic(msg, response);
+  }
+
+  if (op == "publish") {
+    handled = publish_to_topic(msg, response);
+  }
+
+  if (op == "unsubscribe") {
+    handled = unsubscribe_from_topic(msg, response);
+  }
+
+  if (!handled) {
+    RCLCPP_WARN(get_logger(), "Unhadled request: %s", msg.dump().c_str());
+  }
+
+  return response;
+}
+
+void ClientHandler::send_message(std::string & msg)
+{
+  if (this->callback_) {
+    this->callback_(msg);
+  }
+}
+
+void ClientHandler::send_message(std::vector<std::uint8_t> & msg)
+{
+  if (this->binary_callback_) {
+    this->binary_callback_(msg);
+  }
+}
+
+void ClientHandler::subscription_callback(topic_params & params, std::shared_ptr<const rclcpp::SerializedMessage> message)
+{
+  uint32_t secs = node_->now().seconds();
+  uint32_t nsecs = node_->now().nanoseconds() - (secs * 1000000000);
+
+  json m = {
+    {"op", "publish"},
+    {"topic", params.topic},
+  };
+
+  auto compression = params.compression;
+  auto sub_type = params.type;
+
+  if (compression == "cbor-raw") {
+    auto buf = std::vector<std::uint8_t>(
+      &message->get_rcl_serialized_message().buffer[0],
+      &message->get_rcl_serialized_message()
+          .buffer[message->get_rcl_serialized_message().buffer_length]);
+    m["msg"] = {{"secs", secs}, {"nsecs", nsecs}, {"bytes", json::binary_t(buf)}};
+    std::vector<std::uint8_t> cbor_buf = json::to_cbor(m);
+    this->send_message(cbor_buf);
+  } else if (compression == "cbor") {
+    m["msg"] = rws::serialized_message_to_json(sub_type, std::move(message));
+    std::vector<std::uint8_t> buf = json::to_cbor(m);
+    this->send_message(buf);
+  } else if (compression == "bson") {
+    m["msg"] = rws::serialized_message_to_json(sub_type, message);
+    std::vector<std::uint8_t> buf = json::to_bson(m);
+    this->send_message(buf);
+  } else if (compression == "msgpack") {
+    m["msg"] = rws::serialized_message_to_json(sub_type, message);
+    std::vector<std::uint8_t> buf = json::to_msgpack(m);
+    this->send_message(buf);
+  } else if (compression == "ubjson") {
+    m["msg"] = rws::serialized_message_to_json(sub_type, message);
+    std::vector<std::uint8_t> buf = json::to_ubjson(m);
+    this->send_message(buf);
+  } else if (compression == "bjdata") {
+    m["msg"] = rws::serialized_message_to_json(sub_type, message);
+    std::vector<std::uint8_t> buf = json::to_bjdata(m);
+    this->send_message(buf);
+  } else {
+    m["msg"] = rws::serialized_message_to_json(sub_type, message);
+    std::string json_str = m.dump();
+    this->send_message(json_str);
+  }
+}
+
+bool ClientHandler::subscribe_to_topic(const json & msg, json & response)
+{
+  response["op"] = "subscribe_response";
+  if (!msg.contains("topic") || !msg["topic"].is_string()) {
+    response["result"] = false;
+    response["error"] = "No topic specified";
+    RCLCPP_ERROR(get_logger(), response["error"].dump().c_str());
+    return true;
+  }
+
+  std::string topic = msg["topic"];
+  std::map<std::string, std::vector<std::string>> topics = node_->get_topic_names_and_types();
+  if (topics.find(topic) == topics.end()) {
+    response["error"] = "Topic " + topic + " not found";
+    response["result"] = false;
+    RCLCPP_ERROR(
+      get_logger(), "Failed to subscribe to topic: %s", response["error"].dump().c_str());
+    return true;
+  }
+  size_t history_depth = 10;
+  if (msg.contains("history_depth") && msg["history_depth"].is_number()) {
+    history_depth = msg["history_depth"];
+  } else if (msg.contains("queue_size") && msg["queue_size"].is_number()) {
+    history_depth = msg["queue_size"];
+  }
+  rclcpp::Duration throttle_rate(0, 0);
+  if (msg.contains("throttle_rate") && msg["throttle_rate"].is_number()) {
+    size_t throttle_rate_ms = msg["throttle_rate"];
+    throttle_rate = rclcpp::Duration(0, throttle_rate_ms * 1000000);
+  }
+  std::string compression =
+    (!msg.contains("compression") || !msg["compression"].is_string()) ? "none" : msg["compression"];
+
+  auto sub_type = topics[topic][0];
+  if (subscriptions_.count(topic) == 0) {
+    
+    topic_params params(topic, sub_type, history_depth, compression, throttle_rate);
+    subscriptions_[topic] = connector_->subscribe_to_topic(
+      client_id_, params, std::bind(&ClientHandler::subscription_callback, this, std::placeholders::_1, std::placeholders::_2));
+
+    response["type"] = sub_type;
+    response["result"] = true;
+  }
+
+  return true;
+}
+
+bool ClientHandler::unsubscribe_from_topic(const json & msg, json & response)
+{
+  response["op"] = "unsubscribe_response";
+
+  std::string topic = msg["topic"];
+  if (subscriptions_.count(topic) > 0) {
+    subscriptions_[topic]();
+    subscriptions_.erase(topic);
+    response["result"] = true;
+  }
+
+  return true;
+}
+
+bool ClientHandler::advertise_topic(const json & msg, json & response)
+{
+  response["op"] = "advertise_response";
+  if (!msg.contains("type") || !msg["type"].is_string()) {
+    response["result"] = false;
+    response["error"] = "No type specified";
+    RCLCPP_ERROR(get_logger(), response["error"].dump().c_str());
+    return true;
+  }
+
+  if (!msg.contains("topic") || !msg["topic"].is_string()) {
+    response["result"] = false;
+    response["error"] = "No topic specified";
+    RCLCPP_ERROR(get_logger(), response["error"].dump().c_str());
+    return true;
+  }
+
+  std::string topic = msg["topic"];
+  std::string type = rws::message_type_to_ros2_style(msg["type"]);
+  size_t history_depth = 10;
+  if (msg.contains("history_depth") && msg["history_depth"].is_number()) {
+    history_depth = msg["history_depth"];
+  } else if (msg.contains("queue_size") && msg["queue_size"].is_number()) {
+    history_depth = msg["queue_size"];
+  }
+  bool latch =
+    (msg.contains("latch") && msg["latch"].is_boolean()) ? msg["latch"].get<bool>() : false;
+  topic_params params(topic, type, history_depth, latch);
+
+  if (publishers_.count(topic) == 0) {
+    publishers_[topic] = connector_->advertise_topic(client_id_, params, publisher_cb_[topic]);
+    publisher_type_[topic] = type;
+    response["result"] = true;
+  }
+
+  return true;
+}
+
+bool ClientHandler::unadvertise_topic(const json & msg, json & response)
+{
+  response["op"] = "unadvertise_response";
+
+  std::string topic = msg["topic"];
+  if (publishers_.count(topic) > 0) {
+    publishers_[topic]();
+    publishers_.erase(topic);
+    publisher_cb_.erase(topic);
+    publisher_type_.erase(topic);
+    response["result"] = true;
+  }
+
+  return true;
+}
+
+bool ClientHandler::publish_to_topic(const json & msg, json & response)
+{
+  response["op"] = "publish_response";
+
+  if (!msg.contains("topic")) {
+    response["false"] = true;
+    response["error"] = "No topic specified";
+    RCLCPP_ERROR(get_logger(), response["error"].dump().c_str());
+    return true;
+  }
+
+  std::string topic = msg["topic"];
+
+  if (publishers_.count(topic) > 0) {
+    json msg_json = msg["msg"];
+    std::string type = publisher_type_[topic];
+    auto serialized_msg = rws::json_to_serialized_message(type, msg_json);
+    publisher_cb_[topic](serialized_msg);
+    response["result"] = true;
+  } else {
+    response["result"] = false;
+    response["error"] = "Topic was not advertised";
+    RCLCPP_ERROR(get_logger(), response["error"].dump().c_str());
+  }
+
+  return true;
+}
+
+bool ClientHandler::call_service(const json & msg, json & response)
+{
+  if (!msg.contains("service")) {
+    RCLCPP_ERROR(get_logger(), "No service specified");
+    return true;
+  }
+  std::string service = msg["service"];
+
+  response["op"] = "service_response";
+  response["service"] = service;
+  response["result"] = false;
+
+  if (service == "/rosapi/topics_and_raw_types" || service == "/rosapi/topics") {
+    response["values"]["topics"] = json::array();
+    response["values"]["types"] = json::array();
+
+    std::map<std::string, std::vector<std::string>> topics = node_->get_topic_names_and_types();
+    for (auto it = topics.begin(); it != topics.end(); ++it) {
+      response["values"]["topics"].push_back(it->first);
+      response["values"]["types"].push_back(it->second[0]);
+
+      if (msg["service"] == "/rosapi/topics_and_raw_types") {
+        response["values"]["typedefs_full_text"].push_back(
+          rws::generate_message_meta(it->second[0], rosbridge_compatible_));
+      }
+    }
+    response["result"] = true;
+    return true;
+  }
+
+  if (service == "/rosapi/service_type") {
+    std::string service_name = msg["args"]["service"];
+    std::map<std::string, std::vector<std::string>> services = node_->get_service_names_and_types();
+    if (services.find(service_name) == services.end()) {
+      RCLCPP_ERROR(get_logger(), "Service not found: %s", service_name.c_str());
+      return true;
+    }
+
+    std::string service_type = services[service_name][0];
+    response["values"]["type"] = service_type;
+    response["result"] = true;
+    return true;
+  }
+
+  if (service == "/rosapi/nodes") {
+    response["values"]["nodes"] = json::array();
+
+    std::vector<std::string> nodes = node_->get_node_names();
+    for (auto it = nodes.begin(); it != nodes.end(); ++it) {
+      response["values"]["nodes"].push_back(*it);
+    }
+
+    response["result"] = true;
+    return true;
+  }
+
+  if (service == "/rosapi/publishers") {
+    response["values"]["publishers"] = json::array();
+
+    std::vector<rclcpp::TopicEndpointInfo> publishers = node_->get_publishers_info_by_topic(msg["args"]["topic"]);
+    for (const auto & pub_info : publishers) {
+      response["values"]["publishers"].push_back(("/" + pub_info.node_name()).c_str());
+    }
+
+    response["result"] = true;
+    return true;
+  }
+
+  if (service == "/rosapi/subscribers") {
+    response["values"]["subscribers"] = json::array();
+
+    std::vector<rclcpp::TopicEndpointInfo> subscribers = node_->get_subscriptions_info_by_topic(msg["args"]["topic"]);
+    for (const auto & sub_info : subscribers) {
+      response["values"]["subscribers"].push_back(("/" + sub_info.node_name()).c_str());
+    }
+
+    response["result"] = true;
+    return true;
+  }
+
+  if (service == "/rosapi/node_details") {
+    response["values"]["subscribing"] = json::array();
+    response["values"]["publishing"] = json::array();
+    response["values"]["services"] = json::array();
+
+    auto [ns, node_name] = split_ns_node_name(msg["args"]["node"]);
+
+    std::map<std::string, std::vector<std::string>> topics = node_->get_topic_names_and_types();
+    for (auto it = topics.begin(); it != topics.end(); ++it) {
+      auto subscribers = node_->get_subscriptions_info_by_topic(it->first);
+      for (auto sub_it = subscribers.begin(); sub_it != subscribers.end(); ++sub_it) {
+        std::string sub_node = sub_it->node_name();
+        std::string sub_ns = sub_it->node_namespace() == "/" ? "" : sub_it->node_namespace();
+        if (sub_ns + sub_node == ns + node_name) {
+          response["values"]["subscribing"].push_back(it->first);
+        }
+      }
+
+      auto publishers = node_->get_publishers_info_by_topic(it->first);
+      for (auto pub_it = publishers.begin(); pub_it != publishers.end(); ++pub_it) {
+        std::string pub_node = pub_it->node_name();
+        std::string pub_ns = pub_it->node_namespace() == "/" ? "" : pub_it->node_namespace();
+        if (pub_ns + pub_node == ns + node_name) {
+          response["values"]["publishing"].push_back(it->first);
+        }
+      }
+    }
+
+    try {
+      auto services = node_->get_service_names_and_types_by_node(node_name, ns);
+      for (auto it = services.begin(); it != services.end(); ++it) {
+        response["values"]["services"].push_back(it->first);
+      }
+    } catch (const std::exception & e) {
+      RCLCPP_ERROR(
+        get_logger(), "Exception while fetching services for node(%s), ns=%s, name=%s: %s",
+        msg["args"]["node"].get<std::string>().c_str(), ns.c_str(), node_name.c_str(), e.what());
+    }
+
+    response["result"] = true;
+    return true;
+  }
+
+  if (service == "/rosapi/topic_type") {
+    std::string topic_name = msg["args"]["topic"].get<std::string>();
+    std::map<std::string, std::vector<std::string>> topics = node_->get_topic_names_and_types(); 
+    if (topics.find(topic_name) == topics.end()) {
+      RCLCPP_ERROR(get_logger(), "Topic not found: %s", topic_name.c_str());
+      return true;
+    }
+
+    response["values"]["type"] = topics[topic_name][0];
+    response["result"] = true;
+    return true;
+  }
+
+  if (service == "/rosapi/services_for_type") {
+    std::string service_type = msg["args"]["type"].get<std::string>();
+    auto service_name_and_types = node_->get_service_names_and_types();
+
+    std::map<std::string, std::vector<std::string>> filtered_service_name_and_types;
+    for (const auto &pair : service_name_and_types) {
+      for (const auto &type : pair.second) {
+        if (type == service_type) {
+          filtered_service_name_and_types.insert(pair);
+          break;
+        }
+      }
+    }
+
+    response["values"]["services"] = json::array();
+    for (auto it = filtered_service_name_and_types.begin(); it != filtered_service_name_and_types.end(); ++it) {
+      response["values"]["services"].push_back(it->first);
+    }
+
+    response["result"] = true;
+    return true;
+  }
+
+  return call_external_service(msg, response);
+}
+
+bool ClientHandler::call_external_service(const json & msg, json & response)
+{
+  std::string service_name = msg["service"];
+  std::string service_type = msg["type"];
+
+  std::map<std::string, std::vector<std::string>> services = node_->get_service_names_and_types();
+  if (services.find(service_name) == services.end()) {
+    RCLCPP_ERROR(get_logger(), "Service not found: %s", service_name.c_str());
+    return false;
+  }
+
+  if (clients_.count(service_name) == 0) {
+    clients_[service_name] = node_->create_generic_client(
+      service_name, service_type, rmw_qos_profile_services_default, nullptr);
+  }
+
+  while (!clients_[service_name]->wait_for_service(1s)) {
+    if (!rclcpp::ok()) {
+      RCLCPP_ERROR(get_logger(), "Interrupted while waiting for the service. Exiting.");
+      response["result"] = false;
+      return false;
+    }
+    RCLCPP_INFO(get_logger(), "service not available, waiting again...");
+  }
+
+  auto serialized_req = json_to_serialized_service_request(service_type, msg["args"]);
+  using ServiceResponseFuture = rws::GenericClient::SharedFuture;
+  auto response_received_callback = [this, id = msg["id"], service_name,
+                                     service_type](ServiceResponseFuture future) {
+    json response_json = serialized_service_response_to_json(service_type, future.get());
+    json m = {
+      {"id", id},
+      {"op", "service_response"},
+      {"service", service_name},
+      {"values", response_json},
+      {"result", true},
+    };
+
+    std::string json_str = m.dump();
+    this->send_message(json_str);
+  };
+  clients_[service_name]->async_send_request(serialized_req, response_received_callback);
+
+  response["op"] = "call_service";
+  response["result"] = true;
+  return true;
+}
+
+}  // namespace rws
+
+
+================================================
+FILE: src/serdes.cpp
+================================================
+// Copyright 2018 to 2019 ADLINK Technology
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+#include "serdes.hpp"
+
+#include <exception>
+
+#include "dds/ddsrt/endian.h"
+
+cycser::cycser(std::vector<unsigned char> & dst_) : dst(dst_), off(0)
+{
+  dst.reserve(4);
+
+  /* endianness: 0x0000 for BE, 0x0001 for LE */
+  dst.push_back(0x00);
+  dst.push_back((DDSRT_ENDIAN == DDSRT_LITTLE_ENDIAN) ? 0x01 : 0x00);
+
+  /* options: defaults to 0x0000 */
+  dst.push_back(0);
+  dst.push_back(0);
+}
+
+cycdeserbase::cycdeserbase(const char * data_, size_t size_)
+: data(data_), pos(0), lim(size_), swap_bytes(false)
+{
+  /* Get the endianness byte (skip unused first byte in data[0]) */
+  uint32_t data_endianness = (data[1] == 0x01) ? DDSRT_LITTLE_ENDIAN : DDSRT_BIG_ENDIAN;
+
+  /* If endianness of data differs from our endianness: swap bytes when deserializing */
+  swap_bytes = (DDSRT_ENDIAN != data_endianness);
+
+  /* Ignore representation options (data_[2] and data_[3]) */
+  data += 4;
+  lim -= 4;
+}
+
+cycdeser::cycdeser(const void * data_, size_t size_)
+: cycdeserbase(static_cast<const char *>(data_), size_)
+{
+}
+
+cycprint::cycprint(char * buf_, size_t bufsize_, const void * data_, size_t size_)
+: cycdeserbase(static_cast<const char *>(data_), size_), buf(buf_), bufsize(bufsize_)
+{
+}
+
+
+
+================================================
+FILE: src/serdes.hpp
+================================================
+// Copyright 2018 to 2019 ADLINK Technology
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef RWS__SERDES_HPP_
+#define RWS__SERDES_HPP_
+
+#include <inttypes.h>
+#include <stdarg.h>
+#include <string.h>
+#include <stdexcept>
+
+#include <array>
+#include <cassert>
+#include <string>
+#include <type_traits>
+#include <vector>
+
+class cycser
+{
+public:
+  explicit cycser(std::vector<unsigned char> & dst_);
+  cycser() = delete;
+
+  inline cycser & operator<<(bool x)
+  {
+    serialize(x);
+    return *this;
+  }
+  inline cycser & operator<<(char x)
+  {
+    serialize(x);
+    return *this;
+  }
+  inline cycser & operator<<(int8_t x)
+  {
+    serialize(x);
+    return *this;
+  }
+  inline cycser & operator<<(uint8_t x)
+  {
+    serialize(x);
+    return *this;
+  }
+  inline cycser & operator<<(int16_t x)
+  {
+    serialize(x);
+    return *this;
+  }
+  inline cycser & operator<<(uint16_t x)
+  {
+    serialize(x);
+    return *this;
+  }
+  inline cycser & operator<<(int32_t x)
+  {
+    serialize(x);
+    return *this;
+  }
+  inline cycser & operator<<(uint32_t x)
+  {
+    serialize(x);
+    return *this;
+  }
+  inline cycser & operator<<(int64_t x)
+  {
+    serialize(x);
+    return *this;
+  }
+  inline cycser & operator<<(uint64_t x)
+  {
+    serialize(x);
+    return *this;
+  }
+  inline cycser & operator<<(float x)
+  {
+    serialize(x);
+    return *this;
+  }
+  inline cycser & operator<<(double x)
+  {
+    serialize(x);
+    return *this;
+  }
+  inline cycser & operator<<(const std::string & x)
+  {
+    serialize(x);
+    return *this;
+  }
+  inline cycser & operator<<(const std::wstring & x)
+  {
+    serialize(x);
+    return *this;
+  }
+  template <class T>
+  inline cycser & operator<<(const std::vector<T> & x)
+  {
+    serialize(x);
+    return *this;
+  }
+  template <class T, size_t S>
+  inline cycser & operator<<(const std::array<T, S> & x)
+  {
+    serialize(x);
+    return *this;
+  }
+
+#define SER(T)                                  \
+  inline void serialize(T x)                    \
+  {                                             \
+    if ((off % sizeof(T)) != 0) {               \
+      off += sizeof(T) - (off % sizeof(T));     \
+    }                                           \
+    resize(off + sizeof(T));                    \
+    *(reinterpret_cast<T *>(data() + off)) = x; \
+    off += sizeof(T);                           \
+  }
+  SER(char);
+  SER(int8_t);
+  SER(uint8_t);
+  SER(int16_t);
+  SER(uint16_t);
+  SER(int32_t);
+  SER(uint32_t);
+  SER(int64_t);
+  SER(uint64_t);
+  SER(float);
+  SER(double);
+#undef SER
+
+  inline void serialize(bool x) { serialize(static_cast<unsigned char>(x)); }
+  inline void serialize(const std::string & x)
+  {
+    size_t sz = x.size() + 1;
+    serialize(static_cast<uint32_t>(sz));
+    resize(off + sz);
+    memcpy(data() + off, x.c_str(), sz);
+    off += sz;
+  }
+  inline void serialize(const std::wstring & x)
+  {
+    size_t sz = x.size();
+    serialize(static_cast<uint32_t>(sz));
+    resize(off + sz * sizeof(wchar_t));
+    memcpy(data() + off, reinterpret_cast<const char *>(x.c_str()), sz * sizeof(wchar_t));
+    off += sz * sizeof(wchar_t);
+  }
+
+#define SER_A(T)                                                                \
+  inline void serializeA(const T * x, size_t cnt)                               \
+  {                                                                             \
+    if (cnt > 0) {                                                              \
+      if ((off % sizeof(T)) != 0) {                                             \
+        off += sizeof(T) - (off % sizeof(T));                                   \
+      }                                                                         \
+      resize(off + cnt * sizeof(T));                                            \
+      memcpy(data() + off, reinterpret_cast<const void *>(x), cnt * sizeof(T)); \
+      off += cnt * sizeof(T);                                                   \
+    }                                                                           \
+  }
+  SER_A(char);
+  SER_A(int8_t);
+  SER_A(uint8_t);
+  SER_A(int16_t);
+  SER_A(uint16_t);
+  SER_A(int32_t);
+  SER_A(uint32_t);
+  SER_A(int64_t);
+  SER_A(uint64_t);
+  SER_A(float);
+  SER_A(double);
+#undef SER_A
+
+  template <class T>
+  inline void serializeA(const T * x, size_t cnt)
+  {
+    for (size_t i = 0; i < cnt; i++) {
+      serialize(x[i]);
+    }
+  }
+
+  template <class T>
+  inline void serialize(const std::vector<T> & x)
+  {
+    serialize(static_cast<uint32_t>(x.size()));
+    serializeA(x.data(), x.size());
+  }
+  inline void serialize(const std::vector<bool> & x)
+  {
+    serialize(static_cast<uint32_t>(x.size()));
+    for (auto && i : x) {
+      serialize(i);
+    }
+  }
+
+  template <class T>
+  inline void serializeS(const T * x, size_t cnt)
+  {
+    serialize(static_cast<uint32_t>(cnt));
+    serializeA(x, cnt);
+  }
+
+private:
+  inline void resize(size_t n) { dst.resize(n + 4); }
+  inline unsigned char * data() { return dst.data() + 4; }
+
+  std::vector<unsigned char> & dst;
+  size_t off;
+};
+
+class cycdeserbase
+{
+public:
+  explicit cycdeserbase(const char * data_, size_t lim_);
+  cycdeserbase() = delete;
+
+protected:
+  inline uint16_t bswap2u(uint16_t x) { return (uint16_t)((x >> 8) | (x << 8)); }
+  inline int16_t bswap2(int16_t x) { return (int16_t)bswap2u((uint16_t)x); }
+  inline uint32_t bswap4u(uint32_t x)
+  {
+    return (x >> 24) | ((x >> 8) & 0xff00) | ((x << 8) & 0xff0000) | (x << 24);
+  }
+  inline int32_t bswap4(int32_t x) { return (int32_t)bswap4u((uint32_t)x); }
+  inline uint64_t bswap8u(uint64_t x)
+  {
+    const uint32_t newhi = bswap4u((uint32_t)x);
+    const uint32_t newlo = bswap4u((uint32_t)(x >> 32));
+    return ((uint64_t)newhi << 32) | (uint64_t)newlo;
+  }
+  inline int64_t bswap8(int64_t x) { return (int64_t)bswap8u((uint64_t)x); }
+
+  inline void align(size_t a)
+  {
+    if ((pos % a) != 0) {
+      pos += a - (pos % a);
+      if (pos > lim) {
+        throw std::runtime_error("invalid data size: align");
+      }
+    }
+  }
+  inline void validate_size(size_t count, size_t sz)
+  {
+    assert(sz == 1 || sz == 2 || sz == 4 || sz == 8);
+    if (count > (lim - pos) / sz) {
+      throw std::runtime_error("invalid data size: validate_size");
+    }
+  }
+  inline void validate_str(size_t sz)
+  {
+    if (sz > 0 && data[pos + sz - 1] != '\0') {
+      throw std::runtime_error("string data is not null-terminated");
+    }
+  }
+
+  const char * data;
+  size_t pos;
+  size_t lim;
+  bool swap_bytes;
+};
+
+class cycdeser : cycdeserbase
+{
+public:
+  cycdeser(const void * data, size_t size);
+  cycdeser() = delete;
+
+  inline cycdeser & operator>>(bool & x)
+  {
+    deserialize(x);
+    return *this;
+  }
+  inline cycdeser & operator>>(char & x)
+  {
+    deserialize(x);
+    return *this;
+  }
+  inline cycdeser & operator>>(int8_t & x)
+  {
+    deserialize(x);
+    return *this;
+  }
+  inline cycdeser & operator>>(uint8_t & x)
+  {
+    deserialize(x);
+    return *this;
+  }
+  inline cycdeser & operator>>(int16_t & x)
+  {
+    deserialize(x);
+    return *this;
+  }
+  inline cycdeser & operator>>(uint16_t & x)
+  {
+    deserialize(x);
+    return *this;
+  }
+  inline cycdeser & operator>>(int32_t & x)
+  {
+    deserialize(x);
+    return *this;
+  }
+  inline cycdeser & operator>>(uint32_t & x)
+  {
+    deserialize(x);
+    return *this;
+  }
+  inline cycdeser & operator>>(int64_t & x)
+  {
+    deserialize(x);
+    return *this;
+  }
+  inline cycdeser & operator>>(uint64_t & x)
+  {
+    deserialize(x);
+    return *this;
+  }
+  inline cycdeser & operator>>(float & x)
+  {
+    deserialize(x);
+    return *this;
+  }
+  inline cycdeser & operator>>(double & x)
+  {
+    deserialize(x);
+    return *this;
+  }
+  inline cycdeser & operator>>(std::string & x)
+  {
+    deserialize(x);
+    return *this;
+  }
+  inline cycdeser & operator>>(std::wstring & x)
+  {
+    deserialize(x);
+    return *this;
+  }
+  template <class T>
+  inline cycdeser & operator>>(std::vector<T> & x)
+  {
+    deserialize(x);
+    return *this;
+  }
+  template <class T, size_t S>
+  inline cycdeser & operator>>(std::array<T, S> & x)
+  {
+    deserialize(x);
+    return *this;
+  }
+
+#define DESER8(T) DESER(T, )
+#define DESER(T, fn_swap)                         \
+  inline void deserialize(T & x)                  \
+  {                                               \
+    align(sizeof(x));                             \
+    validate_size(1, sizeof(x));                  \
+    x = *reinterpret_cast<const T *>(data + pos); \
+    if (swap_bytes) {                             \
+      x = fn_swap(x);                             \
+    }                                             \
+    pos += sizeof(x);                             \
+  }
+  DESER8(char);
+  DESER8(int8_t);
+  DESER8(uint8_t);
+  DESER(int16_t, bswap2);
+  DESER(uint16_t, bswap2u);
+  DESER(int32_t, bswap4);
+  DESER(uint32_t, bswap4u);
+  DESER(int64_t, bswap8);
+  DESER(uint64_t, bswap8u);
+#undef DESER
+
+  inline void deserialize(bool & x)
+  {
+    unsigned char z;
+    deserialize(z);
+    x = (z != 0);
+  }
+  inline void deserialize(float & x) { deserialize(*reinterpret_cast<uint32_t *>(&x)); }
+  inline void deserialize(double & x) { deserialize(*reinterpret_cast<uint64_t *>(&x)); }
+  inline uint32_t deserialize_len(size_t el_sz)
+  {
+    uint32_t sz;
+    deserialize(sz);
+    validate_size(sz, el_sz);
+    return sz;
+  }
+  inline void deserialize(std::string & x)
+  {
+    const uint32_t sz = deserialize_len(sizeof(char));
+    if (sz == 0) {
+      x = std::string("");
+    } else {
+      validate_str(sz);
+      x = std::string(data + pos, sz - 1);
+    }
+    pos += sz;
+  }
+  inline void deserialize(std::wstring & x)
+  {
+    const uint32_t sz = deserialize_len(sizeof(wchar_t));
+    // wstring is not null-terminated in cdr
+    x = std::wstring(reinterpret_cast<const wchar_t *>(data + pos), sz);
+    pos += sz * sizeof(wchar_t);
+  }
+
+#define DESER8_A(T) DESER_A(T, )
+#define DESER_A(T, fn_swap)                                                        \
+  inline void deserializeA(T * x, size_t cnt)                                      \
+  {                                                                                \
+    if (cnt > 0) {                                                                 \
+      align(sizeof(T));                                                            \
+      validate_size(cnt, sizeof(T));                                               \
+      if (swap_bytes) {                                                            \
+        for (size_t i = 0; i < cnt; i++) {                                         \
+          x[i] = fn_swap(*reinterpret_cast<const T *>(data + pos));                \
+          pos += sizeof(T);                                                        \
+        }                                                                          \
+      } else {                                                                     \
+        memcpy(                                                                    \
+          reinterpret_cast<void *>(x), reinterpret_cast<const void *>(data + pos), \
+          cnt * sizeof(T));                                                        \
+        pos += cnt * sizeof(T);                                                    \
+      }                                                                            \
+    }                                                                              \
+  }
+  DESER8_A(char);
+  DESER8_A(int8_t);
+  DESER8_A(uint8_t);
+  DESER_A(int16_t, bswap2);
+  DESER_A(uint16_t, bswap2u);
+  DESER_A(int32_t, bswap4);
+  DESER_A(uint32_t, bswap4u);
+  DESER_A(int64_t, bswap8);
+  DESER_A(uint64_t, bswap8u);
+#undef DESER_A
+
+  inline void deserializeA(float * x, size_t cnt)
+  {
+    deserializeA(reinterpret_cast<uint32_t *>(x), cnt);
+  }
+  inline void deserializeA(double * x, size_t cnt)
+  {
+    deserializeA(reinterpret_cast<uint64_t *>(x), cnt);
+  }
+
+  template <class T>
+  inline void deserializeA(T * x, size_t cnt)
+  {
+    for (size_t i = 0; i < cnt; i++) {
+      deserialize(x[i]);
+    }
+  }
+
+  template <class T>
+  inline void deserialize(std::vector<T> & x)
+  {
+    const uint32_t sz = deserialize_len(1);
+    x.resize(sz);
+    deserializeA(x.data(), sz);
+  }
+  inline void deserialize(std::vector<bool> & x)
+  {
+    const uint32_t sz = deserialize_len(sizeof(unsigned char));
+    x.resize(sz);
+    for (size_t i = 0; i < sz; i++) {
+      x[i] = ((data + pos)[i] != 0);
+    }
+    pos += sz;
+  }
+  template <class T, size_t S>
+  inline void deserialize(std::array<T, S> & x)
+  {
+    deserializeA(x.data(), x.size());
+  }
+};
+
+class cycprint : cycdeserbase
+{
+public:
+  cycprint(char * buf, size_t bufsize, const void * data, size_t size);
+  cycprint() = delete;
+
+  void print_constant(const char * x) { prtf(&buf, &bufsize, "%s", x); }
+
+  inline cycprint & operator>>(bool & x)
+  {
+    print(x);
+    return *this;
+  }
+  inline cycprint & operator>>(char & x)
+  {
+    print(x);
+    return *this;
+  }
+  inline cycprint & operator>>(int8_t & x)
+  {
+    print(x);
+    return *this;
+  }
+  inline cycprint & operator>>(uint8_t & x)
+  {
+    print(x);
+    return *this;
+  }
+  inline cycprint & operator>>(int16_t & x)
+  {
+    print(x);
+    return *this;
+  }
+  inline cycprint & operator>>(uint16_t & x)
+  {
+    print(x);
+    return *this;
+  }
+  inline cycprint & operator>>(int32_t & x)
+  {
+    print(x);
+    return *this;
+  }
+  inline cycprint & operator>>(uint32_t & x)
+  {
+    print(x);
+    return *this;
+  }
+  inline cycprint & operator>>(int64_t & x)
+  {
+    print(x);
+    return *this;
+  }
+  inline cycprint & operator>>(uint64_t & x)
+  {
+    print(x);
+    return *this;
+  }
+  inline cycprint & operator>>(float & x)
+  {
+    print(x);
+    return *this;
+  }
+  inline cycprint & operator>>(double & x)
+  {
+    print(x);
+    return *this;
+  }
+  inline cycprint & operator>>(std::string & x)
+  {
+    print(x);
+    return *this;
+  }
+  inline cycprint & operator>>(std::wstring & x)
+  {
+    print(x);
+    return *this;
+  }
+  template <class T>
+  inline cycprint & operator>>(std::vector<T> & x)
+  {
+    print(x);
+    return *this;
+  }
+  template <class T, size_t S>
+  inline cycprint & operator>>(std::array<T, S> & x)
+  {
+    print(x);
+    return *this;
+  }
+
+#define PRNT8(T, F) PRNT(T, F, )
+#define PRNT(T, F, fn_swap)                       \
+  inline void print(T & x)                        \
+  {                                               \
+    align(sizeof(x));                             \
+    validate_size(1, sizeof(x));                  \
+    x = *reinterpret_cast<const T *>(data + pos); \
+    if (swap_bytes) {                             \
+      x = fn_swap(x);                             \
+    }                                             \
+    prtf(&buf, &bufsize, F, x);                   \
+    pos += sizeof(x);                             \
+  }
+  PRNT8(char, "'%c'");
+  PRNT8(int8_t, "%" PRId8);
+  PRNT8(uint8_t, "%" PRIu8);
+  PRNT(int16_t, "%" PRId16, bswap2);
+  PRNT(uint16_t, "%" PRIu16, bswap2u);
+  PRNT(int32_t, "%" PRId32, bswap4);
+  PRNT(uint32_t, "%" PRIu32, bswap4u);
+  PRNT(int64_t, "%" PRId64, bswap8);
+  PRNT(uint64_t, "%" PRIu64, bswap8u);
+#undef PRNT
+
+  inline void print(bool & x)
+  {
+    static_cast<void>(x);
+    unsigned char z;
+    print(z);
+  }
+  inline void print(float & x)
+  {
+    union {
+      uint32_t u;
+      float f;
+    } tmp;
+    align(sizeof(x));
+    validate_size(1, sizeof(x));
+    tmp.u = *reinterpret_cast<const uint32_t *>(data + pos);
+    if (swap_bytes) {
+      tmp.u = bswap4u(tmp.u);
+    }
+    static_cast<void>(tmp.u);
+    prtf(&buf, &bufsize, "%f", tmp.f);
+    pos += sizeof(x);
+  }
+  inline void print(double & x)
+  {
+    union {
+      uint64_t u;
+      double f;
+    } tmp;
+    align(sizeof(x));
+    validate_size(1, sizeof(x));
+    tmp.u = *reinterpret_cast<const uint64_t *>(data + pos);
+    if (swap_bytes) {
+      tmp.u = bswap8u(tmp.u);
+    }
+    static_cast<void>(tmp.u);
+    prtf(&buf, &bufsize, "%f", tmp.f);
+    pos += sizeof(x);
+  }
+  inline uint32_t get_len(size_t el_sz)
+  {
+    uint32_t sz;
+    align(sizeof(sz));
+    validate_size(1, sizeof(sz));
+    sz = *reinterpret_cast<const uint32_t *>(data + pos);
+    if (swap_bytes) {
+      sz = bswap4u(sz);
+    }
+    pos += sizeof(sz);
+    validate_size(sz, el_sz);
+    return sz;
+  }
+  inline void print(std::string & x)
+  {
+    const uint32_t sz = get_len(sizeof(char));
+    validate_str(sz);
+    const int len = (sz == 0) ? 0 : (sz > INT32_MAX) ? INT32_MAX : static_cast<int>(sz - 1);
+    static_cast<void>(x);
+    prtf(&buf, &bufsize, "\"%*.*s\"", len, len, static_cast<const char *>(data + pos));
+    pos += sz;
+  }
+  inline void print(std::wstring & x)
+  {
+    const uint32_t sz = get_len(sizeof(wchar_t));
+    // wstring is not null-terminated in cdr
+    x = std::wstring(reinterpret_cast<const wchar_t *>(data + pos), sz);
+    prtf(&buf, &bufsize, "\"%ls\"", x.c_str());
+    pos += sz * sizeof(wchar_t);
+  }
+
+  template <class T>
+  inline void printA(T * x, size_t cnt)
+  {
+    prtf(&buf, &bufsize, "{");
+    for (size_t i = 0; i < cnt; i++) {
+      if (i != 0) {
+        prtf(&buf, &bufsize, ",");
+      }
+      print(*x);
+    }
+    prtf(&buf, &bufsize, "}");
+  }
+
+  template <class T>
+  inline void print(std::vector<T> & x)
+  {
+    const uint32_t sz = get_len(1);
+    printA(x.data(), sz);
+  }
+  template <class T, size_t S>
+  inline void print(std::array<T, S> & x)
+  {
+    printA(x.data(), x.size());
+  }
+
+private:
+  static bool prtf(char * __restrict * buf, size_t * __restrict bufsize, const char * fmt, ...)
+  {
+    va_list ap;
+    if (*bufsize == 0) {
+      return false;
+    }
+    va_start(ap, fmt);
+    int n = vsnprintf(*buf, *bufsize, fmt, ap);
+    va_end(ap);
+    if (n < 0) {
+      **buf = 0;
+      return false;
+    } else if ((size_t)n <= *bufsize) {
+      *buf += (size_t)n;
+      *bufsize -= (size_t)n;
+      return *bufsize > 0;
+    } else {
+      *buf += *bufsize;
+      *bufsize = 0;
+      return false;
+    }
+  }
+
+  char * buf;
+  size_t bufsize;
+};
+
+#endif  // RWS__SERDES_HPP_
+
+
+
+================================================
+FILE: src/server_node.cpp
+================================================
+// Copyright 2022 Vasily Kiniv
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include <cstdio>
+#include <nlohmann/json.hpp>
+#include <websocketpp/config/asio_no_tls.hpp>
+#include <websocketpp/server.hpp>
+
+#include "rclcpp/executors.hpp"
+#include "rclcpp/rclcpp.hpp"
+#include "rws/client_handler.hpp"
+#include "rws/connector.hpp"
+#include "rws/node_interface_impl.hpp"
+
+using json = nlohmann::json;
+using websocketpp::connection_hdl;
+using websocketpp::lib::bind;
+using websocketpp::lib::condition_variable;
+using websocketpp::lib::placeholders::_1;
+using websocketpp::lib::placeholders::_2;
+typedef websocketpp::server<websocketpp::config::asio> server;
+
+enum action_type {
+  SUBSCRIBE,
+  UNSUBSCRIBE,
+  DROP,
+  MESSAGE,
+  BINARY_REPLY,
+  TEXT_REPLY,
+};
+
+struct action
+{
+  action(action_type t, connection_hdl h) : type(t), hdl(h) {}
+  action(action_type t, connection_hdl h, server::message_ptr m) : type(t), hdl(h), msg(m) {}
+  action(action_type t, connection_hdl h, std::vector<std::uint8_t> br)
+  : type(t), hdl(h), binary_reply(br)
+  {
+  }
+  action(action_type t, connection_hdl h, std::string tr) : type(t), hdl(h), text_reply(tr) {}
+
+  action_type type;
+  websocketpp::connection_hdl hdl;
+  server::message_ptr msg;
+  std::vector<std::uint8_t> binary_reply;
+  std::string text_reply;
+};
+
+struct connection_data
+{
+  int client_id;
+  std::shared_ptr<rws::ClientHandler> node;
+  bool is_alive;
+};
+
+class ServerNode : public rclcpp::Node
+{
+public:
+  ServerNode() : Node("rws_server"), node_interface_(nullptr), connector_(nullptr)
+  {
+    rosbridge_compatible_ = this->declare_parameter("rosbridge_compatible", true);
+    port_ = this->declare_parameter("port", 9090);
+    bool watchdog = this->declare_parameter("watchdog", true);
+
+    RCLCPP_INFO(get_logger(), "RWS start listening on port %d", port_);
+
+    if (watchdog) {
+      ping_timer_ = this->create_wall_timer(
+        std::chrono::seconds(6), std::bind(&ServerNode::ping_all_clients, this));
+    }
+
+    // set up access channels to only log interesting things
+    endpoint_.clear_access_channels(websocketpp::log::alevel::all);
+    endpoint_.set_access_channels(websocketpp::log::alevel::access_core);
+    endpoint_.set_access_channels(websocketpp::log::alevel::app);
+
+    // Initialize the Asio transport policy
+    endpoint_.init_asio();
+
+    // Bind the handlers we are using
+    endpoint_.set_open_handler(bind(&ServerNode::on_open, this, _1));
+    endpoint_.set_close_handler(bind(&ServerNode::on_close, this, _1));
+    endpoint_.set_message_handler(bind(&ServerNode::on_message, this, _1, _2));
+    endpoint_.set_pong_timeout_handler(bind(&ServerNode::on_pong_timeout, this, _1));
+    endpoint_.set_reuse_addr(true);
+
+    server_thread_ = std::thread(bind(&ServerNode::run, this));
+  }
+
+  void run()
+  {
+    running_ = true;
+
+    try {
+      endpoint_.listen(port_);
+      endpoint_.start_accept();
+
+      processing_thread_ = std::thread(bind(&ServerNode::process_messages, this));
+
+      endpoint_.run();
+    } catch (const std::exception & e) {
+      RCLCPP_WARN(get_logger(), "Exception while running websocket server: %s", e.what());
+    }
+  }
+
+  void shutdown()
+  {
+    if (!running_) {
+      return;
+    }
+    running_ = false;
+    con_list::iterator it;
+    for (it = connections_.begin(); it != connections_.end(); ++it) {
+      endpoint_.pause_reading(it->first);
+      endpoint_.close(
+        it->first, websocketpp::close::status::going_away, "Server is shutting down.");
+    }
+
+    endpoint_.stop_listening();
+
+    // Notify to unlock message processing thread
+    action_cond_.notify_one();
+
+    server_thread_.join();
+    processing_thread_.join();
+  }
+
+  void process_messages()
+  {
+    while (running_) {
+      std::unique_lock<std::mutex> lock(action_lock_);
+
+      while (actions_.empty()) {
+        if (!running_) {
+          lock.unlock();
+          return;
+        }
+        action_cond_.wait(lock);
+      }
+
+      action a = actions_.front();
+      actions_.pop();
+
+      lock.unlock();
+
+      connection_data * cd = get_con_data(a.hdl);
+
+      if (a.type == SUBSCRIBE) {
+        std::lock_guard<std::mutex> guard(connection_lock_);
+        connections_[a.hdl] = subscribe(a);
+      } else if (a.type == UNSUBSCRIBE) {
+        std::lock_guard<std::mutex> guard(connection_lock_);
+        RCLCPP_INFO(get_logger(), "Closing connection with client_id %d", cd->client_id);
+
+        connections_.erase(a.hdl);
+      } else if (a.type == DROP) {
+        try {
+          cd->is_alive = false;
+          endpoint_.close(a.hdl, websocketpp::close::status::policy_violation, "No pong received");
+        } catch (const std::exception & e) {
+          RCLCPP_WARN(get_logger(), "Failed to close connection: %s", e.what());
+        }
+      } else if (a.type == MESSAGE) {
+        std::lock_guard<std::mutex> guard(connection_lock_);
+
+        send_message_to_node(a);
+      } else if (a.type == TEXT_REPLY && cd && cd->is_alive) {
+        std::lock_guard<std::mutex> guard(connection_lock_);
+        try {
+          this->endpoint_.send(a.hdl, a.text_reply, websocketpp::frame::opcode::text);
+        } catch (const std::exception & e) {
+          RCLCPP_WARN(get_logger(), "Failed to send string reply: %s", e.what());
+        }
+      } else if (a.type == BINARY_REPLY && cd && cd->is_alive) {
+        std::lock_guard<std::mutex> guard(connection_lock_);
+        try {
+          this->endpoint_.send(
+            a.hdl, a.binary_reply.data(), a.binary_reply.size(),
+            websocketpp::frame::opcode::binary);
+        } catch (const std::exception & e) {
+          RCLCPP_WARN(get_logger(), "Failed to send binary reply: %s", e.what());
+        }
+      }
+    }
+  }
+
+private:
+  typedef std::map<connection_hdl, connection_data, std::owner_less<connection_hdl>> con_list;
+
+  bool rosbridge_compatible_;
+  bool running_ = false;
+  con_list connections_;
+  condition_variable action_cond_;
+  rclcpp::TimerBase::SharedPtr ping_timer_;
+  server endpoint_;
+  size_t next_client_id_ = 0;
+  std::queue<action> actions_;
+  uint16_t port_;
+  std::mutex action_lock_;
+  std::mutex connection_lock_;
+  std::thread server_thread_;
+  std::thread processing_thread_;
+  std::shared_ptr<rws::NodeInterfaceImpl> node_interface_;
+  std::shared_ptr<rws::Connector<>> connector_;
+
+  connection_data * get_con_data(connection_hdl & hdl)
+  {
+    auto it = connections_.find(hdl);
+
+    if (it == connections_.end()) {
+      return nullptr;
+    }
+
+    return &it->second;
+  }
+
+  std::shared_ptr<rws::NodeInterfaceImpl> get_node_interface()
+  {
+    if (!node_interface_) {
+      node_interface_ = std::make_shared<rws::NodeInterfaceImpl>(this->shared_from_this());
+    }
+
+    return node_interface_;
+  }
+
+  std::shared_ptr<rws::Connector<>> get_connector()
+  {
+    if (!connector_) {
+      connector_ = std::make_shared<rws::Connector<>>(get_node_interface());
+    }
+
+    return connector_;
+  }
+
+  connection_data subscribe(action & a)
+  {
+    connection_data data;
+    data.client_id = next_client_id_++;
+    data.is_alive = true;
+    data.node = std::make_shared<rws::ClientHandler>(
+      data.client_id, get_node_interface(), get_connector(), rosbridge_compatible_,
+      [this, a](std::string & msg) {
+        {
+          websocketpp::lib::lock_guard<websocketpp::lib::mutex> guard(action_lock_);
+          actions_.push(action(TEXT_REPLY, a.hdl, msg));
+        }
+        action_cond_.notify_one();
+      },
+      [this, a](std::vector<std::uint8_t> & msg) {
+        {
+          websocketpp::lib::lock_guard<websocketpp::lib::mutex> guard(action_lock_);
+          actions_.push(action(BINARY_REPLY, a.hdl, msg));
+        }
+        action_cond_.notify_one();
+      });
+
+    return data;
+  }
+
+  void send_message_to_node(action & a)
+  {
+    connection_data * cd = get_con_data(a.hdl);
+
+    auto client_node = cd->node;
+    try {
+      auto json_msg = json::parse(a.msg->get_payload());
+      auto response = client_node->process_message(json_msg);
+      std::string response_str = response.dump();
+
+      {
+        std::lock_guard<std::mutex> guard(action_lock_);
+        actions_.push(action(TEXT_REPLY, a.hdl, response_str));
+      }
+      action_cond_.notify_one();
+    } catch (const std::exception & e) {
+      RCLCPP_WARN(get_logger(), "Failed to parse JSON: %s", e.what());
+    }
+  }
+
+  void on_open(connection_hdl hdl)
+  {
+    {
+      std::lock_guard<std::mutex> guard(action_lock_);
+      actions_.push(action(SUBSCRIBE, hdl));
+    }
+    action_cond_.notify_one();
+  }
+
+  void on_close(connection_hdl hdl)
+  {
+    {
+      std::lock_guard<std::mutex> guard(action_lock_);
+      actions_.push(action(UNSUBSCRIBE, hdl));
+    }
+    action_cond_.notify_one();
+  }
+
+  void on_message(connection_hdl hdl, server::message_ptr msg)
+  {
+    {
+      std::lock_guard<std::mutex> guard(action_lock_);
+      actions_.push(action(MESSAGE, hdl, msg));
+    }
+    action_cond_.notify_one();
+  }
+
+  void on_pong_timeout(connection_hdl hdl)
+  {
+    if(hdl.expired() || get_con_data(hdl) == nullptr) {
+      // TCP connection dropped before timeout and the client is already disposed
+      return;
+    }
+
+    RCLCPP_WARN(get_logger(), "Pong timeout");
+    {
+      std::lock_guard<std::mutex> guard(action_lock_);
+      actions_.push(action(DROP, hdl));
+    }
+    action_cond_.notify_one();
+  }
+
+  void ping_all_clients()
+  {
+    for (auto & connection : connections_) {
+      try {
+        this->endpoint_.ping(connection.first, "");
+      } catch (const std::exception & e) {
+        RCLCPP_WARN(get_logger(), "Failed to send ping: %s", e.what());
+      }
+    }
+  }
+};
+
+// Declare as global so it's accessible inside the signal handler
+std::shared_ptr<ServerNode> g_server_;
+
+void signal_handler(int sig) { (void)sig; g_server_->shutdown(); }
+
+int main(int argc, char * argv[])
+{
+  if (strcmp(rmw_get_implementation_identifier(), "rmw_fastrtps_cpp") == 0) {
+    std::cout << "\033[1;31mUse rmw_fastrtps_dynamic_cpp instead of "
+              << "rmw_fastrtps_cpp as RMW implementation.\033[0m" << std::endl;
+    return -1;
+  }
+
+  signal(SIGINT, signal_handler);
+  rclcpp::init(argc, argv);
+
+  rclcpp::executors::MultiThreadedExecutor executor;
+  g_server_ = std::make_shared<ServerNode>();
+  executor.add_node(g_server_);
+  executor.spin();
+
+  rclcpp::shutdown();
+  return 0;
+}
+
+
+================================================
+FILE: src/translate.cpp
+================================================
+// Copyright 2022 Vasily Kiniv
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include "rws/translate.hpp"
+
+#include "rclcpp/rclcpp.hpp"
+#include "rosidl_typesupport_introspection_cpp/field_types.hpp"
+#include "rosidl_typesupport_introspection_cpp/message_introspection.hpp"
+#include "rosidl_typesupport_introspection_cpp/service_introspection.hpp"
+#include "rws/typesupport_helpers.hpp"
+#include "serdes.hpp"
+
+namespace rws
+{
+
+static rclcpp::Logger get_logger() { return rclcpp::get_logger("rws::translate"); }
+
+using rosidl_typesupport_introspection_cpp::MessageMember;
+using rosidl_typesupport_introspection_cpp::MessageMembers;
+using rosidl_typesupport_introspection_cpp::ServiceMembers;
+
+template <typename T>
+static void deserialize_field(cycdeser & deser, const MessageMember * member, json & field)
+{
+  T val;
+  if (!member->is_array_) {
+    deser >> val;
+    field = val;
+  } else if (member->array_size_ && !member->is_upper_bound_) {
+    field = json::array();
+    for (size_t i = 0; i < member->array_size_; i++) {
+      deser >> val;
+      field[i] = val;
+    }
+  } else {
+    field = json::array();
+    uint32_t seq_size;
+    deser >> seq_size;
+
+    for (size_t i = 0; i < seq_size; i++) {
+      deser >> val;
+      field[i] = val;
+    }
+  }
+}
+
+static void serialized_message_to_json(cycdeser & deser, const MessageMembers * members, json & j)
+{
+  for (uint32_t i = 0; i < members->member_count_; ++i) {
+    const auto * member = members->members_ + i;
+
+    switch (member->type_id_) {
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_BOOL:
+        deserialize_field<bool>(deser, member, j[member->name_]);
+        break;
+
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_BYTE:
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT8:
+        deserialize_field<uint8_t>(deser, member, j[member->name_]);
+        break;
+
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_CHAR:
+        deserialize_field<char>(deser, member, j[member->name_]);
+        break;
+
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_FLOAT32:
+        deserialize_field<float>(deser, member, j[member->name_]);
+        break;
+
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_FLOAT64:
+        deserialize_field<double>(deser, member, j[member->name_]);
+        break;
+
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT8:
+        deserialize_field<int8_t>(deser, member, j[member->name_]);
+        break;
+
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT16:
+        deserialize_field<int16_t>(deser, member, j[member->name_]);
+        break;
+
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT16:
+        deserialize_field<uint16_t>(deser, member, j[member->name_]);
+        break;
+
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT32:
+        deserialize_field<int32_t>(deser, member, j[member->name_]);
+        break;
+
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT32:
+        deserialize_field<uint32_t>(deser, member, j[member->name_]);
+        break;
+
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT64:
+        deserialize_field<int64_t>(deser, member, j[member->name_]);
+        break;
+
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT64:
+        deserialize_field<uint64_t>(deser, member, j[member->name_]);
+        break;
+
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_STRING:
+        deserialize_field<std::string>(deser, member, j[member->name_]);
+        break;
+
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_WSTRING:
+        deserialize_field<std::wstring>(deser, member, j[member->name_]);
+        break;
+
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_MESSAGE: {
+        auto sub_members = (const MessageMembers *)member->members_->data;
+        if (!member->is_array_) {
+          serialized_message_to_json(deser, sub_members, j[member->name_]);
+        } else {
+          size_t array_size = 0;
+
+          if (member->array_size_ && !member->is_upper_bound_) {
+            array_size = member->array_size_;
+          } else {
+            array_size = deser.deserialize_len(1);
+          }
+
+          if (array_size != 0 && !member->get_function) {
+            throw std::runtime_error("unexpected error: get_function function is null");
+          }
+          for (size_t index = 0; index < array_size; ++index) {
+            serialized_message_to_json(deser, sub_members, j[member->name_][index]);
+          }
+        }
+        break;
+      }
+      default:
+        throw std::runtime_error("unknown type");
+    }
+  }
+}
+
+json serialized_message_to_json(const std::string & msg_type, ConstSharedMessage msg)
+{
+  auto library = rws::get_typesupport_library(msg_type, rws::ts_identifier);
+  auto ts = rclcpp::get_message_typesupport_handle(msg_type, rws::ts_identifier, *library);
+  auto members = static_cast<const MessageMembers *>(ts->data);
+  auto rcl_msg = &msg->get_rcl_serialized_message();
+
+  cycdeser deser(rcl_msg->buffer, rcl_msg->buffer_length);
+  json j;
+  serialized_message_to_json(deser, members, j);
+
+  return j;
+}
+
+template <typename T>
+static void serialize_field(
+  const MessageMember * member, json & field, cycser & ser, T default_value)
+{
+  if (!member->is_array_) {
+    ser << (field.is_null() ? default_value : field.get<T>());
+  } else if (member->array_size_ && !member->is_upper_bound_) {
+    for (size_t i = 0; i < member->array_size_; i++) {
+      ser << (field.is_null() || field[i].is_null() ? default_value : field[i].get<T>());
+    }
+  } else {
+    uint32_t seq_size = field.size();
+    ser << seq_size;
+
+    for (size_t i = 0; i < seq_size; i++) {
+      ser << (field.is_null() || field[i].is_null() ? default_value : field[i].get<T>());
+    }
+  }
+}
+
+static void json_to_serialized_message(cycser & ser, const MessageMembers * members, const json & j)
+{
+  for (uint32_t i = 0; i < members->member_count_; ++i) {
+    const auto member = members->members_ + i;
+
+    if (strcmp(member->name_, "structure_needs_at_least_one_member") == 0) {
+      continue;
+    }
+
+    auto found_field = j.find(member->name_);
+
+    json field;
+    if (found_field == j.end()) {
+      RCLCPP_INFO(
+        get_logger(), "Field '%s' is not in json, default: %p", member->name_,
+        member->default_value_);
+    } else {
+      field = *found_field;
+    }
+
+    switch (member->type_id_) {
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_BOOL:
+        serialize_field<bool>(member, field, ser, false);
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_BYTE:
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT8:
+        serialize_field<uint8_t>(member, field, ser, 0);
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_CHAR:
+        serialize_field<char>(member, field, ser, 0);
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_FLOAT32:
+        serialize_field<float>(member, field, ser, 0.0);
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_FLOAT64:
+        serialize_field<double>(member, field, ser, 0.0);
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT8:
+        serialize_field<int8_t>(member, field, ser, 0);
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT16:
+        serialize_field<int16_t>(member, field, ser, 0);
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT16:
+        serialize_field<uint16_t>(member, field, ser, 0);
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT32:
+        serialize_field<int32_t>(member, field, ser, 0);
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT32:
+        serialize_field<uint32_t>(member, field, ser, 0);
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT64:
+        serialize_field<int64_t>(member, field, ser, 0);
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT64:
+        serialize_field<uint64_t>(member, field, ser, 0);
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_STRING:
+        serialize_field<std::string>(member, field, ser, std::string(""));
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_WSTRING:
+        serialize_field<std::wstring>(member, field, ser, std::wstring(L""));
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_MESSAGE: {
+        auto sub_members = static_cast<const MessageMembers *>(member->members_->data);
+        if (!member->is_array_) {
+          json_to_serialized_message(ser, sub_members, field);
+        } else {
+          size_t array_size = 0;
+
+          if (member->array_size_ && !member->is_upper_bound_) {
+            array_size = member->array_size_;
+          } else {
+            if (field.is_array()) {
+              array_size = field.size();
+            }
+
+            // Serialize length
+            ser << (uint32_t)array_size;
+          }
+
+          for (size_t index = 0; index < array_size; ++index) {
+            json_to_serialized_message(ser, sub_members, field[index]);
+          }
+        }
+        break;
+      }
+      default:
+        throw std::runtime_error("unknown type");
+    }
+  }
+}
+
+SharedMessage json_to_serialized_message(const std::string & msg_type, const json & j)
+{
+  auto library = rws::get_typesupport_library(msg_type, rws::ts_identifier);
+  auto ts = rclcpp::get_message_typesupport_handle(msg_type, rws::ts_identifier, *library);
+  auto members = static_cast<const MessageMembers *>(ts->data);
+
+  auto msg = std::make_shared<rclcpp::SerializedMessage>(0);
+  auto rcl_msg = &msg->get_rcl_serialized_message();
+  std::vector<unsigned char> buffer;
+  cycser ser(buffer);
+
+  json_to_serialized_message(ser, members, j);
+
+  msg->reserve(buffer.size());
+  memcpy(rcl_msg->buffer, buffer.data(), buffer.size());
+  rcl_msg->buffer_length = buffer.size();
+
+  return msg;
+}
+
+SharedMessage json_to_serialized_service_request(const std::string & srv_type, const json & j)
+{
+  auto library = rws::get_typesupport_library(srv_type, rws::ts_identifier);
+  auto ts = rws::get_service_typesupport_handle(srv_type, rws::ts_identifier, *library);
+  auto srv_members = static_cast<const ServiceMembers *>(ts->data);
+  auto request_members = srv_members->request_members_;
+
+  auto msg = std::make_shared<rclcpp::SerializedMessage>(0);
+  auto rcl_msg = &msg->get_rcl_serialized_message();
+  std::vector<unsigned char> buffer;
+  cycser ser(buffer);
+
+  json_to_serialized_message(ser, request_members, j);
+
+  msg->reserve(buffer.size());
+  memcpy(rcl_msg->buffer, buffer.data(), buffer.size());
+  rcl_msg->buffer_length = buffer.size();
+
+  return msg;
+}
+
+json serialized_service_response_to_json(const std::string & srv_type, ConstSharedMessage msg)
+{
+  auto library = rws::get_typesupport_library(srv_type, rws::ts_identifier);
+  auto ts = rws::get_service_typesupport_handle(srv_type, rws::ts_identifier, *library);
+  auto srv_members = static_cast<const ServiceMembers *>(ts->data);
+  auto response_members = srv_members->response_members_;
+
+  auto rcl_msg = &msg->get_rcl_serialized_message();
+
+  cycdeser deser(rcl_msg->buffer, rcl_msg->buffer_length);
+  json j;
+  serialized_message_to_json(deser, response_members, j);
+
+  return j;
+}
+
+static std::string members_to_meta(
+  const MessageMembers * members, std::map<std::string, std::string> & deps,
+  bool rosbridge_compatible = false, std::string parent_name = "")
+{
+  std::stringstream s;
+
+  for (uint32_t i = 0; i < members->member_count_; ++i) {
+    const auto member = members->members_ + i;
+    std::string name = member->name_;
+    if (name == "structure_needs_at_least_one_member") {
+      continue;
+    }
+    if (rosbridge_compatible && name == "nanosec" && parent_name == "stamp") {
+      name = "nsec";
+    }
+
+    std::string b =
+      member->is_array_
+        ? !member->array_size_ ? "[]" : "[" + std::to_string(member->array_size_) + "]"
+        : "";
+
+    switch (member->type_id_) {
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_BOOL:
+        s << "bool" << b << " " << name << "\n";
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_BYTE:  // byte is legacy type
+        // s << "byte" << b << " " << name << "\n";
+        // break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_CHAR:  // char is legacy type
+        // s << "char" << b << " " << name << "\n";
+        // break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT8:
+        s << "uint8" << b << " " << name << "\n";
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT8:
+        s << "int8" << b << " " << name << "\n";
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_FLOAT32:
+        s << "float32" << b << " " << name << "\n";
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_FLOAT64:
+        s << "float64" << b << " " << name << "\n";
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT16:
+        s << "int16" << b << " " << name << "\n";
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT16:
+        s << "uint16" << b << " " << name << "\n";
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT32:
+        s << "int32" << b << " " << name << "\n";
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT32:
+        s << "uint32" << b << " " << name << "\n";
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_INT64:
+        s << "int64" << b << " " << name << "\n";
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_UINT64:
+        s << "uint64" << b << " " << name << "\n";
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_STRING:
+        s << "string" << b << " " << name << "\n";
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_WSTRING:
+        s << "wstring" << b << " " << name << "\n";
+        break;
+      case rosidl_typesupport_introspection_cpp::ROS_TYPE_MESSAGE: {
+        auto sub_members = static_cast<const MessageMembers *>(member->members_->data);
+        auto msg_path = get_type_from_message_members(sub_members);
+
+        s << msg_path << b << " " << name << "\n";
+
+        if (deps.count(msg_path) == 0) {
+          deps[msg_path] = members_to_meta(sub_members, deps, rosbridge_compatible, name);
+        }
+      } break;
+      default:
+        throw std::runtime_error("unknown type");
+    }
+  }
+
+  return s.str();
+}
+
+std::string generate_message_meta(const std::string & msg_type, bool rosbridge_compatible)
+{
+  auto library = rws::get_typesupport_library(msg_type, rws::ts_identifier);
+  auto ts = rclcpp::get_message_typesupport_handle(msg_type, rws::ts_identifier, *library);
+  auto members = static_cast<const MessageMembers *>(ts->data);
+
+  std::stringstream s;
+  std::map<std::string, std::string> deps;
+  s << members_to_meta(members, deps, rosbridge_compatible);
+
+  for (auto & dep : deps) {
+    s << "============\n";
+    s << "MSG: " << dep.first << "\n";
+    s << dep.second;
+  }
+
+  return s.str();
+}
+
+}  // namespace rws
+
+
+================================================
+FILE: src/typesupport_helpers.cpp
+================================================
+// Copyright 2022 Vasily Kiniv
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include "rws/typesupport_helpers.hpp"
+
+#include <mutex>
+#include <vector>
+
+#include "ament_index_cpp/get_package_prefix.hpp"
+#include "ament_index_cpp/get_resources.hpp"
+#include "rcpputils/find_library.hpp"
+#include "rcpputils/shared_library.hpp"
+#include "rosidl_typesupport_introspection_cpp/field_types.hpp"
+
+namespace rws
+{
+const char * ts_identifier = "rosidl_typesupport_introspection_cpp";
+namespace
+{
+
+std::mutex g_shared_lib_lock_;
+std::map<std::string, std::shared_ptr<rcpputils::SharedLibrary>> g_shared_libs_;
+
+// Look for the library in the ament prefix paths.
+std::string get_typesupport_library_path(
+  const std::string & package_name, const std::string & typesupport_identifier)
+{
+  const char * dynamic_library_folder;
+#ifdef _WIN32
+  dynamic_library_folder = "/bin/";
+#elif __APPLE__
+  dynamic_library_folder = "/lib/";
+#else
+  dynamic_library_folder = "/lib/";
+#endif
+
+  std::string package_prefix;
+  try {
+    package_prefix = ament_index_cpp::get_package_prefix(package_name);
+  } catch (ament_index_cpp::PackageNotFoundError & e) {
+    throw std::runtime_error(e.what());
+  }
+
+  const std::string library_path = rcpputils::path_for_library(
+    package_prefix + dynamic_library_folder, package_name + "__" + typesupport_identifier);
+  if (library_path.empty()) {
+    throw std::runtime_error(
+      "Typesupport library for " + package_name + " does not exist in '" + package_prefix + "'.");
+  }
+  return library_path;
+}
+
+static std::tuple<std::string, std::string, std::string> extract_type_identifier(
+  const std::string & full_type)
+{
+  char type_separator = '/';
+  auto sep_position_back = full_type.find_last_of(type_separator);
+  auto sep_position_front = full_type.find_first_of(type_separator);
+  if (
+    sep_position_back == std::string::npos || sep_position_back == 0 ||
+    sep_position_back == full_type.length() - 1) {
+    throw std::runtime_error(
+      "Message type is not of the form package/type and cannot be processed");
+  }
+
+  std::string package_name = full_type.substr(0, sep_position_front);
+  std::string middle_module = "";
+  if (sep_position_back - sep_position_front > 0) {
+    middle_module =
+      full_type.substr(sep_position_front + 1, sep_position_back - sep_position_front - 1);
+  }
+  std::string type_name = full_type.substr(sep_position_back + 1);
+
+  return std::make_tuple(package_name, middle_module, type_name);
+}
+
+}  // anonymous namespace
+
+std::shared_ptr<rcpputils::SharedLibrary> get_typesupport_library(
+  const std::string & type, const std::string & typesupport_identifier)
+{
+  std::string type_id = type + typesupport_identifier;
+  if (g_shared_libs_.count(type_id) == 0) {
+    std::lock_guard<std::mutex> guard(g_shared_lib_lock_);
+    auto package_name = std::get<0>(extract_type_identifier(type));
+    auto library_path = get_typesupport_library_path(package_name, typesupport_identifier);
+    g_shared_libs_[type_id] = std::make_shared<rcpputils::SharedLibrary>(library_path);
+  }
+
+  return g_shared_libs_[type_id];
+}
+
+const rosidl_service_type_support_t * get_service_typesupport_handle(
+  const std::string & type, const std::string & typesupport_identifier,
+  rcpputils::SharedLibrary & library)
+{
+  std::string package_name;
+  std::string middle_module;
+  std::string type_name;
+  std::tie(package_name, middle_module, type_name) = extract_type_identifier(type);
+
+  auto mk_error =
+    [&package_name, &type_name](auto reason) {
+      std::stringstream rcutils_dynamic_loading_error;
+      rcutils_dynamic_loading_error
+        << "Something went wrong loading the typesupport library for message type " << package_name
+        << "/" << type_name << ". " << reason;
+      return rcutils_dynamic_loading_error.str();
+    };
+
+  try {
+    std::string symbol_name = typesupport_identifier + "__get_service_type_support_handle__" +
+                              package_name + "__" +
+                              (middle_module.empty() ? "srv" : middle_module) + "__" + type_name;
+
+    const rosidl_service_type_support_t * (*get_ts)() = nullptr;
+    // This will throw runtime_error if the symbol was not found.
+    get_ts = reinterpret_cast<decltype(get_ts)>(library.get_symbol(symbol_name));
+    return get_ts();
+  } catch (std::runtime_error &) {
+    throw std::runtime_error{mk_error("Library could not be found.")};
+  }
+}
+
+std::string get_type_from_message_members(const MessageMembers * members)
+{
+  std::string s = members->message_namespace_;
+  s.replace(s.find("::"), sizeof("::") - 1, "/");
+  return s + "/" + members->message_name_;
+}
+
+std::tuple<std::string, std::string> split_ns_node_name(const std::string & node_name)
+{
+  auto sep_position = node_name.find_last_of("/");
+  if (sep_position == std::string::npos) {
+    throw std::runtime_error("Node name is not of the form namespace/node and cannot be processed");
+  }
+
+  std::string ns = node_name.substr(0, sep_position);
+  std::string node = node_name.substr(sep_position + 1);
+
+  return std::make_tuple(ns, node);
+}
+
+std::string message_type_to_ros2_style(const std::string & ros1_msg_type)
+{
+  std::string s = ros1_msg_type;
+  if (s.find("/msg/") != std::string::npos) {
+    return ros1_msg_type;
+  }
+  s.replace(s.find("/"), sizeof("/") - 1, "/msg/");
+  return s;
+}
+
+std::string message_type_to_ros1_style(const std::string & ros2_msg_type)
+{
+  std::string s = ros2_msg_type;
+  if (s.find("/msg/") != std::string::npos) {
+    s.replace(s.find("/msg/"), sizeof("/msg/") - 1, "/");
+  }
+  return s;
+}
+
+std::shared_ptr<void> allocate_message(const MessageMembers * members)
+{
+  void * buf = new uint8_t[members->size_of_];
+  members->init_function(buf, rosidl_runtime_cpp::MessageInitialization::ZERO);
+  return std::shared_ptr<void>(
+    buf,
+    [members](void * p)
+    {
+      members->fini_function(p);
+      delete[] reinterpret_cast<uint8_t *>(p);
+    });
+}
+
+}  // namespace rws
+
+
+================================================
+FILE: test/client_handler_test.cpp
+================================================
+
+#include "rws/client_handler.hpp"
+
+#include <gtest/gtest.h>
+
+#include "generic_publisher_mock.hpp"
+#include "rws/node_interface_impl.hpp"
+
+namespace rws
+{
+
+using json = nlohmann::json;
+
+class ClientHandlerFixture : public testing::Test
+{
+public:
+  ClientHandlerFixture() {}
+
+  void SetUp() override {}
+
+  void TearDown() override {}
+
+protected:
+};
+
+TEST_F(ClientHandlerFixture, subsribe_to_topic_is_thread_safe)
+{
+  auto server_node = std::make_shared<rclcpp::Node>("server_node");
+  auto node_interface = std::make_shared<rws::NodeInterfaceImpl>(server_node);
+  auto connector = std::make_shared<rws::Connector<>>(node_interface);
+  auto pub = server_node->create_generic_publisher("/test", "std_msgs/msg/String", rclcpp::QoS(10));
+  auto json_o = json::parse(R"(
+    {
+      "compression": "none",
+      "op": "subscribe",
+      "topic": "/test"
+    }
+  )");
+  const int nodes_count = 50;
+
+  std::vector<std::thread> threads;
+  std::vector<std::shared_ptr<rws::ClientHandler>> nodes;
+  for (int ti = 0; ti < nodes_count; ti++) {
+    nodes.push_back(std::make_shared<rws::ClientHandler>(
+      ti, node_interface, connector, true, [](std::string &) {},
+      [](std::vector<std::uint8_t> &) {}));
+    threads.push_back(std::thread([ti, nodes, &json_o]() {
+      for (int i = 0; i < 1000; i++) {
+        nodes[ti]->process_message(json_o);
+      }
+    }));
+  }
+
+  for (int ti = 0; ti < nodes_count; ti++) {
+    threads[ti].join();
+  }
+
+  EXPECT_NE(server_node, nullptr);
+}
+
+TEST_F(ClientHandlerFixture, advertise_topic_is_thread_safe)
+{
+  auto server_node = std::make_shared<rclcpp::Node>("server_node");
+  auto node_interface = std::make_shared<rws::NodeInterfaceImpl>(server_node);
+  auto connector = std::make_shared<rws::Connector<>>(node_interface);
+  auto json_o = json::parse(R"(
+    {
+      "op": "advertise",
+      "history_depth": 10,
+      "type": "std_msgs/msg/String",
+      "topic": "/test",
+      "latch": false
+    }
+  )");
+  const int nodes_count = 50;
+
+  std::vector<std::thread> threads;
+  std::vector<std::shared_ptr<rws::ClientHandler>> nodes;
+  for (int ti = 0; ti < nodes_count; ti++) {
+    nodes.push_back(std::make_shared<rws::ClientHandler>(
+      ti, node_interface, connector, false, [](std::string &) {},
+      [](std::vector<std::uint8_t> &) {}));
+    threads.push_back(std::thread([ti, nodes, &json_o]() {
+      for (int i = 0; i < 1000; i++) {
+        nodes[ti]->process_message(json_o);
+      }
+    }));
+  }
+
+  for (int ti = 0; ti < nodes_count; ti++) {
+    threads[ti].join();
+  }
+
+  EXPECT_NE(server_node, nullptr);
+}
+
+TEST_F(ClientHandlerFixture, rosapi_topic_and_raw_types_is_thread_safe)
+{
+  auto server_node = std::make_shared<rclcpp::Node>("server_node");
+  auto node_interface = std::make_shared<rws::NodeInterfaceImpl>(server_node);
+  auto connector = std::make_shared<rws::Connector<>>(node_interface);
+  auto json_o = json::parse(R"(
+    {
+      "op": "call_service",
+      "service": "/rosapi/topics_and_raw_types"
+    }
+  )");
+  const int nodes_count = 20;
+
+  std::vector<std::thread> threads;
+  std::vector<std::shared_ptr<rws::ClientHandler>> nodes;
+  for (int ti = 0; ti < nodes_count; ti++) {
+    nodes.push_back(std::make_shared<rws::ClientHandler>(
+      ti, node_interface, connector, true, [](std::string &) {},
+      [](std::vector<std::uint8_t> &) {}));
+    threads.push_back(std::thread([ti, nodes, &json_o]() {
+      for (int i = 0; i < 1000; i++) {
+        nodes[ti]->process_message(json_o);
+      }
+    }));
+  }
+
+  for (int ti = 0; ti < nodes_count; ti++) {
+    threads[ti].join();
+  }
+
+  EXPECT_NE(server_node, nullptr);
+}
+
+}  // namespace rws
+
+int main(int argc, char ** argv)
+{
+  rclcpp::init(argc, argv);
+  ::testing::InitGoogleTest(&argc, argv);
+  int result = RUN_ALL_TESTS();
+  rclcpp::shutdown();
+  return result;
+}
+
+
+================================================
+FILE: test/connector_test.cpp
+================================================
+#include "rws/connector.hpp"
+#include <gtest/gtest.h>
+
+#include "node_mock.hpp"
+
+namespace rws
+{
+
+using testing::_;
+using testing::Invoke;
+using testing::MockFunction;
+using testing::Return;
+
+using ConstSharedMessage = std::shared_ptr<const rclcpp::SerializedMessage>;
+
+class ConnectorFixture : public testing::Test
+{
+public:
+  ConnectorFixture() {}
+
+  void SetUp() override
+  {
+    for(int i = 0; i < 6; i++) {
+      messages.push_back(std::make_shared<const rclcpp::SerializedMessage>());
+    }
+  }
+
+  void TearDown() override { messages.clear(); }
+
+protected:
+  std::vector<ConstSharedMessage> messages;
+};
+
+TEST_F(ConnectorFixture, subscribe_to_topic_calls_create_generic_subscription_with_correct_params)
+{
+  auto node = std::make_shared<testing::NiceMock<NodeMock>>();
+  Connector<GenericPublisherMock> connector(node);
+
+  topic_params params("/topic", "std_msgs/msg/String");
+  EXPECT_EQ(params.topic, "/topic");
+  EXPECT_EQ(params.type, "std_msgs/msg/String");
+  EXPECT_EQ(params.history_depth, 10);
+  EXPECT_EQ(params.throttle_rate.nanoseconds(), 0);
+  EXPECT_EQ(params.compression, "none");
+
+  EXPECT_CALL(
+    *node, create_generic_subscription("/topic", "std_msgs/msg/String", rclcpp::QoS(10), _, _))
+    .Times(1)
+    .WillRepeatedly(Return(nullptr));
+
+  auto handler = [](topic_params, ConstSharedMessage) {};
+  connector.subscribe_to_topic(0, params, handler);
+}
+
+TEST_F(ConnectorFixture, subscribe_to_topic_calls_create_generic_subscription_only_once)
+{
+  auto node = std::make_shared<testing::NiceMock<NodeMock>>();
+  Connector<GenericPublisherMock> connector(node);
+
+  topic_params params("/topic", "std_msgs/msg/String");
+  EXPECT_EQ(params.topic, "/topic");
+  EXPECT_EQ(params.type, "std_msgs/msg/String");
+  EXPECT_EQ(params.history_depth, 10);
+  EXPECT_EQ(params.throttle_rate.nanoseconds(), 0);
+  EXPECT_EQ(params.compression, "none");
+
+  EXPECT_CALL(*node, create_generic_subscription(_, _, _, _, _)).Times(1).WillOnce(Return(nullptr));
+
+  auto handler = [](topic_params, ConstSharedMessage) {};
+  connector.subscribe_to_topic(0, params, handler);
+  connector.subscribe_to_topic(0, params, handler);
+}
+
+TEST_F(
+  ConnectorFixture,
+  subscribe_to_topic_calls_message_handler_for_corresponding_client_with_the_same_topic)
+{
+  auto node = std::make_shared<testing::NiceMock<NodeMock>>();
+  Connector<GenericPublisherMock> connector(node);
+  topic_params params("/topic", "std_msgs/msg/String");
+
+  std::function<void(ConstSharedMessage)> topic_callback;
+  EXPECT_CALL(
+    *node, create_generic_subscription("/topic", "std_msgs/msg/String", rclcpp::QoS(10), _, _))
+    .Times(1)
+    .WillRepeatedly(
+      Invoke([&topic_callback](
+               const std::string &, const std::string &,
+               const rclcpp::QoS &, std::function<void(ConstSharedMessage)> callback,
+               const rclcpp::SubscriptionOptions &) {
+        topic_callback = callback;
+        return nullptr;
+      }));
+
+  // Client 1
+  std::vector<ConstSharedMessage> client0_msgs;
+  connector.subscribe_to_topic(
+    0, params, [&client0_msgs](topic_params, ConstSharedMessage message) { client0_msgs.push_back(message); });
+
+  // Client 2
+  std::vector<ConstSharedMessage> client1_msgs;
+  connector.subscribe_to_topic(
+    1, params, [&client1_msgs](topic_params, ConstSharedMessage message) { client1_msgs.push_back(message); });
+
+  // "Publish" messages
+  topic_callback(messages[0]);
+  topic_callback(messages[1]);
+
+  // Expect client 0 to receive both messages
+  EXPECT_EQ(client0_msgs.size(), 2);
+  EXPECT_EQ(client0_msgs[0], messages[0]);
+  EXPECT_EQ(client0_msgs[1], messages[1]);
+
+  // Expect client 1 to receive both messages
+  EXPECT_EQ(client1_msgs.size(), 2);
+  EXPECT_EQ(client1_msgs[0], messages[0]);
+  EXPECT_EQ(client1_msgs[1], messages[1]);
+}
+
+TEST_F(
+  ConnectorFixture,
+  subscribe_to_topic_calls_message_handler_for_corresponding_client_with_different_topics)
+{
+  auto node = std::make_shared<testing::NiceMock<NodeMock>>();
+  Connector<GenericPublisherMock> connector(node);
+
+  topic_params params0("/topic0", "std_msgs/msg/String");
+  topic_params params1("/topic1", "std_msgs/msg/String");
+
+  std::function<void(ConstSharedMessage)> topic0_callback;
+  EXPECT_CALL(
+    *node, create_generic_subscription("/topic0", "std_msgs/msg/String", rclcpp::QoS(10), _, _))
+    .Times(1)
+    .WillRepeatedly(
+      Invoke([&topic0_callback](
+               const std::string &, const std::string &,
+               const rclcpp::QoS &, std::function<void(ConstSharedMessage)> callback,
+               const rclcpp::SubscriptionOptions &) {
+        topic0_callback = callback;
+        return nullptr;
+      }));
+
+  std::function<void(ConstSharedMessage)> topic1_callback;
+  EXPECT_CALL(
+    *node, create_generic_subscription("/topic1", "std_msgs/msg/String", rclcpp::QoS(10), _, _))
+    .Times(1)
+    .WillRepeatedly(
+      Invoke([&topic1_callback](
+               const std::string &, const std::string &,
+               const rclcpp::QoS &, std::function<void(ConstSharedMessage)> callback,
+               const rclcpp::SubscriptionOptions &) {
+        topic1_callback = callback;
+        return nullptr;
+      }));
+
+  // Client 1
+  std::vector<ConstSharedMessage> client0_msgs;
+  connector.subscribe_to_topic(
+    0, params0, [&client0_msgs](topic_params, ConstSharedMessage message) { client0_msgs.push_back(message); });
+
+  // Client 2
+  std::vector<ConstSharedMessage> client1_msgs;
+  connector.subscribe_to_topic(
+    1, params1, [&client1_msgs](topic_params, ConstSharedMessage message) { client1_msgs.push_back(message); });
+
+  // "Publish" messages
+  topic0_callback(messages[0]);
+  topic1_callback(messages[1]);
+
+  // Expect client 0 to receive one message
+  EXPECT_EQ(client0_msgs.size(), 1);
+  EXPECT_EQ(client0_msgs[0], messages[0]);
+
+  // Expect client 1 to receive one message
+  EXPECT_EQ(client1_msgs.size(), 1);
+  EXPECT_EQ(client1_msgs[0], messages[1]);
+}
+
+TEST_F(ConnectorFixture, connector_unsubscribes_from_topic_when_no_more_clients_are_subscribed)
+{
+  auto node = std::make_shared<testing::NiceMock<NodeMock>>();
+  Connector<GenericPublisherMock> connector(node);
+
+  topic_params topic0_p("/topic", "std_msgs/msg/String");
+  topic_params topic1_p("/another_topic", "std_msgs/msg/BoundedArray");
+  topic_params topic2_p("/third_topic", "std_msgs/msg/Float32");
+
+  // Client 1
+  auto client0_unsub_t0 =
+    connector.subscribe_to_topic(0, topic0_p, [](topic_params, ConstSharedMessage) {});
+  EXPECT_EQ(connector.is_subscribed_to_topic(topic0_p), true);
+
+  // Client 2
+  auto client1_unsub_t0 = connector.subscribe_to_topic(1, topic0_p, [](topic_params, ConstSharedMessage) {});
+  EXPECT_EQ(connector.is_subscribed_to_topic(topic0_p), true);
+  auto client1_unsub_t1 = connector.subscribe_to_topic(1, topic1_p, [](topic_params, ConstSharedMessage) {});
+  EXPECT_EQ(connector.is_subscribed_to_topic(topic1_p), true);
+  auto client1_unsub_t2 = connector.subscribe_to_topic(1, topic2_p, [](topic_params, ConstSharedMessage) {});
+  EXPECT_EQ(connector.is_subscribed_to_topic(topic2_p), true);
+
+  // Unsubscribe client 0 from topic 0
+  client0_unsub_t0();
+
+  // Topic 0 is still subscribed
+  EXPECT_EQ(connector.is_subscribed_to_topic(topic0_p), true);
+
+  // Unsubscribe client 1 from topic 0(ascending order)
+  client1_unsub_t0();
+  EXPECT_EQ(connector.is_subscribed_to_topic(topic0_p), false);
+
+  // Topic 1 and 2 is still subscribed
+  EXPECT_EQ(connector.is_subscribed_to_topic(topic1_p), true);
+  EXPECT_EQ(connector.is_subscribed_to_topic(topic2_p), true);
+
+  // Unsubscribe client 1 from topic 2(descending order)
+  client1_unsub_t2();
+  EXPECT_EQ(connector.is_subscribed_to_topic(topic2_p), false);
+
+  // Topic 1 is still subscribed
+  EXPECT_EQ(connector.is_subscribed_to_topic(topic1_p), true);
+
+  // Unsubscribe client 1 from topic 1
+  client1_unsub_t1();
+  EXPECT_EQ(connector.is_subscribed_to_topic(topic1_p), false);
+}
+
+TEST_F(ConnectorFixture, advertise_topic_callc_create_generic_publisher_with_correct_params)
+{
+  auto node = std::make_shared<testing::NiceMock<NodeMock>>();
+  Connector<GenericPublisherMock> connector(node);
+
+  topic_params params("/topic", "std_msgs/msg/String");
+  std::function<void(ConstSharedMessage)> publisher_callback;
+  EXPECT_CALL(*node, create_generic_publisher("/topic", "std_msgs/msg/String", rclcpp::QoS(10), _))
+    .Times(1);
+  connector.advertise_topic(0, params, publisher_callback);
+
+  // latched publisher
+  EXPECT_CALL(
+    *node,
+    create_generic_publisher("/topic", "std_msgs/msg/String", rclcpp::QoS(10).transient_local(), _))
+    .Times(1);
+  params.latch = true;
+  connector.advertise_topic(1, params, publisher_callback);
+}
+
+TEST_F(ConnectorFixture, advertise_topic_return_callback_for_publishing_message)
+{
+  auto node = std::make_shared<testing::NiceMock<NodeMock>>();
+  auto publisher = std::make_shared<testing::NiceMock<GenericPublisherMock>>();
+  Connector<GenericPublisherMock> connector(node);
+
+  topic_params params("/topic", "std_msgs/msg/String");
+
+  std::function<void(ConstSharedMessage)> publisher_callback;
+  EXPECT_CALL(*node, create_generic_publisher(_, _, _, _)).Times(1).WillOnce(Return(publisher));
+
+  auto unadvertise = connector.advertise_topic(0, params, publisher_callback);
+
+  EXPECT_CALL(*publisher, publish(_)).Times(1);
+  publisher_callback(std::make_shared<const rclcpp::SerializedMessage>());
+}
+
+TEST_F(ConnectorFixture, connector_unadvertise_when_no_more_clients_are_advertising)
+{
+  auto node = std::make_shared<testing::NiceMock<NodeMock>>();
+  auto publisher = std::make_shared<testing::NiceMock<GenericPublisherMock>>();
+  Connector<GenericPublisherMock> connector(node);
+
+  topic_params topic0_p("/topic", "std_msgs/msg/String");
+  topic_params topic1_p("/another_topic", "std_msgs/msg/BoundedArray");
+  topic_params topic2_p("/third_topic", "std_msgs/msg/Float32");
+
+  std::function<void(ConstSharedMessage)> publisher_cb;
+
+  // Client 1
+  auto client0_unadv_t0 = connector.advertise_topic(0, topic0_p, publisher_cb);
+  EXPECT_EQ(connector.is_advertising_topic(topic0_p), true);
+
+  // Client 2
+  auto client1_unadv_t0 = connector.advertise_topic(1, topic0_p, publisher_cb);
+  EXPECT_EQ(connector.is_advertising_topic(topic0_p), true);
+  auto client1_unadv_t1 = connector.advertise_topic(1, topic1_p, publisher_cb);
+  EXPECT_EQ(connector.is_advertising_topic(topic1_p), true);
+  auto client1_unadv_t2 = connector.advertise_topic(1, topic2_p, publisher_cb);
+  EXPECT_EQ(connector.is_advertising_topic(topic2_p), true);
+
+  // Unadvertise client 0 from topic 0
+  client0_unadv_t0();
+
+  // Topic 0 is still advertised
+  EXPECT_EQ(connector.is_advertising_topic(topic0_p), true);
+
+  // Unadvertise client 1 from topic 0(ascending order)
+  client1_unadv_t0();
+  EXPECT_EQ(connector.is_advertising_topic(topic0_p), false);
+
+  // Topic 1 and 2 is still advertised
+  EXPECT_EQ(connector.is_advertising_topic(topic1_p), true);
+  EXPECT_EQ(connector.is_advertising_topic(topic2_p), true);
+
+  // Unadvertise client 1 from topic 2(descending order)
+  client1_unadv_t2();
+  EXPECT_EQ(connector.is_advertising_topic(topic2_p), false);
+
+  // Topic 1 is still advertised
+  EXPECT_EQ(connector.is_advertising_topic(topic1_p), true);
+
+  // Unadvertise client 1 from topic 1
+  client1_unadv_t1();
+  EXPECT_EQ(connector.is_advertising_topic(topic1_p), false);
+}
+
+TEST_F(ConnectorFixture, subscription_callback_throttles_messages)
+{
+  auto node = std::make_shared<testing::NiceMock<NodeMock>>();
+  Connector<GenericPublisherMock> connector(node);
+
+  topic_params params;
+  params.topic = "/test_topic";
+  params.type = "std_msgs/msg/String";
+  params.throttle_rate = rclcpp::Duration(0, 100 * 1000000);
+
+  std::function<void(ConstSharedMessage)> topic_callback;
+  EXPECT_CALL(
+    *node, create_generic_subscription("/test_topic", "std_msgs/msg/String", rclcpp::QoS(10), _, _))
+    .Times(1)
+    .WillRepeatedly(
+      Invoke([&topic_callback](
+               const std::string &, const std::string &,
+               const rclcpp::QoS &, std::function<void(ConstSharedMessage)> callback,
+               const rclcpp::SubscriptionOptions &) {
+        topic_callback = callback;
+        return nullptr;
+      }));
+
+  rclcpp::Time now(1000, 0, RCL_ROS_TIME);
+  ON_CALL(*node, now()).WillByDefault(Invoke([&now](){
+    now += rclcpp::Duration(0, 50 * 1000000);
+    return now;
+  }));
+
+  // Received messages
+  std::vector<ConstSharedMessage> client_msgs;
+  connector.subscribe_to_topic(
+    0, params, [&client_msgs](topic_params, ConstSharedMessage message) { client_msgs.push_back(message); });
+  
+  // "Publish" messages
+  topic_callback(messages[0]); // last_sent = 0, 0
+  topic_callback(messages[1]); //             1000, 50
+  topic_callback(messages[2]); //             1000, 100
+  topic_callback(messages[3]); //             1000, 150
+
+  // Expect client to receive first and last message
+  EXPECT_EQ(client_msgs.size(), 2);
+  EXPECT_EQ(client_msgs[0], messages[0]);
+  EXPECT_EQ(client_msgs[1], messages[3]);
+}
+
+}  // namespace rws
+
+int main(int argc, char ** argv)
+{
+  rclcpp::init(argc, argv);
+  ::testing::InitGoogleTest(&argc, argv);
+  int result = RUN_ALL_TESTS();
+  rclcpp::shutdown();
+  return result;
+}
+
+
+
+================================================
+FILE: test/translate_test.cpp
+================================================
+#ifndef RWS__TRANSLATE_TEST_HPP_
+#define RWS__TRANSLATE_TEST_HPP_
+
+#include "rws/translate.hpp"
+
+#include <gtest/gtest.h>
+
+#include <nlohmann/json.hpp>
+#include <rclcpp/rclcpp.hpp>
+
+#include "rcl_interfaces/msg/log.hpp"
+#include "rclcpp/serialization.hpp"
+
+namespace rws
+{
+
+using json = nlohmann::json;
+
+class TranslateFixture : public testing::Test
+{
+public:
+  TranslateFixture() {}
+
+  void SetUp() override {}
+
+  void TearDown() override {}
+
+protected:
+};
+
+TEST_F(TranslateFixture, DescribeStdMsgsString)
+{
+  std::string msg_desc = generate_message_meta("std_msgs/msg/String");
+  EXPECT_EQ(msg_desc, "string data\n");
+}
+
+TEST_F(TranslateFixture, DescribeStdMsgsBuiltins)
+{
+  auto msg_desc = generate_message_meta("test_msgs/msg/Builtins");
+
+  std::string expected =
+    "builtin_interfaces/msg/Duration duration_value\n"
+    "builtin_interfaces/msg/Time time_value\n"
+    "============\n"
+    "MSG: builtin_interfaces/msg/Duration\n"
+    "int32 sec\n"
+    "uint32 nanosec\n"
+    "============\n"
+    "MSG: builtin_interfaces/msg/Time\n"
+    "int32 sec\n"
+    "uint32 nanosec\n";
+
+  EXPECT_EQ(msg_desc, expected);
+}
+
+TEST_F(TranslateFixture, RosbridgeCompatibleDescriptionHasRenamedNanosecondsField)
+{
+  auto msg_desc = generate_message_meta("rcl_interfaces/msg/Log", true);
+
+  std::string expected =
+    "builtin_interfaces/msg/Time stamp\n"
+    "uint8 level\n"
+    "string name\n"
+    "string msg\n"
+    "string file\n"
+    "string function\n"
+    "uint32 line\n"
+    "============\n"
+    "MSG: builtin_interfaces/msg/Time\n"
+    "int32 sec\n"
+    "uint32 nsec\n";  // <--- renamed from nanosec to nsec
+
+  EXPECT_EQ(msg_desc, expected);
+}
+
+TEST_F(TranslateFixture, DescribeTestMsgsUnboundedSequence)
+{
+  auto msg_desc = generate_message_meta("test_msgs/msg/UnboundedSequences");
+
+  std::string expected =
+    "bool[] bool_values\n"
+    "uint8[] byte_values\n"
+    "uint8[] char_values\n"
+    "float32[] float32_values\n"
+    "float64[] float64_values\n"
+    "int8[] int8_values\n"
+    "uint8[] uint8_values\n"
+    "int16[] int16_values\n"
+    "uint16[] uint16_values\n"
+    "int32[] int32_values\n"
+    "uint32[] uint32_values\n"
+    "int64[] int64_values\n"
+    "uint64[] uint64_values\n"
+    "string[] string_values\n"
+    "test_msgs/msg/BasicTypes[] basic_types_values\n"
+    "test_msgs/msg/Constants[] constants_values\n"
+    "test_msgs/msg/Defaults[] defaults_values\n"
+    "bool[] bool_values_default\n"
+    "uint8[] byte_values_default\n"
+    "uint8[] char_values_default\n"
+    "float32[] float32_values_default\n"
+    "float64[] float64_values_default\n"
+    "int8[] int8_values_default\n"
+    "uint8[] uint8_values_default\n"
+    "int16[] int16_values_default\n"
+    "uint16[] uint16_values_default\n"
+    "int32[] int32_values_default\n"
+    "uint32[] uint32_values_default\n"
+    "int64[] int64_values_default\n"
+    "uint64[] uint64_values_default\n"
+    "string[] string_values_default\n"
+    "int32 alignment_check\n"
+    "============\n"
+    "MSG: test_msgs/msg/BasicTypes\n"
+    "bool bool_value\n"
+    "uint8 byte_value\n"
+    "uint8 char_value\n"
+    "float32 float32_value\n"
+    "float64 float64_value\n"
+    "int8 int8_value\n"
+    "uint8 uint8_value\n"
+    "int16 int16_value\n"
+    "uint16 uint16_value\n"
+    "int32 int32_value\n"
+    "uint32 uint32_value\n"
+    "int64 int64_value\n"
+    "uint64 uint64_value\n"
+    "============\n"
+    "MSG: test_msgs/msg/Constants\n"
+    "============\n"
+    "MSG: test_msgs/msg/Defaults\n"
+    "bool bool_value\n"
+    "uint8 byte_value\n"
+    "uint8 char_value\n"
+    "float32 float32_value\n"
+    "float64 float64_value\n"
+    "int8 int8_value\n"
+    "uint8 uint8_value\n"
+    "int16 int16_value\n"
+    "uint16 uint16_value\n"
+    "int32 int32_value\n"
+    "uint32 uint32_value\n"
+    "int64 int64_value\n"
+    "uint64 uint64_value\n";
+
+  EXPECT_EQ(msg_desc, expected);
+}
+
+TEST_F(TranslateFixture, DescribeTestMsgsArrays)
+{
+  auto msg_desc = generate_message_meta("test_msgs/msg/Arrays");
+
+  std::string expected =
+    "bool[3] bool_values\n"
+    "uint8[3] byte_values\n"
+    "uint8[3] char_values\n"
+    "float32[3] float32_values\n"
+    "float64[3] float64_values\n"
+    "int8[3] int8_values\n"
+    "uint8[3] uint8_values\n"
+    "int16[3] int16_values\n"
+    "uint16[3] uint16_values\n"
+    "int32[3] int32_values\n"
+    "uint32[3] uint32_values\n"
+    "int64[3] int64_values\n"
+    "uint64[3] uint64_values\n"
+    "string[3] string_values\n"
+    "test_msgs/msg/BasicTypes[3] basic_types_values\n"
+    "test_msgs/msg/Constants[3] constants_values\n"
+    "test_msgs/msg/Defaults[3] defaults_values\n"
+    "bool[3] bool_values_default\n"
+    "uint8[3] byte_values_default\n"
+    "uint8[3] char_values_default\n"
+    "float32[3] float32_values_default\n"
+    "float64[3] float64_values_default\n"
+    "int8[3] int8_values_default\n"
+    "uint8[3] uint8_values_default\n"
+    "int16[3] int16_values_default\n"
+    "uint16[3] uint16_values_default\n"
+    "int32[3] int32_values_default\n"
+    "uint32[3] uint32_values_default\n"
+    "int64[3] int64_values_default\n"
+    "uint64[3] uint64_values_default\n"
+    "string[3] string_values_default\n"
+    "int32 alignment_check\n"
+    "============\n"
+    "MSG: test_msgs/msg/BasicTypes\n"
+    "bool bool_value\n"
+    "uint8 byte_value\n"
+    "uint8 char_value\n"
+    "float32 float32_value\n"
+    "float64 float64_value\n"
+    "int8 int8_value\n"
+    "uint8 uint8_value\n"
+    "int16 int16_value\n"
+    "uint16 uint16_value\n"
+    "int32 int32_value\n"
+    "uint32 uint32_value\n"
+    "int64 int64_value\n"
+    "uint64 uint64_value\n"
+    "============\n"
+    "MSG: test_msgs/msg/Constants\n"
+    "============\n"
+    "MSG: test_msgs/msg/Defaults\n"
+    "bool bool_value\n"
+    "uint8 byte_value\n"
+    "uint8 char_value\n"
+    "float32 float32_value\n"
+    "float64 float64_value\n"
+    "int8 int8_value\n"
+    "uint8 uint8_value\n"
+    "int16 int16_value\n"
+    "uint16 uint16_value\n"
+    "int32 int32_value\n"
+    "uint32 uint32_value\n"
+    "int64 int64_value\n"
+    "uint64 uint64_value\n";
+
+  EXPECT_EQ(msg_desc, expected);
+}
+
+TEST_F(TranslateFixture, DeserializeRclInterfacesLogMessage)
+{
+  auto log_msg = std::make_shared<rcl_interfaces::msg::Log>();
+  log_msg->level = 1;
+  log_msg->name = "client_handler";
+  log_msg->msg =
+    "process_message: "
+    "{\"args\":{},\"id\":\"call_service:/rosapi/"
+    "topics_and_raw_types:1\",\"op\":\"call_service\",\"service\":\"/rosapi/"
+    "topics_and_raw_types\",\"type\":\"rosapi/TopicsAndRawTypes\"}";
+  log_msg->file = "/src/client_handler.cpp";
+  log_msg->function = "process_message";
+  log_msg->line = 1;
+
+  auto serialized_msg = std::make_shared<rclcpp::SerializedMessage>();
+
+  static rclcpp::Serialization<rcl_interfaces::msg::Log> serializer;
+  serializer.serialize_message(log_msg.get(), &*serialized_msg);
+
+  std::string expected_json_str =
+    R"({"file":"/src/client_handler.cpp","function":"process_message","level":1,"line":1,"msg":"process_message: {\"args\":{},\"id\":\"call_service:/rosapi/topics_and_raw_types:1\",\"op\":\"call_service\",\"service\":\"/rosapi/topics_and_raw_types\",\"type\":\"rosapi/TopicsAndRawTypes\"}","name":"client_handler","stamp":{"nanosec":0,"sec":0}})";
+  json expected = json::parse(expected_json_str);
+
+  auto log_msg_json = rws::serialized_message_to_json("rcl_interfaces/msg/Log", serialized_msg);
+  EXPECT_EQ(log_msg_json, expected);
+}
+
+TEST_F(TranslateFixture, DescribeMsgsNestedType)
+{
+  auto msg_desc = generate_message_meta("sensor_msgs/Image");
+
+  std::string expected =
+    "std_msgs/msg/Header header\n"
+    "uint32 height\n"
+    "uint32 width\n"
+    "string encoding\n"
+    "uint8 is_bigendian\n"
+    "uint32 step\n"
+    "uint8[] data\n"
+    "============\n"
+    "MSG: builtin_interfaces/msg/Time\n"
+    "int32 sec\n"
+    "uint32 nanosec\n"
+    "============\n"
+    "MSG: std_msgs/msg/Header\n"
+    "builtin_interfaces/msg/Time stamp\n"
+    "string frame_id\n";
+
+  EXPECT_EQ(msg_desc, expected);
+}
+
+}  // namespace rws
+
+int main(int argc, char ** argv)
+{
+  rclcpp::init(argc, argv);
+  ::testing::InitGoogleTest(&argc, argv);
+  int result = RUN_ALL_TESTS();
+  rclcpp::shutdown();
+
+  return result;
+}
+
+#endif  // RWS__TRANSLATE_TEST_HPP_
+
+
+
+================================================
+FILE: test/typesupport_helpers_test.cpp
+================================================
+#include "rws/typesupport_helpers.hpp"
+
+#include <gtest/gtest.h>
+
+#include <rclcpp/rclcpp.hpp>
+
+#include "rosidl_typesupport_introspection_cpp/field_types.hpp"
+#include "rosidl_typesupport_introspection_cpp/service_introspection.hpp"
+
+namespace rws
+{
+
+using rosidl_typesupport_introspection_cpp::ServiceMembers;
+
+class TypesupportHelpersFixture : public testing::Test
+{
+public:
+  TypesupportHelpersFixture() {}
+
+  void SetUp() override {}
+
+  void TearDown() override {}
+
+protected:
+};
+
+TEST_F(TypesupportHelpersFixture, GetTypesupportHandleCanFindStandardService)
+{
+  std::string srv_type = "std_srvs/srv/Trigger";
+  auto library = rclcpp::get_typesupport_library(srv_type, "rosidl_typesupport_introspection_cpp");
+  auto ts =
+    rws::get_service_typesupport_handle(srv_type, "rosidl_typesupport_introspection_cpp", *library);
+  EXPECT_NE(ts, nullptr);
+}
+
+TEST_F(TypesupportHelpersFixture, GetTypeFromMessageMembers)
+{
+  std::string srv_type = "std_srvs/srv/Trigger";
+  auto library = rclcpp::get_typesupport_library(srv_type, "rosidl_typesupport_introspection_cpp");
+  auto ts =
+    rws::get_service_typesupport_handle(srv_type, "rosidl_typesupport_introspection_cpp", *library);
+  auto srv_members = static_cast<const ServiceMembers *>(ts->data);
+  EXPECT_NE(ts, nullptr);
+
+  auto type = rws::get_type_from_message_members(srv_members->request_members_);
+  EXPECT_EQ(type, "std_srvs/srv/Trigger_Request");
+}
+
+TEST_F(TypesupportHelpersFixture, SplitNodeName)
+{
+  auto [ns, node_name] = rws::split_ns_node_name("/foo/bar");
+  EXPECT_EQ(ns, "/foo");
+  EXPECT_EQ(node_name, "bar");
+}
+
+TEST_F(TypesupportHelpersFixture, SplitNodeNameWithoutNamespace)
+{
+  auto [ns, node_name] = rws::split_ns_node_name("/bar");
+  EXPECT_EQ(ns, "");
+  EXPECT_EQ(node_name, "bar");
+}
+
+TEST_F(TypesupportHelpersFixture, GetTypesupportHandleContainServiceMembers)
+{
+  std::string srv_type = "std_srvs/srv/SetBool";
+  auto library = rclcpp::get_typesupport_library(srv_type, "rosidl_typesupport_introspection_cpp");
+  auto ts =
+    rws::get_service_typesupport_handle(srv_type, "rosidl_typesupport_introspection_cpp", *library);
+  EXPECT_NE(ts, nullptr);
+
+  auto srv_members = static_cast<const ServiceMembers *>(ts->data);
+  EXPECT_NE(srv_members, nullptr);
+
+  auto request_members = srv_members->request_members_;
+  EXPECT_NE(request_members, nullptr);
+
+  auto response_members = srv_members->response_members_;
+  EXPECT_NE(response_members, nullptr);
+
+  EXPECT_EQ(request_members->member_count_, 1u);
+  EXPECT_EQ(response_members->member_count_, 2u);
+
+  EXPECT_STREQ(request_members->members_[0].name_, "data");
+  EXPECT_EQ(
+    request_members->members_[0].type_id_, rosidl_typesupport_introspection_cpp::ROS_TYPE_BOOL);
+  EXPECT_EQ(request_members->members_[0].members_, nullptr);
+  EXPECT_EQ(request_members->members_[0].array_size_, 0u);
+  EXPECT_EQ(request_members->members_[0].is_upper_bound_, false);
+  EXPECT_EQ(request_members->members_[0].is_array_, false);
+
+  EXPECT_STREQ(response_members->members_[0].name_, "success");
+  EXPECT_EQ(
+    response_members->members_[0].type_id_, rosidl_typesupport_introspection_cpp::ROS_TYPE_BOOL);
+  EXPECT_EQ(response_members->members_[0].members_, nullptr);
+  EXPECT_EQ(response_members->members_[0].array_size_, 0u);
+  EXPECT_EQ(response_members->members_[0].is_upper_bound_, false);
+  EXPECT_EQ(response_members->members_[0].is_array_, false);
+
+  EXPECT_STREQ(response_members->members_[1].name_, "message");
+  EXPECT_EQ(
+    response_members->members_[1].type_id_, rosidl_typesupport_introspection_cpp::ROS_TYPE_STRING);
+  EXPECT_EQ(response_members->members_[1].members_, nullptr);
+  EXPECT_EQ(response_members->members_[1].array_size_, 0u);
+  EXPECT_EQ(response_members->members_[1].is_upper_bound_, false);
+  EXPECT_EQ(response_members->members_[1].is_array_, false);
+}
+
+TEST_F(TypesupportHelpersFixture, Ros1MessageTypeToRos2)
+{
+  auto ros1_msg_type = "std_msgs/String";
+  auto ros2_msg_type = rws::message_type_to_ros2_style(ros1_msg_type);
+  EXPECT_EQ(ros2_msg_type, "std_msgs/msg/String");
+}
+
+TEST_F(TypesupportHelpersFixture, Ros1MessageTypeToRos2DoesNotMutateRos2Message)
+{
+  auto fake_ros1_msg_type = "std_msgs/msg/String";
+  auto ros1_msg_type = rws::message_type_to_ros2_style(fake_ros1_msg_type);
+  EXPECT_EQ(ros1_msg_type, "std_msgs/msg/String");
+}
+
+TEST_F(TypesupportHelpersFixture, Ros2MessageTypeToRos1)
+{
+  auto ros2_msg_type = "std_msgs/msg/String";
+  auto ros1_msg_type = rws::message_type_to_ros1_style(ros2_msg_type);
+  EXPECT_EQ(ros1_msg_type, "std_msgs/String");
+}
+
+TEST_F(TypesupportHelpersFixture, Ros2MessageTypeToRos1HandleDoesNotMutateRos1MessageType)
+{
+  auto fake_ros2_msg_type = "std_msgs/String";
+  auto ros1_msg_type = rws::message_type_to_ros1_style(fake_ros2_msg_type);
+  EXPECT_EQ(ros1_msg_type, "std_msgs/String");
+}
+
+}  // namespace rws
+
+int main(int argc, char ** argv)
+{
+  rclcpp::init(argc, argv);
+  ::testing::InitGoogleTest(&argc, argv);
+  int result = RUN_ALL_TESTS();
+  rclcpp::shutdown();
+  return result;
+}
+
+
+
+================================================
+FILE: test/mocks/generic_publisher_mock.hpp
+================================================
+
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
+#include "rclcpp/rclcpp.hpp"
+
+class GenericPublisherMock
+{
+public:
+  MOCK_METHOD(void, publish, (const rclcpp::SerializedMessage message), ());
+};
+
+
+================================================
+FILE: test/mocks/node_mock.hpp
+================================================
+
+#include <gmock/gmock.h>
+#include <gtest/gtest.h>
+
+#include "generic_publisher_mock.hpp"
+#include "rws/node_interface.hpp"
+
+class NodeMock : public rws::NodeInterface<GenericPublisherMock>
+{
+public:
+  // using rws::NodeInterface<GenericPublisherMock>::NodeInterface;
+  MOCK_METHOD(
+    std::shared_ptr<rclcpp::GenericSubscription>, create_generic_subscription,
+    (const std::string & topic_name, const std::string & topic_type, const rclcpp::QoS & qos,
+     std::function<void(std::shared_ptr<const rclcpp::SerializedMessage>)> callback,
+     const rclcpp::SubscriptionOptions & options),
+    ());
+
+  MOCK_METHOD(
+    std::shared_ptr<GenericPublisherMock>, create_generic_publisher,
+    (const std::string & topic_name, const std::string & topic_type, const rclcpp::QoS & qos,
+     const rclcpp::PublisherOptions & options),
+    ());
+
+  MOCK_METHOD(
+    rws::GenericClient::SharedPtr, create_generic_client,
+    (const std::string & service_name, const std::string & service_type,
+     const rmw_qos_profile_t & qos_profile, rclcpp::CallbackGroup::SharedPtr group),
+    ());
+
+  MOCK_METHOD(rclcpp::Time, now, (), (const));
+  MOCK_METHOD(
+    rclcpp::node_interfaces::NodeBaseInterface::SharedPtr, get_node_base_interface, (), ());
+  MOCK_METHOD(
+    rclcpp::node_interfaces::NodeGraphInterface::SharedPtr, get_node_graph_interface, (), ());
+  MOCK_METHOD(
+    rclcpp::node_interfaces::NodeServicesInterface::SharedPtr, get_node_services_interface, (), ());
+  MOCK_METHOD(
+    rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr, get_node_topics_interface, (), ());
+  MOCK_METHOD(
+    (std::map<std::string, std::vector<std::string>>), get_service_names_and_types, (), (const));
+  MOCK_METHOD(
+    (std::map<std::string, std::vector<std::string>>), get_service_names_and_types_by_node,
+    (const std::string & node_name, const std::string & namespace_), (const));
+  MOCK_METHOD(
+    (std::map<std::string, std::vector<std::string>>), get_topic_names_and_types, (), (const));
+  MOCK_METHOD(
+    std::vector<rclcpp::TopicEndpointInfo>, get_subscriptions_info_by_topic,
+    (const std::string & topic_name, bool no_mangle), (const));
+  MOCK_METHOD(
+    std::vector<rclcpp::TopicEndpointInfo>, get_publishers_info_by_topic,
+    (const std::string & topic_name, bool no_mangle), (const));
+  MOCK_METHOD(std::vector<std::string>, get_node_names, (), (const));
+};
+

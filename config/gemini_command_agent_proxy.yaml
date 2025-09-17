@@ -1,0 +1,58 @@
+# Gemini Command Extractor Agent Configuration - PROXY VERSION
+#
+# This agent extracts movement commands and provides JSON scene descriptions.
+# It outputs to command_transcript for the command processor to parse.
+# This version connects through the reflection proxy for cross-agent communication.
+#
+# Author: Karim Virani
+# Date: September 2025
+
+gemini_live_agent:
+  # Agent Identification
+  agent_id: "gemini_command_extractor"
+  agent_role: "command"  # Role: conversation or command
+  sibling_agents: ["gemini_conversational"]  # Conversation agent sibling
+
+  # API Configuration
+  # Set GEMINI_API_KEY environment variable for security
+
+  # Model Selection
+  model: "models/gemini-live-2.5-flash-preview"
+
+  # Voice Selection - Explicitly disable for command agent
+  voice: ""  # Empty string disables voice in Gemini
+
+  # Proactive Audio - Must be false for command agent
+  proactive_audio: false
+
+  # Video Support - ENABLED for visual command mode (JSON scene descriptions)
+  enable_video: true
+  max_image_age: 5.0  # Maximum age (seconds) for an image to be considered fresh
+
+  # Session Management
+  session_pause_timeout: 30.0  # Seconds of silence before cycling session
+  max_context_tokens: 1000  # Smaller context for command extraction
+  conversation_timeout: 600.0  # 10 minutes - reset context after this
+
+  # Published Topics (relative paths for namespacing) - new naming convention
+  response_voice_topic: ""  # DISABLED - no audio output for command agent
+  response_text_topic: ""   # DISABLED - command agent uses response_cmd instead
+  response_cmd_topic: "response_cmd"  # Movement commands and JSON scene data (was command_transcript)
+  prompt_transcript_topic: "prompt_transcript"  # User voice transcript (NEW!)
+  command_detected_topic: "command_detected"  # Signal when command extracted
+  interruption_signal_topic: ""  # Not needed without audio
+
+  # Prompt Selection - Use command extractor prompt (silent except for commands)
+  prompt_id: "barney_command_extractor_gemini"
+
+  # Logging
+  log_level: 20  # INFO level (10=DEBUG, 20=INFO, 30=WARNING, 40=ERROR)
+
+# Bridge Connection (WebSocket-based distributed deployment)
+bridge_connection:
+  type: "websocket"
+  host: "localhost"
+  port: 8766  # Connect through proxy for shared context
+  reconnect_interval: 5.0
+  max_reconnect_attempts: 10
+  heartbeat_interval: 30

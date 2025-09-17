@@ -201,7 +201,7 @@ class WebSocketBridgeInterface:
                 {"topic": "prompt_text", "msg_type": "std_msgs/String"},
                 {"topic": "conversation_id", "msg_type": "std_msgs/String"}
             ]
-            
+
             # Add camera subscription if video is enabled
             if self.config.get('enable_video', False):
                 subscriptions.append({

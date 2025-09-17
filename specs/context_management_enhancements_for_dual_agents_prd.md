@@ -102,6 +102,7 @@ The conversation agent often returns different command acknowledgments than what
 2. **Authoritative Transcription**: Single source of truth for what the user said
 3. **Standalone Operation**: Each agent must work independently without waiting for siblings
 4. **Bridge Simplicity**: Bridge must remain a pure relay without business logic
+5. **Proxyless Operation**: Agents must function correctly with or without the reflection proxy
 
 ### 4.2 Non-Functional Requirements
 1. **Low Latency**: Context sharing should not add significant latency
@@ -135,19 +136,56 @@ The conversation agent often returns different command acknowledgments than what
 - **Cons**: Doesn't solve the problem, just makes it visible
 - **Rejected**: Doesn't improve user experience
 
-### Option E: Conversation Agent as Authority (CHOSEN)
+### Option E: Conversation Agent as Authority
 - **Approach**: Conversation agent's transcription is authoritative for context
-- **Pros**: 
+- **Pros**:
   - Leverages better context for accuracy
   - Natural authority (primary user interface)
   - Simple implementation
   - No latency for commands
 - **Cons**: Requires agent awareness of siblings
-- **Selected**: Best balance of simplicity and effectiveness
+- **Status**: Original selection, but requires bridge modification
+
+### Option F: WebSocket Reflection Proxy (SELECTED)
+- **Approach**: Lightweight proxy between agents and bridge handles reflection
+- **Pros**:
+  - Bridge-agnostic (works with any WebSocket bridge)
+  - Transparent to agents (configuration-only change)
+  - Preserves metadata in reflection path
+  - Optional component (can be bypassed)
+  - Clean separation of concerns
+- **Cons**: Additional process to manage
+- **Selected**: Enables Option E without bridge lock-in
+
+## 5.1 Bridge Reflection Analysis
+
+### Critical Discovery
+Investigation of standard WebSocket bridges (rosbridge_suite, Foxglove Bridge, RWS) revealed:
+- **No ros-external to ros-external reflection**: All bridges assume messages from WebSocket clients go to ROS, not to other WebSocket clients
+- **No automatic ROS reflection**: Published messages don't automatically return to the bridge
+- **Missing communication path**: Without modification, agents cannot receive each other's messages
+
+### Implications
+- Pure ROS round-trip requires either:
+  - Bridge subscribing to its own published topics (creates loops)
+  - Separate ROS reflector node (architecturally complex)
+  - Bridge modification (locks to custom implementation)
+- Standard bridges cannot support cross-agent communication without additional components
 
 ## 6. Proposed Solution
 
-### 6.1 Agent Sibling Awareness
+The solution combines agent sibling awareness (Option E) with a WebSocket reflection proxy (Option F) to enable cross-agent communication without modifying the bridge.
+
+### 6.1 WebSocket Reflection Proxy
+
+A lightweight proxy sits between agents and the bridge to enable reflection:
+- Single shared process listening on dedicated port (e.g., 8766)
+- Agents connect to proxy instead of directly to bridge
+- Proxy maintains single upstream connection to bridge
+- Reflects ros-external messages to subscribing ros-external agents
+- Transparent pass-through for all other messages
+
+### 6.2 Agent Sibling Awareness
 
 Agents become aware of their role and potential siblings:
 
@@ -157,7 +195,7 @@ agent_role: "conversation"  # or "command"
 sibling_agents: ["command_agent_id"]  # optional
 ```
 
-### 6.2 Message Tagging
+### 6.3 Message Tagging
 
 Agents tag their messages with metadata:
 
@@ -174,7 +212,7 @@ transcript_data = {
 
 Bridge remains a pure relay - just passes enriched messages through.
 
-### 6.3 Subscription Patterns
+### 6.4 Subscription Patterns
 
 Agents subscribe to each other's output topics:
 
@@ -189,7 +227,7 @@ Agents subscribe to each other's output topics:
 - prompt_transcript  # For authoritative transcription
 ```
 
-### 6.4 Context Incorporation Logic
+### 6.5 Context Incorporation Logic
 
 ```python
 def handle_transcript(self, envelope):
@@ -204,7 +242,7 @@ def handle_transcript(self, envelope):
         self.logger.debug(f"Alt transcript: {transcript}")
 ```
 
-### 6.5 Standalone Operation
+### 6.6 Standalone Operation
 
 Agents check for sibling configuration but don't require it:
 
@@ -234,15 +272,20 @@ def __init__(self):
 - Implement conditional subscription logic
 - Still no context sharing
 
-### 7.4 Phase 3: Cross-Subscription
+### 7.4 Phase 3: Cross-Subscription with Reflection Proxy
+- Deploy WebSocket reflection proxy on port 8766
+- Update agent configs to connect through proxy (port change only)
 - Conversation agent subscribes to response_cmd
 - Command agent subscribes to response_text
+- Proxy handles reflection of ros-external messages
 - Add filtering to prevent self-loops
 
 ### 7.5 Phase 4: Context Incorporation
 - Implement authoritative transcription logic
 - Add context updates from sibling outputs
 - Test convergence over multiple turns
+- Ensure agents gracefully handle missing cross-agent topics when running without proxy
+- Log informational messages when sibling topics unavailable but continue normal operation
 
 ### 7.6 Phase 5: User Prefix Activation (Optional)
 - Activate the dormant user prefix system
@@ -359,17 +402,121 @@ agent_config:
 |------|--------|------------|
 | Message loops | High | Agent-side filtering, never subscribe to own outputs |
 | Increased complexity | Medium | Phased rollout, extensive testing |
-| Bridge coupling | Low | Metadata in messages, not bridge logic |
+| Bridge coupling | Low | Use reflection proxy instead of modifying bridge |
 | Version skew | Medium | Graceful handling of missing metadata |
+| Proxy failure | High | Optional bypass mode, health monitoring, auto-restart |
+| Reflection latency | Low | Local process, typically <1ms overhead |
 
 ## 14. Decision Log
 
 1. **Bridge remains pure relay**: Preserves swapability with other ROS bridges
-2. **Conversation agent as authority**: Best context leads to best transcriptions
-3. **Sibling awareness over coordination**: Simple, no synchronization required
-4. **Eventual consistency over perfect sync**: Accepts some divergence for low latency
+2. **Reflection proxy for cross-agent communication**: Enables sibling awareness without bridge lock-in
+3. **Conversation agent as authority**: Best context leads to best transcriptions
+4. **Sibling awareness over coordination**: Simple, no synchronization required
+5. **Eventual consistency over perfect sync**: Accepts some divergence for low latency
 
-## 15. Conclusion
+## 15. Reflection Proxy Technical Design
+
+### 15.1 Architecture
+Single shared process that intercepts WebSocket connections:
+```
+Agents → Reflection Proxy (8766) → Bridge (8765) → ROS
+           ↑                ↓
+           └── Reflection ──┘
+```
+
+### 15.2 Port Configuration
+- Reflection Proxy: Port 8766 (accepts all agent connections)
+- ROS Bridge: Port 8765 (proxy connects as single client)
+- Agents require only configuration change (port 8765 → 8766)
+
+### 15.3 Key Features
+- **Transparent**: Agents unaware of proxy existence
+- **Selective Reflection**: Only reflects messages matching sibling subscriptions
+- **Metadata Preservation**: Maintains agent metadata in reflected messages
+- **Optional Bypass**: Can be disabled via configuration - agents connect directly to bridge at port 8765
+- **Bridge Agnostic**: Works with any WebSocket bridge implementation
+- **Single Upstream Connection**: Bridge sees only one client (the proxy), reducing bridge load
+- **Topic Agnostic**: No hardcoded topic names - learns from agent registrations
+- **Future Proof**: New topics automatically supported without proxy modifications
+- **Backward Compatible**: Agents function correctly with direct bridge connection (no proxy)
+
+### 15.4 Connection Architecture
+From the bridge's perspective:
+- Sees only 1 WebSocket connection (from proxy, not N agents)
+- Receives 1 combined registration with all agent subscriptions
+- Sends each ROS message only once (proxy handles distribution)
+- Completely unaware multiple agents exist
+
+From each agent's perspective:
+- Connects normally to what it thinks is the bridge
+- Sends standard registration and messages
+- Receives both ROS-originating and sibling-reflected messages
+- Completely unaware proxy exists
+
+### 15.5 Dynamic Topic Handling
+The proxy is completely content-agnostic:
+```
+When agent registers → Proxy tracks: agent_id ↔ [subscribed_topics]
+When agent publishes → Proxy checks: who subscribes to this topic?
+When ROS publishes → Proxy forks: to all agents subscribing to topic
+```
+
+Adding new topics requires ZERO proxy changes:
+- Agent subscribes to `new_fancy_topic` → Proxy automatically tracks it
+- Another agent publishes to `new_fancy_topic` → Proxy automatically reflects it
+- Bridge publishes `new_fancy_topic` from ROS → Proxy automatically forks it
+
+### 15.6 Message Flow
+1. Agent publishes message with metadata
+2. Proxy checks if other agents subscribe to that topic
+3. If match found: Reflect as `inbound_message` to subscribers
+4. Always forward original to bridge for ROS publishing
+5. Bridge messages pass through unchanged
+
+### 15.7 Example Flow
+```
+Agent1 registers: subscribes to ["prompt_voice", "response_cmd"]
+Agent2 registers: subscribes to ["prompt_voice", "response_text"]
+
+Proxy → Bridge: subscribes to ["prompt_voice", "response_cmd", "response_text"]
+
+ROS publishes "prompt_voice" → Bridge → Proxy → Fork to Agent1 AND Agent2
+Agent1 publishes "response_text" → Proxy → Reflect to Agent2 + Forward to Bridge
+Agent2 publishes "response_cmd" → Proxy → Reflect to Agent1 + Forward to Bridge
+```
+
+### 15.8 Downsides and Mitigations
+| Downside | Impact | Mitigation |
+|----------|--------|------------|
+| Additional process | Medium | Health monitoring, auto-restart |
+| Single point of failure | High | Optional bypass mode |
+| Added latency | Low | Typically <1ms on localhost |
+| Message ordering | Low | Timestamp-based ordering in agents |
+| Connection overhead | Low | Single upstream connection to bridge |
+
+## 16. Backward Compatibility and Configuration
+
+### 16.1 Dual Configuration Strategy
+To maintain full backward compatibility:
+- **Original configs** (port 8765): Direct bridge connection for standard operation
+- **Proxy configs** (port 8766): Proxy connection for cross-agent communication
+- Agent code remains unchanged - only configuration determines connection mode
+
+### 16.2 Launch File Options
+- `oai_dual_agent.launch.py`: Direct bridge connection (original behavior)
+- `oai_dual_agent_with_proxy.launch.py`: Proxy-enabled for context sharing
+- `gemini_dual_agent.launch.py`: Direct bridge connection (original behavior)
+- `gemini_dual_agent_with_proxy.launch.py`: Proxy-enabled for context sharing
+
+### 16.3 Graceful Degradation
+When running without proxy (Phase 4):
+- Agents attempt to subscribe to cross-agent topics
+- Missing topics logged as INFO (not ERROR)
+- Agents continue with independent context
+- No functionality lost, only shared context unavailable
+
+## 17. Conclusion
 
 This enhancement addresses the fundamental context divergence problem in dual-agent deployments while maintaining system simplicity and performance. By making agents aware of their siblings without requiring tight coupling, we achieve better consistency without sacrificing the ability to run agents independently.
 

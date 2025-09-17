@@ -493,10 +493,12 @@ class OpenAIRealtimeAgent:
                     event_type = data.get('type', 'unknown')
                     
                     # Log events with appropriate detail level
-                    if event_type in ['response.audio.delta', 'response.audio_transcript.delta']:
-                        # Audio deltas are frequent - log at debug level
+                    if event_type in ['response.audio.delta', 'response.audio_transcript.delta',
+                                     'response.text.delta']:
+                        # Audio and text deltas are frequent - log at debug level
                         self.logger.debug(f"🎵 OpenAI: {event_type} ({len(message)} chars)")
-                    elif event_type in ['session.updated', 'response.created', 'conversation.item.created']:
+                    elif event_type in ['session.updated', 'response.created', 'conversation.item.created',
+                                       'response.text.done']:
                         # Important events - log with detail
                         self.logger.info(f"🎯 OpenAI: {event_type}")
                         self.logger.debug(f"   Event data: {json.dumps(data, indent=2)[:200]}...")
@@ -571,13 +573,25 @@ class OpenAIRealtimeAgent:
             elif event_type == "response.content_part.added":
                 self.logger.debug("📋 OpenAI added response content part")
                 
-            elif event_type == "response.audio_transcript.delta":
-                # Accumulate assistant transcript deltas (streaming text)
+            elif event_type == "response.text.delta":
+                # Text-only response delta (for command extraction agent)
                 delta_text = data.get("delta", "")
                 if delta_text:
                     self.assistant_transcript_buffer += delta_text
-                    self.logger.debug(f"📝 Assistant delta: +{len(delta_text)} chars")
-                    
+                    self.logger.debug(f"📝 Text delta: +{len(delta_text)} chars")
+
+            elif event_type == "response.text.done":
+                # Text-only response complete
+                self.logger.info(f"📝 Text response complete: {self.assistant_transcript_buffer[:100]}...")
+                await self._handle_assistant_transcript_complete(data)
+
+            elif event_type == "response.audio_transcript.delta":
+                # Accumulate assistant transcript deltas (streaming text from audio)
+                delta_text = data.get("delta", "")
+                if delta_text:
+                    self.assistant_transcript_buffer += delta_text
+                    self.logger.debug(f"📝 Audio transcript delta: +{len(delta_text)} chars")
+
             elif event_type == "response.audio_transcript.done":
                 await self._handle_assistant_transcript_complete(data)
                 
@@ -781,10 +795,12 @@ class OpenAIRealtimeAgent:
             
         try:
             # Send response.create message to explicitly request a response
+            # Get modalities from config to support text-only or text+audio
+            modalities = self.config.get('response_config', {}).get('modalities', ["text", "audio"])
             response_msg = {
                 "type": "response.create",
                 "response": {
-                    "modalities": ["text", "audio"],
+                    "modalities": modalities,
                     "instructions": "Please respond to the user's message naturally and helpfully."
                 }
             }

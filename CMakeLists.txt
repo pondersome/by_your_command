@@ -53,6 +53,12 @@ install(PROGRAMS
 )
 
 install(PROGRAMS
+  ros_ai_bridge/websocket_reflection_proxy.py
+  DESTINATION lib/${PROJECT_NAME}
+  RENAME websocket_reflection_proxy
+)
+
+install(PROGRAMS
   agents/oai_realtime/main.py
   DESTINATION lib/${PROJECT_NAME}
   RENAME oai_realtime_agent
