@@ -12,6 +12,11 @@ gemini_live_agent:
   agent_id: "gemini_conversational"
   agent_role: "conversation"  # Role: conversation or command
 
+  # Context Sharing Settings (Phase 4)
+  context_sharing:
+    provide_authoritative_transcripts: true  # Conversation agent provides authoritative transcripts
+    accept_authoritative_transcripts: false  # Conversation agent doesn't need external transcripts
+
   # API Configuration
   # Set GEMINI_API_KEY environment variable for security
 

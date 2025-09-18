@@ -13,6 +13,11 @@ gemini_live_agent:
   agent_role: "command"  # Role: conversation or command
   sibling_agents: ["gemini_conversational"]  # Conversation agent sibling
 
+  # Context Sharing Settings (Phase 4)
+  context_sharing:
+    provide_authoritative_transcripts: false  # Command agent uses conversation agent's transcripts
+    accept_authoritative_transcripts: true   # Command agent accepts transcripts from conversation agent
+
   # API Configuration
   # Set GEMINI_API_KEY environment variable for security
 

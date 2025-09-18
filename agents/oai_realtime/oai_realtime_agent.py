@@ -52,6 +52,9 @@ class OpenAIRealtimeAgent:
         self.sibling_agents = self.config.get('sibling_agents', [])  # List of sibling agent IDs
         self.has_siblings = len(self.sibling_agents) > 0
 
+        # Cross-agent context tracking (Phase 4)
+        self.last_command_extracted = None  # For conversation agents to track commands
+
         # Core components - using refactored classes
         self.serializer = OpenAISerializer()
         self.pause_detector = PauseDetector(
@@ -353,16 +356,32 @@ class OpenAIRealtimeAgent:
                     # Handle text input - inject as conversation item
                     text_content = envelope.raw_data.data
                     self.logger.info(f"📝 Received text input: '{text_content[:50]}...'")
-                    
+
                     # Wait for session to be ready (reuses session creation logic above)
                     if not self.session_ready.is_set():
                         self.logger.info("⏳ Waiting for session ready before sending text...")
                         await self.session_ready.wait()
                         self.logger.info("✅ Session ready - proceeding with text input")
-                    
+
                     # Send text as conversation item to OpenAI
                     await self._send_text_to_openai(envelope)
-                        
+
+                # Phase 4: Handle cross-agent topics for context synchronization
+                elif envelope.ros_msg_type == "std_msgs/String" and envelope.topic_name.endswith("/prompt_transcript"):
+                    # Handle authoritative transcript from conversation agent (for command agents)
+                    if self.agent_role == 'command':
+                        await self._handle_authoritative_transcript(envelope)
+
+                elif envelope.ros_msg_type == "std_msgs/String" and envelope.topic_name.endswith("/response_cmd"):
+                    # Handle command from command agent (for conversation agents)
+                    if self.agent_role == 'conversation':
+                        await self._handle_command_from_sibling(envelope)
+
+                elif envelope.ros_msg_type == "std_msgs/String" and envelope.topic_name.endswith("/response_text"):
+                    # Handle conversation text from conversation agent (for command agents)
+                    if self.agent_role == 'command':
+                        await self._handle_conversation_text(envelope)
+
                 else:
                     # Handle other message types
                     api_msg = await self.serializer.safe_serialize(envelope)
@@ -696,12 +715,16 @@ class OpenAIRealtimeAgent:
             
             # NEW: Publish user transcript to ROS (was missing before!)
             if self.bridge_interface and self.published_topics.get('prompt_transcript'):
-                transcript_data = {"data": transcript}
+                # Include metadata within the message data for cross-agent communication
+                transcript_data = {
+                    "data": transcript,
+                    "metadata": self._create_metadata()
+                }
                 success = await self.bridge_interface.put_outbound_message(
                     self.published_topics['prompt_transcript'],
                     transcript_data,
                     "std_msgs/String",
-                    self._create_metadata()
+                    None  # Metadata is now embedded in the message
                 )
                 if success:
                     self.logger.info("📤 User transcript published to ROS")
@@ -735,7 +758,11 @@ class OpenAIRealtimeAgent:
             
             # Send transcript to ROS via WebSocket
             if self.bridge_interface:
-                transcript_data = {"data": final_transcript}
+                # Include metadata within the message data for cross-agent communication
+                transcript_data = {
+                    "data": final_transcript,
+                    "metadata": self._create_metadata()
+                }
 
                 # Determine which topic to use based on agent configuration
                 # Command agents publish to response_cmd, conversation agents to response_text
@@ -757,7 +784,7 @@ class OpenAIRealtimeAgent:
                         topic,
                         transcript_data,
                         "std_msgs/String",
-                        self._create_metadata()
+                        None  # Metadata is now embedded in the message
                     )
 
                     if success:
@@ -1082,7 +1109,81 @@ class OpenAIRealtimeAgent:
         """Reload system prompts from prompts.yaml file"""
         self.session_manager.reload_prompts()
         self.logger.info("🔄 System prompts reloaded from file")
-        
+
+    # Phase 4: Cross-agent context synchronization methods
+    async def _handle_authoritative_transcript(self, envelope):
+        """Handle authoritative transcript from conversation agent (for command agents)"""
+        try:
+            # Extract message data and metadata
+            message_data = envelope.raw_data.data
+            if isinstance(message_data, str):
+                # Legacy format - just the transcript text
+                transcript = message_data
+                metadata = {}
+            else:
+                # New format with embedded metadata
+                transcript = message_data.get("data", "")
+                metadata = message_data.get("metadata", {})
+
+            # Check if this is from the conversation agent
+            if metadata.get("agent_role") == "conversation":
+                self.logger.info(f"📝 Using authoritative transcript from conversation agent: '{transcript[:50]}...'")
+                # Use this transcript for context instead of our own
+                self.session_manager.add_conversation_turn("user", transcript)
+            else:
+                self.logger.debug(f"Received non-authoritative transcript")
+
+        except Exception as e:
+            self.logger.error(f"Error handling authoritative transcript: {e}")
+
+    async def _handle_command_from_sibling(self, envelope):
+        """Handle command from command agent (for conversation agents)"""
+        try:
+            # Extract message data and metadata
+            message_data = envelope.raw_data.data
+            if isinstance(message_data, str):
+                # Legacy format - just the command text
+                command = message_data
+                metadata = {}
+            else:
+                # New format with embedded metadata
+                command = message_data.get("data", "")
+                metadata = message_data.get("metadata", {})
+
+            # Track the command for context
+            if metadata.get("agent_role") == "command":
+                self.logger.info(f"🤖 Command agent extracted: {command}")
+                # Store for potential use in responses
+                self.last_command_extracted = command
+                # Add to context metadata for prompt enhancement
+                self.session_manager.context_manager.add_metadata("last_command", command)
+
+        except Exception as e:
+            self.logger.error(f"Error handling command from sibling: {e}")
+
+    async def _handle_conversation_text(self, envelope):
+        """Handle conversation text from conversation agent (for command agents)"""
+        try:
+            # Extract message data and metadata
+            message_data = envelope.raw_data.data
+            if isinstance(message_data, str):
+                # Legacy format
+                text = message_data
+                metadata = {}
+            else:
+                # New format with embedded metadata
+                text = message_data.get("data", "")
+                metadata = message_data.get("metadata", {})
+
+            # Use for context awareness
+            if metadata.get("agent_role") == "conversation":
+                self.logger.info(f"💬 Conversation agent response: '{text[:50]}...'")
+                # Optionally add to context for better command extraction
+                # self.session_manager.add_conversation_turn("assistant", text)
+
+        except Exception as e:
+            self.logger.error(f"Error handling conversation text: {e}")
+
     # Debug interface methods for standalone testing
     async def debug_inject_audio(self, audio_data: List[int], utterance_id: str = None, 
                                confidence: float = 0.95, is_utterance_end: bool = False) -> bool:
@@ -1120,7 +1221,8 @@ class OpenAIRealtimeAgent:
             "agent_id": self.agent_id,
             "agent_role": self.agent_role,
             "timestamp": time.time(),
-            "conversation_id": self.conversation_monitor.current_conversation_id if hasattr(self, 'conversation_monitor') else None
+            "conversation_id": self.conversation_monitor.current_conversation_id if hasattr(self, 'conversation_monitor') else None,
+            "turn_number": self.session_manager.context_manager.get_turn_count() if hasattr(self, 'session_manager') else 0
         }
 
     def _setup_conversation_logging(self):

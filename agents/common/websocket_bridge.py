@@ -138,6 +138,10 @@ class WebSocketBridgeInterface:
         self.messages_received = 0
         self.messages_sent = 0
         self.connection_attempts = 0
+
+        # Cross-agent topic tracking for graceful degradation
+        self.cross_agent_topics_available = set()
+        self.missing_topic_logged = set()
         
     async def connect_with_retry(self) -> bool:
         """Connect to bridge with initial retry attempts"""
@@ -202,6 +206,25 @@ class WebSocketBridgeInterface:
                 {"topic": "conversation_id", "msg_type": "std_msgs/String"}
             ]
 
+            # Add cross-agent subscriptions based on agent role (Phase 4)
+            agent_role = self.config.get('agent_role', 'conversation')
+
+            if agent_role == 'conversation':
+                # Conversation agents subscribe to command agent outputs
+                subscriptions.append({
+                    "topic": "response_cmd",
+                    "msg_type": "std_msgs/String"
+                })
+                self.logger.info("Conversation agent adding subscription to response_cmd for command tracking")
+
+            elif agent_role == 'command':
+                # Command agents subscribe to conversation agent outputs for context
+                subscriptions.extend([
+                    {"topic": "response_text", "msg_type": "std_msgs/String"},
+                    {"topic": "prompt_transcript", "msg_type": "std_msgs/String"}
+                ])
+                self.logger.info("Command agent adding subscriptions to response_text and prompt_transcript for context")
+
             # Add camera subscription if video is enabled
             if self.config.get('enable_video', False):
                 subscriptions.append({
@@ -257,6 +280,16 @@ class WebSocketBridgeInterface:
                     if message_type == "message":
                         # Queue message for agent processing
                         msg_type = data["envelope"].get('ros_msg_type', 'unknown')
+                        topic = data["envelope"].get('topic', '')
+
+                        # Track cross-agent topic availability for graceful degradation
+                        cross_agent_topics = ['response_cmd', 'response_text', 'prompt_transcript']
+                        base_topic = topic.split('/')[-1] if '/' in topic else topic
+
+                        if base_topic in cross_agent_topics and base_topic not in self.cross_agent_topics_available:
+                            self.cross_agent_topics_available.add(base_topic)
+                            self.logger.info(f"✅ Cross-agent topic '{base_topic}' is available - context sharing enabled")
+
                         await self.message_queue.put(data["envelope"])
                         self.messages_received += 1
                         if "Image" in msg_type:
@@ -305,6 +338,20 @@ class WebSocketBridgeInterface:
             # Will try again due to recursive call in _message_listener
             pass
             
+    def check_cross_agent_topic_status(self, topic: str) -> bool:
+        """Check if a cross-agent topic is available (for graceful degradation)"""
+        base_topic = topic.split('/')[-1] if '/' in topic else topic
+        cross_agent_topics = ['response_cmd', 'response_text', 'prompt_transcript']
+
+        if base_topic in cross_agent_topics:
+            if base_topic not in self.cross_agent_topics_available and base_topic not in self.missing_topic_logged:
+                # First time checking this topic and it's not available
+                self.missing_topic_logged.add(base_topic)
+                self.logger.info(f"ℹ️ Cross-agent topic '{base_topic}' not available - agent running in standalone mode")
+                return False
+            return base_topic in self.cross_agent_topics_available
+        return True  # Non cross-agent topics are always "available"
+
     async def get_inbound_message(self, timeout: float = 1.0) -> Optional[WebSocketMessageEnvelope]:
         """Get message from bridge (compatible with existing interface)"""
         if not self.connected:

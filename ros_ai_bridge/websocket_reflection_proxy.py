@@ -131,8 +131,9 @@ class WebSocketReflectionProxy:
             self.logger.info(f"📡 WebSocket connection established with bridge")
             self.bridge_connected = True
 
-            # Register proxy with bridge as a unified agent
-            await self.register_with_bridge()
+            # Don't register the proxy itself - be transparent
+            # Just start handling bridge messages
+            # Agents will register themselves through us
 
             # Start task to handle bridge messages
             self.bridge_task = asyncio.create_task(self.handle_bridge_messages())
@@ -145,38 +146,18 @@ class WebSocketReflectionProxy:
             # Schedule reconnection
             asyncio.create_task(self.reconnect_to_bridge())
 
+    async def update_bridge_subscriptions(self):
+        """No longer needed - agents register directly through transparent proxy"""
+        # This method is kept for compatibility but does nothing
+        # The proxy is now fully transparent and doesn't register itself
+        pass
+
     async def register_with_bridge(self, wait_for_response=True):
-        """Register proxy with bridge as a unified agent"""
-        if not self.bridge_connected or not self.bridge_ws:
-            return
-
-        # Build subscription list from all connected agents (initially empty)
-        subscriptions = []
-        for topic in self.all_subscriptions:
-            # Map common topics to their message types
-            msg_type = self.get_msg_type_for_topic(topic)
-            subscriptions.append({
-                "topic": topic,
-                "msg_type": msg_type
-            })
-
-        registration = {
-            "type": "register",
-            "agent_id": "reflection_proxy",
-            "capabilities": ["proxy", "reflection"],
-            "subscriptions": subscriptions,
-            "metadata": {
-                "proxy_version": "1.0",
-                "reflection_enabled": self.enable_reflection
-            }
-        }
-
-        self.logger.info(f"📝 Registering proxy with bridge, subscriptions: {[s['topic'] for s in subscriptions]}")
-        await self.bridge_ws.send(json.dumps(registration))
-
-        # Only wait for response on initial registration
-        if wait_for_response:
-            # Wait for registration response
+        """Deprecated - proxy no longer registers itself"""
+        # Kept for backward compatibility but does nothing
+        # The proxy is transparent - only agents register
+        if False:  # Never execute, kept for reference
+            # Old registration code that made proxy non-transparent
             try:
                 response = await asyncio.wait_for(self.bridge_ws.recv(), timeout=5.0)
                 data = json.loads(response)
@@ -348,9 +329,11 @@ class WebSocketReflectionProxy:
 
         self.logger.debug(f"📋 Combined subscriptions: {self.all_subscriptions}")
 
-        # If subscriptions changed and we're connected to bridge, re-register
-        if self.all_subscriptions != old_subscriptions and self.bridge_connected:
-            asyncio.create_task(self.register_with_bridge(wait_for_response=False))
+        # Proxy no longer needs to re-register since it doesn't register itself
+        # It's transparent - agents handle their own registrations
+        # Just log the subscription change for debugging
+        if self.all_subscriptions != old_subscriptions:
+            self.logger.debug(f"Agent subscriptions updated: {len(self.all_subscriptions)} topics")
 
     async def handle_outbound_message(self, sender_id: str, data: Dict):
         """

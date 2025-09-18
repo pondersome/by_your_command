@@ -4,6 +4,11 @@ openai_command_agent:
   agent_id: "openai_command_extractor"
   agent_role: "command"  # Role: conversation or command
   sibling_agents: ["openai_realtime"]  # Conversation agent sibling
+
+  # Context Sharing Settings (Phase 4)
+  context_sharing:
+    provide_authoritative_transcripts: false  # Command agent uses conversation agent's transcripts
+    accept_authoritative_transcripts: true   # Command agent accepts transcripts from conversation agent
   
   # Bridge Connection (WebSocket-based distributed deployment)
   bridge_connection:
