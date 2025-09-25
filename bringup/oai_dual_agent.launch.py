@@ -27,7 +27,7 @@ def generate_launch_description():
     pkg_dir = get_package_share_directory('by_your_command')
     
     # Configuration paths
-    bridge_config = os.path.join(pkg_dir, 'config', 'bridge_dual_agent.yaml')  # Combined bridge config
+    bridge_config = os.path.join(pkg_dir, 'config', 'bridge_dual_agent_blind.yaml')  # Blind version - no frame forwarding
     # Both agents use their specific configs with different agent_ids and topics
     conv_agent_config = os.path.join(pkg_dir, 'config', 'oai_realtime_agent.yaml')
     cmd_agent_config = os.path.join(pkg_dir, 'config', 'oai_command_agent.yaml')

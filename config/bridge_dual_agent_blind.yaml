@@ -1,0 +1,86 @@
+# ROS AI Bridge Configuration for Dual Agent Mode
+# This configuration includes all topics for both conversational and command agents
+
+ros_ai_bridge:
+  ros__parameters:
+    # WebSocket Server Settings
+    websocket_server:
+      enabled: true
+      host: "0.0.0.0"          # Listen on all interfaces for distributed deployment
+      port: 8765               # Default WebSocket port
+      max_connections: 10      # Maximum concurrent agent connections
+      auth_required: false     # Authentication (future enhancement)
+      heartbeat_interval: 30   # Seconds between ping/pong
+      
+    # Agent Registration
+    agent_registration:
+      timeout_seconds: 60      # Registration timeout
+      allow_duplicate_ids: false
+      require_capabilities: []  # Required agent capabilities
+    
+    # Queue configuration
+    max_queue_size: 500  # Increased for Gemini agent which might process slower
+    queue_timeout_ms: 1000
+    drop_policy: "oldest"
+    
+    # Video frame rate limiting (reduced but not disabled - provides baseline frames)
+    max_video_fps: 0.5  # Send baseline frames at 0.5 fps, plus triggered frames
+    
+    # Smart frame forwarding configuration
+    frame_forwarding:
+      enabled: false               # Disabled for blind agents (OAI doesn't support vision yet)
+      trigger_on_voice: true       # Forward frames when voice detected
+      trigger_on_text: true        # Forward frames when text input detected
+      continuous_nth_frame: 5      # During continuous audio, forward every 5th frame
+      max_frame_age_ms: 1000       # Don't forward frames older than 1 second
+    
+    # Topics to bridge (ROS → Agent) - new naming convention
+    subscribed_topics:
+      - topic: "prompt_voice"  # agent bound human voice data (was voice_chunks)
+        msg_type: "by_your_command/AudioDataUtterance"
+      - topic: "prompt_text"    # agent bound text prompts (was text_input)
+        msg_type: "std_msgs/String"
+      - topic: "conversation_id" # Bidirectional - external conversation resets
+        msg_type: "std_msgs/String"
+      - topic: "/grunt1/arm1/cam_live/color/image_raw/compressed"  # Compressed camera feed for vision
+        msg_type: "sensor_msgs/CompressedImage"
+        
+    # Topics to publish (Agent → ROS) - Combined from both agents - new naming convention
+    published_topics:
+      # Conversational agent topics
+      - topic: "response_voice"   # audio response from llm (was audio_out)
+        msg_type: "audio_common_msgs/AudioData"
+      - topic: "response_text"    # transcript of llm response (was llm_transcript)
+        msg_type: "std_msgs/String"
+      
+      # Command agent topics
+      - topic: "response_cmd"     # commands detected and formatted by command agent (was command_transcript)
+        msg_type: "std_msgs/String"
+      
+      # NEW topic
+      - topic: "prompt_transcript" # user voice transcript (NEW!)
+        msg_type: "std_msgs/String"
+      
+      # Shared topics
+      - topic: "cmd_vel"         # motion commands from llm
+        msg_type: "geometry_msgs/Twist"
+      - topic: "conversation_id" # Bidirectional - agent conversation resets
+        msg_type: "std_msgs/String"
+      - topic: "interruption_signal" # Signal to clear audio player queue
+        msg_type: "std_msgs/Bool"
+
+# Silero VAD Node Configuration
+silero_vad_node:
+  ros__parameters:
+    sample_rate: 16000
+    max_buffer_frames: 250
+    pre_roll_frames: 15
+    utterance_chunk_frames: 10
+    threshold: 0.5
+    min_silence_duration_ms: 250
+    
+    # Clap detection parameters for wake-up when muted
+    clap_detection_enabled: true  # Enable adaptive clap detection
+    clap_spike_ratio: 4.0         # Clap must be 4x louder than background noise
+    clap_min_gap_ms: 300          # Minimum gap between claps for double-clap detection (ms)
+    clap_max_gap_ms: 800          # Maximum gap between claps for double-clap detection (ms)

@@ -734,9 +734,25 @@ class OpenAIRealtimeAgent:
             if self.pending_responses.get('assistant_response', False):
                 self.logger.info("🤖 Triggering OpenAI response generation")
                 try:
-                    response_msg = self.serializer.create_response_trigger()
+                    # Determine modalities based on agent configuration
+                    # Command agents should only use text, conversation agents use text+audio
+                    if not self.published_topics.get('response_voice'):
+                        # No voice topic configured - text only (command agent)
+                        modalities = ["text"]
+                    else:
+                        # Voice topic configured - text and audio (conversation agent)
+                        modalities = ["text", "audio"]
+
+                    # Create proper response.create message with modalities
+                    response_msg = {
+                        "type": "response.create",
+                        "response": {
+                            "modalities": modalities
+                        }
+                    }
+
                     await self.session_manager.websocket.send(json.dumps(response_msg))
-                    self.logger.info("✅ Response generation triggered")
+                    self.logger.info(f"✅ Response generation triggered with modalities: {modalities}")
                 except Exception as e:
                     self.logger.error(f"❌ Failed to trigger response: {e}")
         else:
@@ -1217,13 +1233,31 @@ class OpenAIRealtimeAgent:
         
     def _create_metadata(self) -> Dict:
         """Create metadata for outbound messages"""
-        return {
+        metadata = {
             "agent_id": self.agent_id,
             "agent_role": self.agent_role,
-            "timestamp": time.time(),
-            "conversation_id": self.conversation_monitor.current_conversation_id if hasattr(self, 'conversation_monitor') else None,
-            "turn_number": self.session_manager.context_manager.get_turn_count() if hasattr(self, 'session_manager') else 0
+            "timestamp": time.time()
         }
+
+        # Add conversation ID if available
+        try:
+            if hasattr(self, 'conversation_monitor') and self.conversation_monitor:
+                metadata["conversation_id"] = self.conversation_monitor.current_conversation_id
+        except Exception:
+            metadata["conversation_id"] = None
+
+        # Add turn number if available - fix the method call
+        try:
+            if (hasattr(self, 'session_manager') and self.session_manager and
+                hasattr(self.session_manager, 'context_manager') and self.session_manager.context_manager):
+                # ContextManager doesn't have get_turn_count(), but current_context does
+                metadata["turn_number"] = self.session_manager.context_manager.current_context.get_turn_count()
+            else:
+                metadata["turn_number"] = 0
+        except Exception:
+            metadata["turn_number"] = 0
+
+        return metadata
 
     def _setup_conversation_logging(self):
         """Add conversation ID to all log messages"""

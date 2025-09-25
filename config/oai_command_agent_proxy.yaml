@@ -41,6 +41,10 @@ openai_command_agent:
   
   # Named prompt selection (from prompts.yaml)
   prompt_id: "barney_command_extractor"  # Command extraction prompt
+
+  # Response configuration - text only for command extraction
+  response_config:
+    modalities: ["text"]  # No audio output for command extractor
   
   # Published topic configuration - new naming convention
   response_voice_topic: ""  # Disable audio output for command extractor

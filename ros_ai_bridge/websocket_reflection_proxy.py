@@ -107,12 +107,19 @@ class WebSocketReflectionProxy:
         self.logger.info(f"   Upstream bridge: {self.bridge_url}")
         self.logger.info(f"   Reflection: {'Enabled' if self.enable_reflection else 'Disabled'}")
 
+        # Add a small delay to ensure bridge WebSocket server is ready
+        # This helps avoid the race condition where proxy starts before bridge
+        self.logger.info("⏳ Waiting 2 seconds for bridge to be ready...")
+        await asyncio.sleep(2.0)
+
         # Connect to upstream bridge (don't fail if bridge isn't ready yet)
         try:
             await self.connect_to_bridge()
         except Exception as e:
             self.logger.warning(f"⚠️ Initial bridge connection failed: {e}")
             self.logger.info("Will retry in background...")
+            # Schedule reconnection
+            asyncio.create_task(self.reconnect_to_bridge())
 
         # Start server for agents
         async with websockets.serve(
@@ -137,6 +144,10 @@ class WebSocketReflectionProxy:
 
             # Start task to handle bridge messages
             self.bridge_task = asyncio.create_task(self.handle_bridge_messages())
+
+            # Re-forward any existing agent registrations to the bridge
+            # This handles the case where agents connected while bridge was down
+            await self.reforward_agent_registrations()
 
             self.logger.info("✅ Connected to upstream bridge")
 
@@ -201,6 +212,31 @@ class WebSocketReflectionProxy:
         await asyncio.sleep(5)  # Wait before reconnecting
         self.logger.info("🔄 Attempting to reconnect to bridge...")
         await self.connect_to_bridge()
+
+    async def reforward_agent_registrations(self):
+        """Re-forward existing agent registrations to the bridge after reconnection"""
+        if not self.agents:
+            return
+
+        self.logger.info(f"📤 Re-forwarding {len(self.agents)} agent registrations to bridge")
+
+        for agent_id, agent_info in self.agents.items():
+            # Reconstruct the registration message
+            registration = {
+                "type": "register",
+                "agent_id": agent_id,
+                "capabilities": agent_info.metadata.get("capabilities", ["audio_processing", "realtime_api"]),
+                "subscriptions": [{"topic": topic, "msg_type": self.get_msg_type_for_topic(topic)}
+                                  for topic in agent_info.subscriptions]
+            }
+
+            try:
+                if self.bridge_connected and self.bridge_ws:
+                    await self.bridge_ws.send(json.dumps(registration))
+                    self.logger.info(f"✅ Re-forwarded registration for agent {agent_id}")
+                    self.metrics["messages_forwarded"] += 1
+            except Exception as e:
+                self.logger.error(f"Failed to re-forward registration for {agent_id}: {e}")
 
     async def handle_agent_connection(self, websocket: WebSocketServerProtocol, path: str = None):
         """Handle new agent connection"""

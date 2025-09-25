@@ -92,8 +92,20 @@ class OpenAISessionManager(BaseSessionManager):
         self.logger.info(f"Using voice: {voice_setting} (from config)")
         
         # OpenAI session configuration message
-        # Get modalities from response_config, default to text+audio
-        modalities = self.config.get('response_config', {}).get('modalities', ["text", "audio"])
+        # Get modalities from response_config, or determine based on voice topic configuration
+        if 'response_config' in self.config and 'modalities' in self.config['response_config']:
+            # Explicit modalities configuration
+            modalities = self.config['response_config']['modalities']
+        else:
+            # Determine modalities based on whether voice output is configured
+            # Command agents typically have empty response_voice_topic
+            if not self.config.get('response_voice_topic', 'response_voice'):
+                modalities = ["text"]  # Text-only for command extraction
+            else:
+                modalities = ["text", "audio"]  # Full audio for conversation
+
+        self.logger.info(f"Configuring session with modalities: {modalities}")
+
         config_msg = {
             "type": "session.update",
             "session": {
@@ -176,12 +188,21 @@ class OpenAISessionManager(BaseSessionManager):
             # Build update message with new prompt
             # Get modalities from response_config
             modalities = self.config.get('response_config', {}).get('modalities', ["text", "audio"])
+            # Use the same modality logic as in initial configuration
+            if 'response_config' in self.config and 'modalities' in self.config['response_config']:
+                current_modalities = self.config['response_config']['modalities']
+            else:
+                if not self.config.get('response_voice_topic', 'response_voice'):
+                    current_modalities = ["text"]
+                else:
+                    current_modalities = ["text", "audio"]
+
             config_msg = {
                 "type": "session.update",
                 "session": {
                     "instructions": prompt,
                     # Keep other settings the same
-                    "modalities": modalities,
+                    "modalities": current_modalities,
                     "voice": self.config.get('voice', 'alloy'),
                     "turn_detection": {
                         "type": "server_vad",
