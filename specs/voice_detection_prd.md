@@ -1,11 +1,11 @@
 # Voice Detection System PRD
-
+---
 **Author**: Karim Virani  
 **Package**: by_your_command  
 **Subsystem**: voice_detection  
 **Version**: 2.2  
-**Last Updated**: August 2025
-
+**Updated**: August 2025
+---
 ## Overview
 
 The voice detection system provides intelligent voice activity detection (VAD) and voice chunk extraction for the ByYourCommand robotic interaction package. This is entirely made possible by the excellent SileroVAD package. Here we extend its iterator capabilities to serve as a critical preprocessing layer that filters continuous audio streams to extract only voice-containing frames and assemble them into voice chunks with utterance metadata, optimizing downstream processing for transcription and LLM interaction.
